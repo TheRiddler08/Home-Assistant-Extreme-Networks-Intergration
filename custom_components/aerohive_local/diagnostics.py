@@ -14,6 +14,7 @@ from .parsers import to_dict
 
 TO_REDACT = {CONF_PASSWORD, CONF_USERNAME, CONF_HOST, CONF_SSH_KEY, CONF_TRACKED_CLIENTS}
 STATION_REDACT = {"mac", "ip", "hostname"}
+ADDRESS_REDACT = {"ip_address", "gateway", "ip_addr", "default_gateway", "serial", "serial_number"}
 
 
 async def async_get_config_entry_diagnostics(
@@ -33,6 +34,7 @@ async def async_get_config_entry_diagnostics(
         "client": {
             "hostname": coordinator.client.hostname,
             "paging_disabled": coordinator.client.paging_disabled,
+            "unsupported_commands": sorted(coordinator._unsupported),  # noqa: SLF001
         },
         "data": None
         if data is None
@@ -40,7 +42,11 @@ async def async_get_config_entry_diagnostics(
             "version": to_dict(data.version),
             "interfaces": to_dict(data.interfaces),
             "ssids": to_dict(data.ssids),
-            "radios": to_dict(data.radios),
+            "details": async_redact_data(to_dict(data.details), ADDRESS_REDACT),
+            "throughput": to_dict(data.throughput),
+            "cpu": to_dict(data.cpu) if data.cpu else None,
+            "memory": to_dict(data.memory) if data.memory else None,
+            "hardware": async_redact_data(to_dict(data.hardware), ADDRESS_REDACT) if data.hardware else None,
             "boot_params": to_dict(data.boot_params) if data.boot_params else None,
             "station_count": len(data.stations),
             "stations": stations,

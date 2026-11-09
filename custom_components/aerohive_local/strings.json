@@ -45,10 +45,14 @@
         "title": "Aerohive options",
         "data": {
           "scan_interval": "Scan interval",
-          "tracked_clients": "Clients to track"
+          "tracked_clients": "Clients to track",
+          "detailed_stats": "Read detailed statistics",
+          "raw_sensors": "Create sensors for every raw field"
         },
         "data_description": {
-          "tracked_clients": "Create a device tracker only for these client MAC addresses (pick from connected clients or type a MAC)."
+          "tracked_clients": "Create a device tracker and detail sensors (signal, SNR, rates, SSID) only for these client MAC addresses (pick from connected clients or type a MAC).",
+          "detailed_stats": "Throughput and counters for Ethernet ports and SSID sub-interfaces, plus CPU and memory. Adds a few CLI commands per poll; turn off for a slow BR100.",
+          "raw_sensors": "One sensor (disabled by default) for every other field the CLI reports, so you can enable anything you need."
         }
       }
     },
@@ -58,15 +62,80 @@
   },
   "entity": {
     "sensor": {
-      "firmware": { "name": "Firmware" },
-      "platform": { "name": "Platform" },
-      "boot_time": { "name": "Boot time" },
-      "clients": { "name": "Connected clients" },
-      "region_code": { "name": "Region code" },
-      "country_code": { "name": "Country code" }
+      "firmware": {
+        "name": "Firmware"
+      },
+      "platform": {
+        "name": "Platform"
+      },
+      "boot_time": {
+        "name": "Boot time"
+      },
+      "clients": {
+        "name": "Connected clients"
+      },
+      "region_code": {
+        "name": "Region code"
+      },
+      "country_code": {
+        "name": "Country code"
+      },
+      "uptime": {
+        "name": "Uptime"
+      },
+      "ssids_broadcasting": {
+        "name": "SSIDs broadcasting"
+      },
+      "cpu_usage": {
+        "name": "CPU usage"
+      },
+      "cpu_user": {
+        "name": "CPU user"
+      },
+      "cpu_system": {
+        "name": "CPU system"
+      },
+      "memory_usage": {
+        "name": "Memory usage"
+      },
+      "memory_free": {
+        "name": "Memory free"
+      },
+      "memory_total": {
+        "name": "Memory total"
+      },
+      "ip_address": {
+        "name": "IP address"
+      },
+      "gateway": {
+        "name": "Default gateway"
+      },
+      "serial_number": {
+        "name": "Serial number"
+      },
+      "hw_revision": {
+        "name": "Hardware revision"
+      },
+      "wireless_rx_throughput": {
+        "name": "Wireless RX throughput"
+      },
+      "wireless_tx_throughput": {
+        "name": "Wireless TX throughput"
+      },
+      "wireless_total_throughput": {
+        "name": "Wireless total throughput"
+      },
+      "wired_rx_throughput": {
+        "name": "Wired RX throughput"
+      },
+      "wired_tx_throughput": {
+        "name": "Wired TX throughput"
+      }
     },
     "button": {
-      "reboot": { "name": "Reboot" }
+      "reboot": {
+        "name": "Reboot"
+      }
     }
   },
   "services": {
@@ -74,27 +143,54 @@
       "name": "Run show command",
       "description": "Run a read-only 'show' command on the device and return the raw output (for capturing parser samples).",
       "fields": {
-        "device_id": { "name": "Device", "description": "The Aerohive device." },
-        "command": { "name": "Command", "description": "A command starting with 'show', e.g. 'show station'." },
-        "redact": { "name": "Redact secrets", "description": "Mask key/password arguments in the output." }
+        "device_id": {
+          "name": "Device",
+          "description": "The Aerohive device."
+        },
+        "command": {
+          "name": "Command",
+          "description": "A command starting with 'show', e.g. 'show station'."
+        },
+        "redact": {
+          "name": "Redact secrets",
+          "description": "Mask key/password arguments in the output."
+        }
       }
     },
     "set_ssid_password": {
       "name": "Set SSID password",
       "description": "Change the WPA2-PSK key of an SSID and save the configuration.",
       "fields": {
-        "device_id": { "name": "Device", "description": "The Aerohive device." },
-        "ssid": { "name": "SSID", "description": "SSID name." },
-        "password": { "name": "Password", "description": "New key, 8-63 printable ASCII characters (no double quotes)." },
-        "security_object": { "name": "Security object", "description": "Security-object name. Looked up in the running config if omitted (falls back to the SSID name)." }
+        "device_id": {
+          "name": "Device",
+          "description": "The Aerohive device."
+        },
+        "ssid": {
+          "name": "SSID",
+          "description": "SSID name."
+        },
+        "password": {
+          "name": "Password",
+          "description": "New key, 8-63 printable ASCII characters (no double quotes)."
+        },
+        "security_object": {
+          "name": "Security object",
+          "description": "Security-object name. Looked up in the running config if omitted (falls back to the SSID name)."
+        }
       }
     },
     "disconnect_client": {
       "name": "Disconnect client",
       "description": "De-authenticate a wireless client by MAC address.",
       "fields": {
-        "device_id": { "name": "Device", "description": "The Aerohive device." },
-        "mac": { "name": "MAC address", "description": "Client MAC address in any common format." }
+        "device_id": {
+          "name": "Device",
+          "description": "The Aerohive device."
+        },
+        "mac": {
+          "name": "MAC address",
+          "description": "Client MAC address in any common format."
+        }
       }
     }
   }

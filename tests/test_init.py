@@ -52,6 +52,13 @@ def _responses() -> dict[str, str]:
         "show interface wifi1": "Mode=access; Radio profile=radio_axa0;\nOperational channel=36;",
         "show boot-param": load_fixture("synthetic_show_boot_param.txt"),
         "show running-config": "ssid AP460C security-object sec-ap460c\n",
+        "show interface eth1": load_fixture("synthetic_show_interface_eth1.txt"),
+        "show interface wifi0.1": load_fixture("synthetic_show_interface_wifi0_1.txt"),
+        "show interface wifi1.1": "Rx bytes=100; Tx bytes=200;",
+        "show interface mgt0": load_fixture("synthetic_show_interface_mgt0.txt"),
+        "show cpu": load_fixture("synthetic_show_cpu.txt"),
+        "show memory": load_fixture("synthetic_show_memory.txt"),
+        "show hw-info": load_fixture("synthetic_show_hw_info.txt"),
     }
 
 
@@ -171,6 +178,25 @@ async def test_setup_device_and_entities(hass: HomeAssistant, entry: MockConfigE
     assert hass.states.get(_entity_id(hass, "sensor", "wifi0_total_utilization")).state == "22.0"
     assert hass.states.get(_entity_id(hass, "sensor", "firmware")).state == "IQ Engine 10.5r3 build-278650"
     assert hass.states.get(_entity_id(hass, "sensor", "region_code")).state == "FCC"
+    assert hass.states.get(_entity_id(hass, "sensor", "cpu_usage")).state == "5.94"
+    assert hass.states.get(_entity_id(hass, "sensor", "memory_usage")).state == "42.8"
+    assert hass.states.get(_entity_id(hass, "sensor", "ip_address")).state == "192.168.1.10"
+    assert hass.states.get(_entity_id(hass, "sensor", "serial_number")).state == "01234567890123"
+    assert hass.states.get(_entity_id(hass, "sensor", "ssids_broadcasting")).state == "1"
+    assert hass.states.get(_entity_id(hass, "binary_sensor", "ssid_broadcasting_AP460C")).state == "on"
+    assert hass.states.get(_entity_id(hass, "sensor", "iface_eth1_link_speed")).state == "1000"
+    assert hass.states.get(_entity_id(hass, "sensor", "iface_eth1_duplex")).state == "full-duplex"
+    clients = hass.states.get(_entity_id(hass, "sensor", "clients")).attributes["clients"]
+    assert {c["mac"] for c in clients} == {"e8:b1:fc:5a:1b:2c", "a4:c3:f0:aa:00:01", "3c:22:fb:11:22:33"}
+    assert next(c for c in clients if c["mac"] == "3c:22:fb:11:22:33")["band"] == "5 GHz"
+    # Throughput needs two polls: unknown after the first one.
+    assert hass.states.get(_entity_id(hass, "sensor", "wireless_rx_throughput")).state == "unknown"
+    # Raw "every field" sensors exist but are disabled by default.
+    raw = er.async_get(hass).async_get(_entity_id(hass, "sensor", "raw_if_wifi0_mtu"))
+    assert raw.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, MAC)})
+    assert device.serial_number == "01234567890123"
+    assert device.configuration_url == "https://192.168.1.10"
     assert hass.states.get(_entity_id(hass, "binary_sensor", "iface_eth0")).state == "off"
     assert hass.states.get(_entity_id(hass, "binary_sensor", "iface_eth1")).state == "on"
     assert hass.states.get(_entity_id(hass, "binary_sensor", "iface_wifi2")).state == "off"
@@ -183,6 +209,47 @@ async def test_setup_device_and_entities(hass: HomeAssistant, entry: MockConfigE
     assert er.async_get(hass).async_get_entity_id("sensor", DOMAIN, f"{MAC}_wifi2_channel") is None
     # No trackers until opted in.
     assert not [e for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id) if e.domain == "device_tracker"]
+
+
+async def test_throughput(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    client = _client()
+    coordinator = entry.runtime_data
+    # Pretend the previous poll was 10 s ago, then advance the counters.
+    for name, (at, rx, tx) in list(coordinator._counters.items()):  # noqa: SLF001
+        coordinator._counters[name] = (at - 10, rx, tx)  # noqa: SLF001
+    client.responses["show interface wifi0"] = client.responses["show interface wifi0"].replace(
+        "Rx bytes=10000000; Tx bytes=50000000;", "Rx bytes=11250000; Tx bytes=56250000;"
+    )
+    client.responses["show interface wifi0.1"] = client.responses["show interface wifi0.1"].replace(
+        "Rx bytes=400000; Tx bytes=900000;", "Rx bytes=1650000; Tx bytes=7150000;"
+    )
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    def kbps(key: str) -> float:
+        return float(hass.states.get(_entity_id(hass, "sensor", key)).state)
+
+    # 1.25 MB in 10 s = 1000 kbit/s = 1 Mbit/s (sensors display Mbit/s)
+    assert kbps("iface_wifi0_rx_throughput") == pytest.approx(1.0, rel=0.05)
+    assert kbps("iface_wifi0_tx_throughput") == pytest.approx(5.0, rel=0.05)
+    assert kbps("wireless_rx_throughput") == pytest.approx(1.0, rel=0.05)
+    assert kbps("wireless_total_throughput") == pytest.approx(6.0, rel=0.05)
+    assert kbps("ssid_rx_throughput_AP460C") == pytest.approx(1.0, rel=0.05)
+    assert kbps("wired_rx_throughput") == 0.0
+
+
+async def test_detailed_stats_off_reduces_commands(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_SCAN_INTERVAL: 60, "detailed_stats": False, "raw_sensors": False}
+    )
+    await hass.async_block_till_done()
+    client = _client()
+    client.commands.clear()
+    await entry.runtime_data.async_refresh()
+    assert "show interface eth1" not in client.commands
+    assert "show cpu" not in client.commands
+    assert "show interface wifi0" in client.commands  # radio details are always read
 
 
 async def test_unload(hass: HomeAssistant, entry: MockConfigEntry) -> None:
@@ -380,6 +447,10 @@ async def test_options_flow_and_tracker(hass: HomeAssistant, entry: MockConfigEn
     assert home.attributes["ip"] == "192.168.1.50"
     assert home.attributes["ssid"] == "AP460C"
     assert away.state == "not_home"
+    signal = hass.states.get(_entity_id(hass, "sensor", "client_e8:b1:fc:5a:1b:2c_signal"))
+    assert signal.state == "-45"
+    assert hass.states.get(_entity_id(hass, "sensor", "client_e8:b1:fc:5a:1b:2c_tx_rate")).state == "72.0"
+    assert hass.states.get(_entity_id(hass, "sensor", "client_00:11:22:33:44:55_signal")).state == "unavailable"
 
 
 async def test_options_flow_rejects_bad_mac(hass: HomeAssistant, entry: MockConfigEntry) -> None:

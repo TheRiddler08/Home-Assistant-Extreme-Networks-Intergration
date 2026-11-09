@@ -5,6 +5,8 @@ Operational channel=6; Operational TX power=17 dBm; EIRP power=21 dBm;
 Channel width=20MHz;
 Noise floor=-95 dBm;
 Rx packets=123456; Rx errors=0; Rx dropped=0;
+Tx packets=234567; Tx errors=1; Tx dropped=2;
+Rx bytes=10000000; Tx bytes=50000000;
 Tx utilization=3%; Rx utilization=7%; Interference utilization=12%; Total utilization=22%;
 Max clients number=100;
 AP460C#

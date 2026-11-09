@@ -783,11 +783,12 @@ def parse_show_station(text: str) -> dict[str, Station]:
 
 
 # --------------------------------------------------------------------------
-# show interface wifiN
+# show interface <name> (detail: radios, ethernet, sub-interfaces, mgt0)
 # --------------------------------------------------------------------------
 
 # Ordered candidate key patterns (regex searched against normalised keys).
-_RADIO_FIELDS: dict[str, list[str]] = {
+_DETAIL_FIELDS: dict[str, list[str]] = {
+    # radio
     "channel": [r"^operational_channel$", r"^channel$", r"^chan$", r"^current_channel$"],
     "channel_width": [r"channel_width", r"^width$", r"^bandwidth$"],
     "tx_power": [r"^operational_tx_power$", r"^tx_power$", r"^transmit_power$", r"tx_power(?!.*eirp)"],
@@ -801,18 +802,46 @@ _RADIO_FIELDS: dict[str, list[str]] = {
     "radio_profile": [r"^radio_profile$"],
     "mode": [r"^mode$"],
     "phy_mode": [r"^phymode$", r"^phy_mode$", r"^radio_mode$"],
+    # traffic counters
+    "rx_bytes": [r"^rx_bytes$", r"^rx_octets$", r"^received_bytes$", r"^rx_.*bytes$"],
+    "tx_bytes": [r"^tx_bytes$", r"^tx_octets$", r"^transmitted_bytes$", r"^tx_.*bytes$"],
+    "rx_packets": [r"^rx_packets$", r"^rx_pkts$", r"^rx_frames$", r"^rx_data_frames$"],
+    "tx_packets": [r"^tx_packets$", r"^tx_pkts$", r"^tx_frames$", r"^tx_data_frames$"],
+    "rx_errors": [r"^rx_errors$", r"^rx_errs?$", r"^rx_error"],
+    "tx_errors": [r"^tx_errors$", r"^tx_errs?$", r"^tx_error"],
+    "rx_dropped": [r"^rx_dropped$", r"^rx_drops?$", r"^rx_drop"],
+    "tx_dropped": [r"^tx_dropped$", r"^tx_drops?$", r"^tx_drop"],
+    # ethernet / addressing
+    "speed": [r"^speed$", r"^link_speed$", r"^operational_speed$"],
+    "duplex": [r"^duplex$", r"^operational_duplex$"],
+    "admin_state": [r"^admin_state$", r"^admin_status$"],
+    "operational_state": [r"^operational_state$", r"^oper_state$", r"^link_state$", r"^link$"],
+    "mtu": [r"^mtu$"],
+    "ip_address": [r"^ip_addr$", r"^ip_address$", r"^ipv4_addr(ess)?$", r"^ip$"],
+    "netmask": [r"^netmask$", r"^mask$", r"^subnet_mask$"],
+    "gateway": [r"^default_gateway$", r"^gateway$", r"^default_gw$"],
 }
-_RADIO_NUMERIC = {
-    "channel", "tx_power", "eirp_power", "noise_floor", "tx_utilization", "rx_utilization",
-    "interference_utilization", "total_utilization", "max_clients",
+_DETAIL_FLOATS = {
+    "tx_power", "eirp_power", "noise_floor", "tx_utilization", "rx_utilization",
+    "interference_utilization", "total_utilization",
 }  # fmt: skip
+_DETAIL_INTS = {
+    "channel", "max_clients", "rx_bytes", "tx_bytes", "rx_packets", "tx_packets",
+    "rx_errors", "tx_errors", "rx_dropped", "tx_dropped", "mtu",
+}  # fmt: skip
+
+COUNTER_FIELDS = (
+    "rx_bytes", "tx_bytes", "rx_packets", "tx_packets",
+    "rx_errors", "tx_errors", "rx_dropped", "tx_dropped",
+)  # fmt: skip
 
 
 @dataclass
-class RadioDetail:
-    """Parsed 'show interface wifiN'."""
+class InterfaceDetail:
+    """Parsed 'show interface <name>' (any interface type)."""
 
     name: str
+    # radio
     channel: int | None = None
     channel_width: str | None = None
     tx_power: float | None = None  # dBm
@@ -826,33 +855,86 @@ class RadioDetail:
     radio_profile: str | None = None
     mode: str | None = None
     phy_mode: str | None = None
+    # counters
+    rx_bytes: int | None = None
+    tx_bytes: int | None = None
+    rx_packets: int | None = None
+    tx_packets: int | None = None
+    rx_errors: int | None = None
+    tx_errors: int | None = None
+    rx_dropped: int | None = None
+    tx_dropped: int | None = None
+    # ethernet / addressing
+    speed: str | None = None
+    duplex: str | None = None
+    admin_state: str | None = None
+    operational_state: str | None = None
+    mtu: int | None = None
+    ip_address: str | None = None
+    netmask: str | None = None
+    gateway: str | None = None
     raw: dict[str, str] = field(default_factory=dict)
+    mapped_keys: list[str] = field(default_factory=list)
+    mapped_fields: dict[str, str] = field(default_factory=dict)  # attr -> raw key
+
+    @property
+    def speed_mbps(self) -> int | None:
+        """'1000Mbps' / '1Gbps' / '100' -> Mbit/s."""
+        if not self.speed:
+            return None
+        num = parse_number(self.speed)
+        if num is None:
+            return None
+        return int(num * 1000) if re.search(r"g", self.speed, re.IGNORECASE) else int(num)
 
 
-def parse_show_interface_radio(text: str, name: str) -> RadioDetail:
-    kv = parse_key_values(text)
-    detail = RadioDetail(name=name.lower(), raw=kv)
-    for attr, patterns in _RADIO_FIELDS.items():
-        value: str | None = None
+RadioDetail = InterfaceDetail  # backwards compatible name
+
+
+def match_fields(kv: dict[str, str], fields: dict[str, list[str]]) -> dict[str, tuple[str, str]]:
+    """Return {attr: (raw_key, value)} using ordered regex candidates."""
+    result: dict[str, tuple[str, str]] = {}
+    used: set[str] = set()
+    for attr, patterns in fields.items():
         for pattern in patterns:
             regex = re.compile(pattern)
-            for key, val in kv.items():
-                if regex.search(key) and _none_if_empty(val) is not None:
-                    value = val
-                    break
-            if value is not None:
+            hit = next(
+                (
+                    (key, val)
+                    for key, val in kv.items()
+                    if key not in used and regex.search(key) and _none_if_empty(val) is not None
+                ),
+                None,
+            )
+            if hit is not None:
+                result[attr] = hit
+                used.add(hit[0])
                 break
-        if value is None:
-            continue
-        if attr in _RADIO_NUMERIC:
-            num = parse_number(value)
+    return result
+
+
+def parse_show_interface_detail(text: str, name: str) -> InterfaceDetail:
+    kv = parse_key_values(text)
+    detail = InterfaceDetail(name=name.lower(), raw=kv)
+    for attr, (key, value) in match_fields(kv, _DETAIL_FIELDS).items():
+        if attr in _DETAIL_FLOATS or attr in _DETAIL_INTS:
+            num = parse_number(value.replace(",", ""))
             if num is None:
                 continue
-            setattr(detail, attr, int(num) if attr in {"channel", "max_clients"} else num)
+            setattr(detail, attr, int(num) if attr in _DETAIL_INTS else num)
+        elif attr == "ip_address":
+            ip, _, prefix = value.partition("/")
+            if _valid_ip(ip) is None:
+                continue
+            detail.ip_address = ip
+            if prefix.isdigit() and detail.netmask is None:
+                detail.netmask = str(ipaddress.ip_network(f"0.0.0.0/{prefix}").netmask)
         else:
             setattr(detail, attr, value)
+        detail.mapped_keys.append(key)
+        detail.mapped_fields[attr] = key
     # Some firmwares report "Channel=6(20MHz)".
-    if detail.channel_width is None and detail.raw:
+    if detail.channel_width is None:
         for key in ("operational_channel", "channel"):
             if key in kv:
                 _, _, width = _parse_channel(kv[key])
@@ -860,6 +942,178 @@ def parse_show_interface_radio(text: str, name: str) -> RadioDetail:
                     detail.channel_width = width
                     break
     return detail
+
+
+def parse_show_interface_radio(text: str, name: str) -> InterfaceDetail:
+    """Backwards compatible alias of parse_show_interface_detail."""
+    return parse_show_interface_detail(text, name)
+
+
+# --------------------------------------------------------------------------
+# show cpu / show memory / show hw-info
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class SystemStats:
+    cpu_total: float | None = None  # %
+    cpu_user: float | None = None  # %
+    cpu_system: float | None = None  # %
+    memory_total_kb: int | None = None
+    memory_free_kb: int | None = None
+    memory_used_kb: int | None = None
+    raw: dict[str, str] = field(default_factory=dict)
+    mapped_keys: list[str] = field(default_factory=list)
+
+    @property
+    def memory_used_percent(self) -> float | None:
+        if not self.memory_total_kb:
+            return None
+        used = self.memory_used_kb
+        if used is None and self.memory_free_kb is not None:
+            used = self.memory_total_kb - self.memory_free_kb
+        if used is None:
+            return None
+        return round(used * 100 / self.memory_total_kb, 1)
+
+
+_SIZE_UNITS_KB = {"b": 1 / 1024, "byte": 1 / 1024, "bytes": 1 / 1024, "k": 1, "kb": 1, "kib": 1,
+                  "m": 1024, "mb": 1024, "mib": 1024, "g": 1048576, "gb": 1048576, "gib": 1048576}  # fmt: skip
+
+
+def _to_kb(value: str | None) -> int | None:
+    if not value:
+        return None
+    match = re.search(r"(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?", value.replace(",", ""))
+    if not match:
+        return None
+    unit = (match.group(2) or "kb").lower()
+    factor = _SIZE_UNITS_KB.get(unit, 1)
+    return int(float(match.group(1)) * factor)
+
+
+def parse_show_cpu(text: str) -> SystemStats:
+    kv = parse_key_values(text)
+    stats = SystemStats(raw=kv)
+    for key, value in kv.items():
+        if "cpu" not in key and "utilization" not in key and "usage" not in key:
+            continue
+        num = parse_number(value)
+        if num is None:
+            continue
+        if "total" in key and stats.cpu_total is None:
+            stats.cpu_total = num
+        elif "user" in key and stats.cpu_user is None:
+            stats.cpu_user = num
+        elif ("system" in key or "kernel" in key) and stats.cpu_system is None:
+            stats.cpu_system = num
+        else:
+            continue
+        stats.mapped_keys.append(key)
+    if stats.cpu_total is None:
+        if stats.cpu_user is not None and stats.cpu_system is not None:
+            stats.cpu_total = round(stats.cpu_user + stats.cpu_system, 2)
+        else:
+            match = re.search(r"(\d+(?:\.\d+)?)\s*%", clean_output(text))
+            if match:
+                stats.cpu_total = float(match.group(1))
+    return stats
+
+
+def parse_show_memory(text: str) -> SystemStats:
+    kv = parse_key_values(text)
+    stats = SystemStats(raw=kv)
+    for key, value in kv.items():
+        if "total" in key and stats.memory_total_kb is None:
+            stats.memory_total_kb = _to_kb(value)
+        elif "free" in key and stats.memory_free_kb is None:
+            stats.memory_free_kb = _to_kb(value)
+        elif "used" in key and stats.memory_used_kb is None:
+            stats.memory_used_kb = _to_kb(value)
+        else:
+            continue
+        stats.mapped_keys.append(key)
+    if stats.memory_total_kb is None:
+        # Linux 'free' style table: header "total used free ..." + "Mem: n n n"
+        lines = clean_output(text).split("\n")
+        for idx, line in enumerate(lines):
+            if line.strip().lower().startswith("mem:"):
+                header = lines[idx - 1].lower().split() if idx > 0 else ["total", "used", "free"]
+                values = line.split()[1:]
+                cols = dict(zip(header, values, strict=False))
+                stats.memory_total_kb = _to_kb(cols.get("total"))
+                stats.memory_used_kb = _to_kb(cols.get("used"))
+                stats.memory_free_kb = _to_kb(cols.get("free"))
+                break
+    return stats
+
+
+@dataclass
+class HardwareInfo:
+    serial: str | None = None
+    hw_revision: str | None = None
+    product: str | None = None
+    raw: dict[str, str] = field(default_factory=dict)
+    mapped_keys: list[str] = field(default_factory=list)
+
+
+def parse_show_hw_info(text: str) -> HardwareInfo:
+    kv = parse_key_values(text)
+    info = HardwareInfo(raw=kv)
+    for key, value in kv.items():
+        value = _none_if_empty(value)
+        if value is None:
+            continue
+        if info.serial is None and "serial" in key:
+            info.serial = value
+        elif info.hw_revision is None and ("revision" in key or key in {"hw_rev", "hw_version", "hardware_version"}):
+            info.hw_revision = value
+        elif info.product is None and key in {"product_name", "product", "model", "model_name"}:
+            info.product = value
+        else:
+            continue
+        info.mapped_keys.append(key)
+    return info
+
+
+# --------------------------------------------------------------------------
+# Raw values (for the generic "every field" sensors)
+# --------------------------------------------------------------------------
+
+_RAW_NUM_RE = re.compile(
+    r"^(-?\d+(?:\.\d+)?)\s*(%|dBm|dB|Mbps|Kbps|Gbps|bps|MHz|GHz|KB|MB|GB|bytes|ms|seconds|sec|s)?\s*;?$",
+    re.IGNORECASE,
+)
+_RAW_UNIT_CANON = {
+    "%": "%", "dbm": "dBm", "db": "dB", "mbps": "Mbit/s", "kbps": "kbit/s", "gbps": "Gbit/s",
+    "bps": "bit/s", "mhz": "MHz", "ghz": "GHz", "kb": "kB", "mb": "MB", "gb": "GB",
+    "bytes": "B", "ms": "ms", "seconds": "s", "sec": "s", "s": "s",
+}  # fmt: skip
+
+
+def parse_raw_value(value: str | None) -> tuple[float | int | str | None, str | None]:
+    """'17 dBm' -> (17, 'dBm'); '1500' -> (1500, None); 'access' -> ('access', None)."""
+    value = _none_if_empty(value)
+    if value is None:
+        return None, None
+    match = _RAW_NUM_RE.match(value.replace(",", "") if re.match(r"^-?[\d,]+(\.\d+)?\s*\S*$", value) else value)
+    if match:
+        num = float(match.group(1))
+        unit = _RAW_UNIT_CANON.get((match.group(2) or "").lower())
+        return (int(num) if num.is_integer() and "." not in match.group(1) else num), unit
+    return value[:255], None
+
+
+def parse_rate_mbps(value: str | None) -> float | None:
+    """Station PHY rates: '72M' -> 72.0, '1.2G' -> 1200.0, '54' -> 54.0."""
+    if not value:
+        return None
+    match = re.match(r"^\s*(\d+(?:\.\d+)?)\s*([kKmMgG])?", value)
+    if not match:
+        return None
+    num = float(match.group(1))
+    unit = (match.group(2) or "m").lower()
+    return num / 1000 if unit == "k" else num * 1000 if unit == "g" else num
 
 
 # --------------------------------------------------------------------------
@@ -872,6 +1126,7 @@ class BootParams:
     region_code: str | None = None
     country_code: str | None = None
     raw: dict[str, str] = field(default_factory=dict)
+    mapped_keys: list[str] = field(default_factory=list)
 
 
 def parse_show_boot_param(text: str) -> BootParams:
@@ -880,8 +1135,10 @@ def parse_show_boot_param(text: str) -> BootParams:
     for key, value in kv.items():
         if params.region_code is None and "region" in key:
             params.region_code = _none_if_empty(value)
+            params.mapped_keys.append(key)
         elif params.country_code is None and "country" in key:
             params.country_code = _none_if_empty(value)
+            params.mapped_keys.append(key)
     return params
 
 

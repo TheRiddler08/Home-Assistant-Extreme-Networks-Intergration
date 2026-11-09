@@ -23,24 +23,31 @@ from .client import (
     AerohiveError,
 )
 from .const import (
-    BOOT_PARAM_REFRESH_SECONDS,
+    CONF_DETAILED_STATS,
     CONF_SCAN_INTERVAL,
+    DEFAULT_DETAILED_STATS,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     MANUFACTURER,
+    SLOW_REFRESH_SECONDS,
 )
 from .parsers import (
     BootParams,
+    HardwareInfo,
     Interface,
-    RadioDetail,
+    InterfaceDetail,
     Ssid,
     Station,
+    SystemStats,
     VersionInfo,
     find_cli_error,
     is_unsupported_command,
     parse_show_boot_param,
+    parse_show_cpu,
+    parse_show_hw_info,
     parse_show_interface,
-    parse_show_interface_radio,
+    parse_show_interface_detail,
+    parse_show_memory,
     parse_show_ssid,
     parse_show_station,
     parse_show_version,
@@ -53,6 +60,31 @@ type AerohiveConfigEntry = ConfigEntry[AerohiveCoordinator]
 
 
 @dataclass
+class Throughput:
+    """Traffic rate of one interface, derived from byte counters (kbit/s)."""
+
+    rx_kbps: float | None = None
+    tx_kbps: float | None = None
+
+    @property
+    def total_kbps(self) -> float | None:
+        if self.rx_kbps is None and self.tx_kbps is None:
+            return None
+        return round((self.rx_kbps or 0) + (self.tx_kbps or 0), 1)
+
+
+def _sum_rates(rates: list[Throughput]) -> Throughput:
+    if not rates:
+        return Throughput()
+    rx = [r.rx_kbps for r in rates if r.rx_kbps is not None]
+    tx = [r.tx_kbps for r in rates if r.tx_kbps is not None]
+    return Throughput(
+        rx_kbps=round(sum(rx), 1) if rx else None,
+        tx_kbps=round(sum(tx), 1) if tx else None,
+    )
+
+
+@dataclass
 class AerohiveData:
     """Snapshot of everything read from the device in one poll."""
 
@@ -61,14 +93,26 @@ class AerohiveData:
     interfaces: dict[str, Interface] = field(default_factory=dict)
     ssids: dict[str, Ssid] = field(default_factory=dict)
     stations: dict[str, Station] = field(default_factory=dict)
-    radios: dict[str, RadioDetail] = field(default_factory=dict)
+    details: dict[str, InterfaceDetail] = field(default_factory=dict)
+    throughput: dict[str, Throughput] = field(default_factory=dict)
     boot_params: BootParams | None = None
+    hardware: HardwareInfo | None = None
+    cpu: SystemStats | None = None
+    memory: SystemStats | None = None
     boot_time: datetime | None = None
 
     @property
     def mac(self) -> str | None:
         mgt = self.interfaces.get("mgt0")
         return mgt.mac if mgt else None
+
+    @property
+    def radios(self) -> dict[str, InterfaceDetail]:
+        return {k: v for k, v in self.details.items() if k in self.interfaces and self.interfaces[k].is_radio}
+
+    @property
+    def mgt(self) -> InterfaceDetail | None:
+        return self.details.get("mgt0")
 
     def radio_names(self) -> list[str]:
         """Radios worth exposing: up with a channel, or carrying an SSID."""
@@ -87,6 +131,21 @@ class AerohiveData:
     def ssids_on_radio(self, radio: str) -> list[str]:
         return sorted({i.ssid for i in self.interfaces.values() if i.parent == radio and i.ssid})
 
+    def ssid_subinterfaces(self, ssid: str) -> list[Interface]:
+        return [i for i in self.interfaces.values() if i.parent and i.ssid == ssid]
+
+    def ssid_broadcasting(self, ssid: str) -> bool:
+        """True if the SSID is bound to at least one radio that is up and on a channel."""
+        for sub in self.ssid_subinterfaces(ssid):
+            radio = self.interfaces.get(sub.parent or "")
+            if sub.is_up is False or radio is None or radio.is_up is False or radio.channel is None:
+                continue
+            return True
+        return False
+
+    def broadcasting_ssids(self) -> list[str]:
+        return sorted(s for s in self.ssids if self.ssid_broadcasting(s))
+
     def station_ssid(self, station: Station) -> str | None:
         if station.ssid:
             return station.ssid
@@ -98,6 +157,17 @@ class AerohiveData:
 
     def clients_on_radio(self, radio: str) -> int:
         return sum(1 for s in self.stations.values() if s.radio == radio)
+
+    def wireless_throughput(self) -> Throughput:
+        return _sum_rates([self.throughput[r] for r in self.radio_names() if r in self.throughput])
+
+    def wired_throughput(self) -> Throughput:
+        return _sum_rates([t for n, t in self.throughput.items() if n.startswith("eth") and "." not in n])
+
+    def ssid_throughput(self, ssid: str) -> Throughput:
+        return _sum_rates(
+            [self.throughput[i.name] for i in self.ssid_subinterfaces(ssid) if i.name in self.throughput]
+        )
 
 
 class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
@@ -117,10 +187,15 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             update_interval=timedelta(seconds=interval),
         )
         self.client = client
+        self.detailed_stats: bool = entry.options.get(CONF_DETAILED_STATS, DEFAULT_DETAILED_STATS)
         self._unsupported: set[str] = set()
+        self._slow_at: float | None = None
         self._boot_params: BootParams | None = None
-        self._boot_params_at = 0.0
+        self._hardware: HardwareInfo | None = None
+        self._mgt: InterfaceDetail | None = None
         self._boot_time: datetime | None = None
+        # name -> (monotonic time, rx_bytes, tx_bytes) from the previous poll
+        self._counters: dict[str, tuple[float, int | None, int | None]] = {}
 
     # ------------------------------------------------------------------ #
     # Polling
@@ -145,6 +220,35 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         except AerohiveError as err:
             raise UpdateFailed(f"Error communicating with {self.client.host}: {err}") from err
 
+    def _detail_targets(self, data: AerohiveData) -> list[str]:
+        """Interfaces whose 'show interface <name>' detail is read each poll."""
+        targets = list(data.radio_names())
+        if self.detailed_stats:
+            for name, iface in sorted(data.interfaces.items()):
+                if name.startswith("eth") and iface.parent is None and iface.is_up:
+                    targets.append(name)
+                elif iface.parent in targets and iface.ssid and iface.is_up is not False:
+                    targets.append(name)
+        return targets
+
+    def _rate(self, name: str, detail: InterfaceDetail, now: float) -> Throughput | None:
+        if detail.rx_bytes is None and detail.tx_bytes is None:
+            return None
+        prev = self._counters.get(name)
+        self._counters[name] = (now, detail.rx_bytes, detail.tx_bytes)
+        if prev is None:
+            return Throughput()
+        elapsed = now - prev[0]
+        if elapsed <= 0:
+            return Throughput()
+
+        def kbps(current: int | None, previous: int | None) -> float | None:
+            if current is None or previous is None or current < previous:
+                return None  # unknown or counter reset/wrap
+            return round((current - previous) * 8 / 1000 / elapsed, 1)
+
+        return Throughput(kbps(detail.rx_bytes, prev[1]), kbps(detail.tx_bytes, prev[2]))
+
     async def _fetch(self) -> AerohiveData:
         data = AerohiveData()
         data.version = parse_show_version(await self.client.run("show version"))
@@ -152,18 +256,36 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         data.ssids = parse_show_ssid(await self.client.run("show ssid"))
         station_out = await self._optional("show station")
         data.stations = parse_show_station(station_out) if station_out else {}
-        for radio in data.radio_names():
-            out = await self._optional(f"show interface {radio}")
-            if out:
-                data.radios[radio] = parse_show_interface_radio(out, radio)
+
+        for name in self._detail_targets(data):
+            out = await self._optional(f"show interface {name}")
+            if not out:
+                continue
+            detail = parse_show_interface_detail(out, name)
+            data.details[name] = detail
+            rate = self._rate(name, detail, time.monotonic())
+            if rate is not None:
+                data.throughput[name] = rate
+
+        if self.detailed_stats:
+            out = await self._optional("show cpu")
+            data.cpu = parse_show_cpu(out) if out else None
+            out = await self._optional("show memory")
+            data.memory = parse_show_memory(out) if out else None
 
         now = time.monotonic()
-        if self._boot_params is None or now - self._boot_params_at > BOOT_PARAM_REFRESH_SECONDS:
-            out = await self._optional("show boot-param")
-            if out:
+        if self._slow_at is None or now - self._slow_at > SLOW_REFRESH_SECONDS:
+            self._slow_at = now
+            if out := await self._optional("show boot-param"):
                 self._boot_params = parse_show_boot_param(out)
-            self._boot_params_at = now
+            if out := await self._optional("show hw-info"):
+                self._hardware = parse_show_hw_info(out)
+            if out := await self._optional("show interface mgt0"):
+                self._mgt = parse_show_interface_detail(out, "mgt0")
         data.boot_params = self._boot_params
+        data.hardware = self._hardware
+        if self._mgt is not None and "mgt0" not in data.details:
+            data.details["mgt0"] = self._mgt
         data.hostname = self.client.hostname
 
         if data.version.uptime_seconds is not None:
@@ -183,16 +305,22 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
     def device_info(self) -> DeviceInfo:
         data = self.data or AerohiveData()
         unique = self.config_entry.unique_id or self.client.host
+        hardware = data.hardware or HardwareInfo()
+        hw_parts = [p for p in (
+            hardware.hw_revision and f"Rev {hardware.hw_revision}",
+            data.version.bootloader and f"Bootloader {data.version.bootloader}",
+        ) if p]  # fmt: skip
         info = DeviceInfo(
             identifiers={(DOMAIN, unique)},
             manufacturer=MANUFACTURER,
-            model=data.version.platform,
+            model=data.version.platform or hardware.product,
             name=data.hostname or self.config_entry.title,
             sw_version=data.version.version,
-            hw_version=data.version.bootloader and f"Bootloader {data.version.bootloader}",
-            serial_number=data.version.serial,
-            configuration_url=None,
+            hw_version=", ".join(hw_parts) or None,
+            serial_number=hardware.serial or data.version.serial,
         )
+        if data.mgt and data.mgt.ip_address:
+            info["configuration_url"] = f"https://{data.mgt.ip_address}"
         if data.mac:
             info["connections"] = {(CONNECTION_NETWORK_MAC, data.mac)}
         return info

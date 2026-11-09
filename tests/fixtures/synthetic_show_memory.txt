@@ -1,0 +1,3 @@
+Total Memory:          1006108 KB
+Free Memory:           575664 KB
+Used Memory:           430444 KB

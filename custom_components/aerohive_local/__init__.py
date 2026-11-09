@@ -149,7 +149,8 @@ async def _async_update_listener(hass: HomeAssistant, entry: AerohiveConfigEntry
 
 async def async_unload_entry(hass: HomeAssistant, entry: AerohiveConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unloaded:
-        await entry.runtime_data.client.close()
+    coordinator = getattr(entry, "runtime_data", None)
+    if unloaded and coordinator is not None:
+        await coordinator.client.close()
     return unloaded
 

@@ -27,10 +27,14 @@ from homeassistant.helpers.selector import (
 from . import async_create_client
 from .client import AerohiveAuthError, AerohiveError
 from .const import (
+    CONF_DETAILED_STATS,
+    CONF_RAW_SENSORS,
     CONF_SCAN_INTERVAL,
     CONF_SSH_KEY,
     CONF_TRACKED_CLIENTS,
+    DEFAULT_DETAILED_STATS,
     DEFAULT_PORT,
+    DEFAULT_RAW_SENSORS,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     MAX_SCAN_INTERVAL,
@@ -170,6 +174,8 @@ class AerohiveOptionsFlow(OptionsFlow):
                     data={
                         CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
                         CONF_TRACKED_CLIENTS: tracked,
+                        CONF_DETAILED_STATS: user_input.get(CONF_DETAILED_STATS, DEFAULT_DETAILED_STATS),
+                        CONF_RAW_SENSORS: user_input.get(CONF_RAW_SENSORS, DEFAULT_RAW_SENSORS),
                     }
                 )
 
@@ -197,6 +203,14 @@ class AerohiveOptionsFlow(OptionsFlow):
                 vol.Optional(CONF_TRACKED_CLIENTS, default=current_tracked): SelectSelector(
                     SelectSelectorConfig(options=options, multiple=True, custom_value=True)
                 ),
+                vol.Optional(
+                    CONF_DETAILED_STATS,
+                    default=self.config_entry.options.get(CONF_DETAILED_STATS, DEFAULT_DETAILED_STATS),
+                ): bool,
+                vol.Optional(
+                    CONF_RAW_SENSORS,
+                    default=self.config_entry.options.get(CONF_RAW_SENSORS, DEFAULT_RAW_SENSORS),
+                ): bool,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors)

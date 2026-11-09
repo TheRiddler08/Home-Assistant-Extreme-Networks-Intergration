@@ -1,0 +1,6 @@
+Hardware revision:       02
+Product name:            AP460C
+Serial number:           01234567890123
+Manufacturing date:      20200101
+Ethernet MAC address:    bcf3:107c:0680
+Number of MAC addresses: 64

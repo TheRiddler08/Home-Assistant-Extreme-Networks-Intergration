@@ -382,3 +382,74 @@ def test_is_unsupported_command() -> None:
     long_ok = "Mode=access;\nChannel=6;\nNoise floor=-95;\nRx invalid frames=0;"
     assert not p.is_unsupported_command(long_ok)
     assert not p.is_unsupported_command("")
+
+
+def test_detail_counters_and_ethernet() -> None:
+    eth = p.parse_show_interface_detail(load_fixture("synthetic_show_interface_eth1.txt"), "eth1")
+    assert eth.rx_bytes == 1234567890
+    assert eth.tx_bytes == 987654321
+    assert eth.rx_dropped == 3
+    assert eth.speed_mbps == 1000
+    assert eth.duplex == "full-duplex"
+    assert eth.mtu == 1500
+    assert eth.operational_state == "up"
+    wifi = p.parse_show_interface_detail(load_fixture("synthetic_show_interface_wifi0.txt"), "wifi0")
+    assert (wifi.rx_bytes, wifi.tx_bytes, wifi.tx_errors) == (10000000, 50000000, 1)
+    assert "mtu" in wifi.mapped_keys
+
+
+def test_detail_mgt0_addressing() -> None:
+    mgt = p.parse_show_interface_detail(load_fixture("synthetic_show_interface_mgt0.txt"), "mgt0")
+    assert mgt.ip_address == "192.168.1.10"
+    assert mgt.netmask == "255.255.255.0"
+    assert mgt.gateway == "192.168.1.1"
+    cidr = p.parse_show_interface_detail("IP addr=10.0.0.5/24;", "mgt0")
+    assert cidr.ip_address == "10.0.0.5"
+    assert cidr.netmask == "255.255.255.0"
+
+
+def test_cpu_memory_hw() -> None:
+    cpu = p.parse_show_cpu(load_fixture("synthetic_show_cpu.txt"))
+    assert (cpu.cpu_total, cpu.cpu_user, cpu.cpu_system) == (5.94, 2.97, 2.97)
+    mem = p.parse_show_memory(load_fixture("synthetic_show_memory.txt"))
+    assert mem.memory_total_kb == 1006108
+    assert mem.memory_free_kb == 575664
+    assert mem.memory_used_percent == 42.8
+    free_style = "             total       used       free\nMem:       1000000     250000     750000\n"
+    mem2 = p.parse_show_memory(free_style)
+    assert mem2.memory_used_percent == 25.0
+    assert p.parse_show_cpu("CPU: 12.5% busy").cpu_total == 12.5
+    hw = p.parse_show_hw_info(load_fixture("synthetic_show_hw_info.txt"))
+    assert hw.serial == "01234567890123"
+    assert hw.hw_revision == "02"
+    assert hw.product == "AP460C"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("17 dBm", (17, "dBm")),
+        ("3%", (3, "%")),
+        ("1,234", (1234, None)),
+        ("-95.5 dBm", (-95.5, "dBm")),
+        ("1000Mbps", (1000, "Mbit/s")),
+        ("access", ("access", None)),
+        ("bcf3:107c:0690", ("bcf3:107c:0690", None)),
+        ("-", (None, None)),
+    ],
+)
+def test_parse_raw_value(value: str, expected: tuple) -> None:
+    assert p.parse_raw_value(value) == expected
+
+
+@pytest.mark.parametrize(("value", "mbps"), [("72M", 72.0), ("866M", 866.0), ("1.2G", 1200.0), ("54", 54.0), ("", None), ("-", None)])
+def test_parse_rate_mbps(value: str, mbps: float | None) -> None:
+    assert p.parse_rate_mbps(value) == mbps
+
+
+@pytest.mark.parametrize("garbage", ["", "\x00", "a" * 5000, "Total: lots"])
+def test_system_parsers_never_raise(garbage: str) -> None:
+    p.parse_show_cpu(garbage)
+    p.parse_show_memory(garbage)
+    p.parse_show_hw_info(garbage)
+    p.parse_show_interface_detail(garbage, "eth0")

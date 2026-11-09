@@ -1,0 +1,6 @@
+Eth1      MAC addr=bcf3:107c:0681;      MTU=1500;
+Admin state=enabled; Operational state=up;
+Duplex=full-duplex; Speed=1000Mbps;
+Rx packets=987654; Rx errors=0; Rx dropped=3;
+Tx packets=876543; Tx errors=0; Tx dropped=0;
+Rx bytes=1,234,567,890; Tx bytes=987654321;

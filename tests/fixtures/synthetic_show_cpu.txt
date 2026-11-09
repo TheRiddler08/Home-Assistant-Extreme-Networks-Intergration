@@ -1,0 +1,3 @@
+CPU total utilization:                5.940%
+CPU user utilization:                 2.970%
+CPU system utilization:               2.970%

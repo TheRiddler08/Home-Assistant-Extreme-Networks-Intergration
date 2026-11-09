@@ -1,0 +1,4 @@
+Mgt0      MAC addr=bcf3:107c:0680;      MTU=1500;
+IP addr=192.168.1.10; Netmask=255.255.255.0; Default Gateway=192.168.1.1;
+VLAN id=1; Native vlan id=1;
+DHCP client=enabled;
