@@ -1,0 +1,50 @@
+run_show_command:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+    command:
+      required: true
+      example: "show station"
+      selector:
+        text:
+    redact:
+      default: true
+      selector:
+        boolean:
+
+set_ssid_password:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+    ssid:
+      required: true
+      selector:
+        text:
+    password:
+      required: true
+      selector:
+        text:
+          type: password
+    security_object:
+      required: false
+      selector:
+        text:
+
+disconnect_client:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+    mac:
+      required: true
+      example: "aa:bb:cc:dd:ee:ff"
+      selector:
+        text:

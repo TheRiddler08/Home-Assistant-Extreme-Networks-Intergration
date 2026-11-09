@@ -1,0 +1,15 @@
+Chan=channel number; Pow=Power in dBm;
+A-Mode=Authentication mode; Cipher=Encryption mode;
+A-Time=Associated time; Auth=Authenticated;
+UPID=User profile Identifier; Phymode=Physical mode;
+
+Ifname=wifi0.1, Ifindex=13, SSID=AP460C:
+Mac Addr       IP Addr         Chan Tx Rate Rx Rate Pow(SNR)    A-Mode     Cipher   A-Time   VLAN Auth UPID Phymode
+-------------- --------------- ---- ------- ------- ----------- ---------- -------- -------- ---- ---- ---- -------
+e8b1:fc5a:1b2c 192.168.1.50    6      72M     65M   -45(50)     wpa2-psk   aes ccmp 00:10:23    1 Yes     1 11ng
+a4c3:f0aa:0001 0.0.0.0         6      24M     12M   -71(24)     wpa2-psk   aes ccmp 00:00:05    1 No      1 11g
+
+Ifname=wifi1.1, Ifindex=15, SSID=AP460C:
+Mac Addr       IP Addr         Chan Tx Rate Rx Rate Pow(SNR)    A-Mode     Cipher   A-Time   VLAN Auth UPID Phymode
+-------------- --------------- ---- ------- ------- ----------- ---------- -------- -------- ---- ---- ---- -------
+3c22:fb11:2233 192.168.1.61    36    866M    780M   -52(43)     wpa2-psk   aes ccmp 01:02:03    1 Yes     1 11ac

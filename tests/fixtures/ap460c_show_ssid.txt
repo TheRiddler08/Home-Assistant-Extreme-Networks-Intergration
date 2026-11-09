@@ -1,0 +1,3 @@
+No. Name                             Frag    RTS     DTIM period Max client  Mac filter
+--- ----                             ----    ---     ----------- ---------- ----------
+1   AP460C                           2346    2346    1           50          None

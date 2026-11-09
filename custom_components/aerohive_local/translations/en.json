@@ -1,0 +1,101 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Aerohive / Extreme Networks device",
+        "description": "Connect to an access point or branch router over SSH. Provide a password, an SSH private key path, or both.",
+        "data": {
+          "host": "Host",
+          "username": "Username",
+          "password": "Password",
+          "port": "Port",
+          "ssh_key_path": "SSH private key path (optional)",
+          "scan_interval": "Scan interval"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the device.",
+          "ssh_key_path": "Absolute path to a private key file readable by Home Assistant, e.g. /config/.ssh/aerohive.",
+          "scan_interval": "Seconds between polls. Keep this at 60 or higher for a BR100."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "description": "The device rejected the stored credentials.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect. Check host, port and that SSH is enabled on the device.",
+      "invalid_auth": "Invalid username, password or key.",
+      "invalid_key": "The SSH key file could not be read.",
+      "password_or_key": "Enter a password or an SSH key path.",
+      "unknown": "Unexpected error, see the log."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Aerohive options",
+        "data": {
+          "scan_interval": "Scan interval",
+          "tracked_clients": "Clients to track"
+        },
+        "data_description": {
+          "tracked_clients": "Create a device tracker only for these client MAC addresses (pick from connected clients or type a MAC)."
+        }
+      }
+    },
+    "error": {
+      "invalid_mac": "One of the entries is not a valid MAC address."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "firmware": { "name": "Firmware" },
+      "platform": { "name": "Platform" },
+      "boot_time": { "name": "Boot time" },
+      "clients": { "name": "Connected clients" },
+      "region_code": { "name": "Region code" },
+      "country_code": { "name": "Country code" }
+    },
+    "button": {
+      "reboot": { "name": "Reboot" }
+    }
+  },
+  "services": {
+    "run_show_command": {
+      "name": "Run show command",
+      "description": "Run a read-only 'show' command on the device and return the raw output (for capturing parser samples).",
+      "fields": {
+        "device_id": { "name": "Device", "description": "The Aerohive device." },
+        "command": { "name": "Command", "description": "A command starting with 'show', e.g. 'show station'." },
+        "redact": { "name": "Redact secrets", "description": "Mask key/password arguments in the output." }
+      }
+    },
+    "set_ssid_password": {
+      "name": "Set SSID password",
+      "description": "Change the WPA2-PSK key of an SSID and save the configuration.",
+      "fields": {
+        "device_id": { "name": "Device", "description": "The Aerohive device." },
+        "ssid": { "name": "SSID", "description": "SSID name." },
+        "password": { "name": "Password", "description": "New key, 8-63 printable ASCII characters (no double quotes)." },
+        "security_object": { "name": "Security object", "description": "Security-object name. Looked up in the running config if omitted (falls back to the SSID name)." }
+      }
+    },
+    "disconnect_client": {
+      "name": "Disconnect client",
+      "description": "De-authenticate a wireless client by MAC address.",
+      "fields": {
+        "device_id": { "name": "Device", "description": "The Aerohive device." },
+        "mac": { "name": "MAC address", "description": "Client MAC address in any common format." }
+      }
+    }
+  }
+}

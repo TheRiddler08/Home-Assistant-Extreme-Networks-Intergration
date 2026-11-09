@@ -1,0 +1,14 @@
+{
+  "domain": "aerohive_local",
+  "name": "Aerohive / Extreme Networks (Local SSH)",
+  "codeowners": ["@theriddler08"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/theriddler08/home-assistant-extreme-networks-intergration",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/theriddler08/home-assistant-extreme-networks-intergration/issues",
+  "loggers": ["asyncssh", "custom_components.aerohive_local"],
+  "requirements": ["asyncssh==2.21.0"],
+  "version": "0.1.0"
+}

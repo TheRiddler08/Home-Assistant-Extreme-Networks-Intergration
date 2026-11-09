@@ -1,0 +1,7 @@
+{
+  "services": {
+    "run_show_command": { "service": "mdi:console" },
+    "set_ssid_password": { "service": "mdi:form-textbox-password" },
+    "disconnect_client": { "service": "mdi:lan-disconnect" }
+  }
+}

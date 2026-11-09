@@ -1,0 +1,10 @@
+Name           MAC addr      Mode       State  Chan(Width)  VLAN   Radio       Hive                  SSID
+----------- -------------- ------------ ----- ------------- ---- ----------- -------------------- ----------
+Mgt0        bcf3:107c:0680    -           U     -              1      -             hive0              -
+Eth0        bcf3:107c:0680 backhaul       D     -              1      -             hive0              -
+Eth1        bcf3:107c:0681 backhaul       U     -              1      -             hive0              -
+Wifi0       bcf3:107c:0690 access         U       6(20MHz)     -  radio_axg0          -                -
+Wifi0.1     bcf3:107c:0694 access         U       6(20MHz)     -  radio_axg0        hive0           AP460C
+Wifi1       bcf3:107c:06b0 access         U      36(20MHz)     -  radio_axa0          -                -
+Wifi1.1     bcf3:107c:06b4 access         U      36(20MHz)     -  radio_axa0        hive0           AP460C
+Wifi2       bcf3:107c:06a0 access         U    Down(20MHz)     -  radio_axa0          -                -

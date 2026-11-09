@@ -1,0 +1,4 @@
+Version: IQ Engine 10.5r3 build-278650
+Platform:           AP460C
+Bootloader ver:     v0.0.4.71
+Uptime:             0 weeks, 0 days, 3 hours, 12 minutes, 45 seconds

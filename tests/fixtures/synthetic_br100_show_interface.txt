@@ -1,0 +1,10 @@
+Name        MAC addr       Mode     State Chan(Width) VLAN Radio     Hive    SSID
+----------- -------------- -------- ----- ----------- ---- --------- ------- ---------
+Mgt0        0019:7700:1120 -        U     -           1    -         hive0   -
+Eth0        0019:7700:1121 wan      U     -           -    -         -       -
+Eth1        0019:7700:1122 bridge   U     -           1    -         -       -
+Eth2        0019:7700:1123 bridge   D     -           1    -         -       -
+Eth3        0019:7700:1124 bridge   D     -           1    -         -       -
+Eth4        0019:7700:1125 bridge   D     -           1    -         -       -
+Wifi0       0019:7700:1130 access   U     11          -    radio_ng0 -       -
+Wifi0.1     0019:7700:1134 access   U     11          -    radio_ng0 hive0   Home Net

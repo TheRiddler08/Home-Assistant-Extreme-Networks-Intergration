@@ -1,0 +1,10 @@
+AP460C#show interface wifi0
+Wifi0      MAC addr=bcf3:107c:0690;      MTU=1500;
+Mode=access; Radio profile=radio_axg0;
+Operational channel=6; Operational TX power=17 dBm; EIRP power=21 dBm;
+Channel width=20MHz;
+Noise floor=-95 dBm;
+Rx packets=123456; Rx errors=0; Rx dropped=0;
+Tx utilization=3%; Rx utilization=7%; Interference utilization=12%; Total utilization=22%;
+Max clients number=100;
+AP460C#

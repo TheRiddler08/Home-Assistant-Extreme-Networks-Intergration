@@ -1,0 +1,5 @@
+BootParam Version:  4
+Region Code:        FCC
+Country Code:       840
+Boot File:          /dev/mtd2
+Netdump:            Disable
