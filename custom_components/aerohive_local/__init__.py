@@ -246,7 +246,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: AerohiveConfigEntry) -> 
 
 def _ensure_overview_entry(hass: HomeAssistant) -> None:
     """Create the 'Aerohive Network' overview entry once (it can be disabled, not re-added)."""
-    if any(is_overview(e) for e in hass.config_entries.async_entries(DOMAIN, include_ignore=True)):
+    overview_entries = [e for e in hass.config_entries.async_entries(DOMAIN, include_ignore=True) if is_overview(e)]
+    for overview in overview_entries:
+        # A device just finished loading: let the overview pick it up now, not in 15 s.
+        if overview.state is ConfigEntryState.LOADED:
+            hass.async_create_task(overview.runtime_data.async_request_refresh())
+    if overview_entries:
         return
     if hass.data.setdefault(f"{DOMAIN}_overview_requested", False):
         return

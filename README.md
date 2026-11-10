@@ -216,6 +216,16 @@ typed key in an entity's state, the recorder or the logs. That's why the passwor
 look empty. The actions `create_ssid`, `delete_ssid` and `set_ssid_password` do the same for
 automations.
 
+**Deleted SSIDs disappear:** when an SSID is gone from the AP, its entities (switches, Wi-Fi
+key, max clients, sensors, overview controls) are removed from Home Assistant, rather than
+left behind as "unavailable". After a delete made from Home Assistant this happens on the
+next poll. If the SSID was removed elsewhere (CLI, HiveManager), it happens once it has been
+missing for two polls in a row, so one odd reply can't wipe your entities. Leftovers from
+SSIDs deleted while Home Assistant was off are cleaned up at startup. Re-creating an SSID
+brings its entities back. The same applies to the trackers and sensors of clients you remove
+from "Clients to track". The overview keeps an SSID's entities while an AP that has it is
+offline.
+
 **Upgrading from an older version:** the Wi-Fi key boxes and port switches used to be created
 disabled. Version 0.5 enables them once, automatically. Anything you disabled yourself stays
 disabled.

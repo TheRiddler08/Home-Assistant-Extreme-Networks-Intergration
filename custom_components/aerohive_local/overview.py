@@ -38,6 +38,7 @@ from homeassistant.helpers.update_coordinator import (
 
 from .const import CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_OVERVIEW, MANUFACTURER
 from .coordinator import AerohiveCoordinator, AerohiveData, SsidDraft
+from .entity import async_add_dynamic_entities
 from .parsers import radio_band
 from .ssid_manager import manager_buttons, manager_selects, manager_texts
 
@@ -90,6 +91,10 @@ class OverviewData:
     def ssid_names(self) -> list[str]:
         return sorted({s for ap in self.aps for s in ap.data.ssids})
 
+    def known_ssid_names(self) -> list[str]:
+        """SSIDs of every AP incl. offline ones (last known data): keeps entities stable."""
+        return sorted({s for d in self.devices if d.is_ap for s in d.data.ssids})
+
     def aps_with_ssid(self, ssid: str) -> list[DeviceView]:
         return [ap for ap in self.aps if ssid in ap.data.ssids]
 
@@ -121,16 +126,30 @@ class OverviewCoordinator(DataUpdateCoordinator[OverviewData]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         super().__init__(hass, _LOGGER, config_entry=entry, name=f"{DOMAIN} overview", update_interval=OVERVIEW_INTERVAL)
         self.ssid_draft = SsidDraft()
+        self.expect_removal = False
+        self._polled = False
+
+    @callback
+    def async_update_listeners(self) -> None:
+        super().async_update_listeners()
+        if self._polled:
+            self._polled = False
+            self.expect_removal = False
 
     async def _async_update_data(self) -> OverviewData:
         devices = []
         for entry in self.hass.config_entries.async_entries(DOMAIN):
-            if is_overview(entry) or entry.state is not ConfigEntryState.LOADED:
+            # SETUP_IN_PROGRESS: the device has polled already but is still adding its platforms.
+            if is_overview(entry) or entry.state not in (
+                ConfigEntryState.LOADED,
+                ConfigEntryState.SETUP_IN_PROGRESS,
+            ):
                 continue
             coordinator = getattr(entry, "runtime_data", None)
             if not isinstance(coordinator, AerohiveCoordinator) or coordinator.data is None:
                 continue
             devices.append(DeviceView(entry.title, coordinator, coordinator.last_update_success))
+        self._polled = True
         return OverviewData(devices=devices)
 
     @property
@@ -167,6 +186,7 @@ class OverviewCoordinator(DataUpdateCoordinator[OverviewData]):
         await self._fan_out(targets, f"create SSID {ssid}", lambda c: c.async_create_ssid(ssid, password, radios))
 
     async def async_delete_ssid(self, ssid: str) -> None:
+        self.expect_removal = True
         await self._fan_out(self.data.aps_with_ssid(ssid), f"delete SSID {ssid}", lambda c: c.async_delete_ssid(ssid))
 
     async def async_set_ssid_password(self, ssid: str, password: str) -> None:
@@ -421,22 +441,7 @@ def _dynamic(
     async_add_entities: AddEntitiesCallback,
     factory: Callable[[OverviewData], Iterable[tuple[str, Callable[[], Entity]]]],
 ) -> None:
-    known: set[str] = set()
-
-    @callback
-    def _check() -> None:
-        if coordinator.data is None:
-            return
-        new = []
-        for key, build in factory(coordinator.data):
-            if key not in known:
-                known.add(key)
-                new.append(build())
-        if new:
-            async_add_entities(new)
-
-    _check()
-    entry.async_on_unload(coordinator.async_add_listener(_check))
+    async_add_dynamic_entities(coordinator, entry, async_add_entities, factory, unique_base=OVERVIEW_UNIQUE_ID)
 
 
 def _coordinator(entry: ConfigEntry) -> OverviewCoordinator:
@@ -453,7 +458,7 @@ async def async_setup_platform_entities(platform: str, hass: HomeAssistant, entr
             for spec in SENSORS:
                 if spec.exists_fn(o):
                     yield spec.key, lambda spec=spec: OverviewSensor(coordinator, spec)
-            for ssid in o.ssid_names():
+            for ssid in o.known_ssid_names():
                 yield f"ssid_clients_{ssid}", lambda ssid=ssid: OverviewSsidClientsSensor(coordinator, ssid)
 
         _dynamic(coordinator, entry, add, sensors)
@@ -461,12 +466,12 @@ async def async_setup_platform_entities(platform: str, hass: HomeAssistant, entr
         add([OverviewAllOnlineBinarySensor(coordinator)])
     elif platform == "switch":
         _dynamic(coordinator, entry, add, lambda o: (
-            (f"ssid_all_{s}", lambda s=s: OverviewSsidSwitch(coordinator, s)) for s in o.ssid_names()
+            (f"ssid_all_{s}", lambda s=s: OverviewSsidSwitch(coordinator, s)) for s in o.known_ssid_names()
         ))  # fmt: skip
     elif platform == "text":
         add(manager_texts(coordinator, base, info, " (all APs)"))
         _dynamic(coordinator, entry, add, lambda o: (
-            (f"psk_{s}", lambda s=s: OverviewSsidKeyText(coordinator, s)) for s in o.ssid_names()
+            (f"psk_{s}", lambda s=s: OverviewSsidKeyText(coordinator, s)) for s in o.known_ssid_names()
         ))  # fmt: skip
     elif platform == "button":
         add(manager_buttons(coordinator, base, info, " (all APs)"))

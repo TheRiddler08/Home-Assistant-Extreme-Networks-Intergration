@@ -6,6 +6,7 @@ from typing import Any
 
 from homeassistant.components.device_tracker import ScannerEntity, SourceType
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -29,6 +30,17 @@ async def async_setup_entry(
         for raw in entry.options.get(CONF_TRACKED_CLIENTS, [])
         if (mac := normalize_mac(raw)) is not None
     }
+    # Remove trackers for MACs no longer listed under "Clients to track".
+    registry = er.async_get(hass)
+    base = entry.unique_id or entry.entry_id
+    wanted = {f"{base}_tracker_{mac}" for mac in macs}
+    for reg_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if (
+            reg_entry.domain == "device_tracker"
+            and reg_entry.unique_id.startswith(f"{base}_tracker_")
+            and reg_entry.unique_id not in wanted
+        ):
+            registry.async_remove(reg_entry.entity_id)
     async_add_entities(AerohiveClientTracker(coordinator, mac) for mac in sorted(macs))
 
 

@@ -543,3 +543,131 @@ async def test_switch_port_summary(hass: HomeAssistant, switch_entry: MockConfig
     assert st(_sw(hass, "sensor", "ports_down")).state == "1"
     assert st(_sw(hass, "sensor", "ports_disabled")).state == "1"  # 1/0/5 shut down in config
     assert st(_sw(hass, "sensor", "ports_errors")).state == "0"
+
+
+# --------------------------------------------------------------------------
+# Removing entities of SSIDs / clients that no longer exist
+# --------------------------------------------------------------------------
+
+NO_SSID_TABLE = (
+    "No. Name                             Frag    RTS     DTIM period Max client  Mac filter\n"
+    "--- ----                             ----    ---     ----------- ---------- ----------\n"
+)
+
+
+def _without_ap460c(client: FakeClient) -> None:
+    """Make the fake AP report that SSID AP460C is gone."""
+    client.responses["show ssid"] = NO_SSID_TABLE
+    client.responses["show interface"] = "\n".join(
+        line for line in load_fixture("ap460c_show_interface.txt").splitlines() if "AP460C" not in line
+    )
+    client.responses["show station"] = ""
+
+
+def _ssid_entities(hass: HomeAssistant, entry_id: str, ssid: str = "AP460C") -> list[str]:
+    return [
+        e.entity_id
+        for e in er.async_entries_for_config_entry(er.async_get(hass), entry_id)
+        if e.unique_id.endswith(f"_{ssid}") or f"_{ssid}_" in e.unique_id
+    ]
+
+
+async def test_deleted_ssid_entities_are_removed_immediately(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    before = _ssid_entities(hass, entry.entry_id)
+    assert len(before) >= 8  # switches, text, number, sensors, binary sensor...
+    _without_ap460c(_client())
+    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, MAC)})
+    await hass.services.async_call(DOMAIN, "delete_ssid", {"device_id": device.id, "ssid": "AP460C"}, blocking=True)
+    await hass.async_block_till_done()
+    assert _ssid_entities(hass, entry.entry_id) == []
+    for entity_id in before:
+        assert hass.states.get(entity_id) is None  # gone, not "unavailable"
+    # Re-creating the SSID brings the entities back.
+    _client().responses.update({
+        "show ssid": load_fixture("ap460c_show_ssid.txt"),
+        "show interface": load_fixture("ap460c_show_interface.txt"),
+    })  # fmt: skip
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    assert len(_ssid_entities(hass, entry.entry_id)) == len(before)
+
+
+async def test_ssid_removed_on_device_after_two_polls(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    coordinator = entry.runtime_data
+    _without_ap460c(_client())
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert _ssid_entities(hass, entry.entry_id)  # one odd poll: kept
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert _ssid_entities(hass, entry.entry_id) == []
+
+
+async def test_single_bad_reply_does_not_remove(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    coordinator = entry.runtime_data
+    client = _client()
+    good = dict(client.responses)
+    _without_ap460c(client)
+    await coordinator.async_refresh()
+    client.responses.update(good)
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    count = len(_ssid_entities(hass, entry.entry_id))
+    _without_ap460c(client)
+    await coordinator.async_refresh()  # miss counter was reset by the good poll
+    await hass.async_block_till_done()
+    assert len(_ssid_entities(hass, entry.entry_id)) == count
+
+
+async def test_leftovers_from_previous_runs_are_removed(hass: HomeAssistant) -> None:
+    from .test_init import USER_INPUT as UI
+
+    old = MockConfigEntry(domain=DOMAIN, unique_id=MAC, data=UI, title="AH-7c0680", minor_version=2)
+    old.add_to_hass(hass)
+    registry = er.async_get(hass)
+    stale = registry.async_get_or_create("text", DOMAIN, f"{MAC}_psk_OldGuest", config_entry=old)
+    stale_switch = registry.async_get_or_create("switch", DOMAIN, f"{MAC}_ssid_wifi0_OldGuest", config_entry=old)
+    unrelated = registry.async_get_or_create("sensor", DOMAIN, f"{MAC}_iface_eth9_rx_throughput", config_entry=old)
+    assert await hass.config_entries.async_setup(old.entry_id)
+    await hass.async_block_till_done()
+    assert registry.async_get(stale.entity_id) is None
+    assert registry.async_get(stale_switch.entity_id) is None
+    assert registry.async_get(unrelated.entity_id) is not None  # not an SSID/client entity
+    assert registry.async_get_entity_id("text", DOMAIN, f"{MAC}_psk_AP460C") is not None
+
+
+async def test_untracked_client_entities_are_removed(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_SCAN_INTERVAL: 60, CONF_TRACKED_CLIENTS: ["e8:b1:fc:5a:1b:2c"]}
+    )
+    await hass.async_block_till_done()
+    registry = er.async_get(hass)
+    assert registry.async_get_entity_id("device_tracker", DOMAIN, f"{MAC}_tracker_e8:b1:fc:5a:1b:2c")
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{MAC}_client_e8:b1:fc:5a:1b:2c_signal")
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_SCAN_INTERVAL: 60, CONF_TRACKED_CLIENTS: []}
+    )
+    await hass.async_block_till_done()
+    assert registry.async_get_entity_id("device_tracker", DOMAIN, f"{MAC}_tracker_e8:b1:fc:5a:1b:2c") is None
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{MAC}_client_e8:b1:fc:5a:1b:2c_signal") is None
+
+
+async def test_overview_keeps_ssid_entities_while_ap_offline(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    from custom_components.aerohive_local.client import AerohiveConnectionError
+
+    await hass.async_block_till_done()
+    overview = next(e for e in hass.config_entries.async_entries(DOMAIN) if e.data.get("entry_type") == "overview")
+    switch_id = _id(hass, "switch", "overview_ssid_all_AP460C")
+    _client().fail_with = AerohiveConnectionError("gone")
+    await entry.runtime_data.async_refresh()
+    for _ in range(3):
+        await overview.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(switch_id).state == "unavailable"  # kept while the AP is offline
+    _client().fail_with = None
+    await entry.runtime_data.async_refresh()
+    await overview.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(switch_id).state == "on"

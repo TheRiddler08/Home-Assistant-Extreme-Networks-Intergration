@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY, ConfigEntry
 from homeassistant.const import CONF_HOST
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import discovery_flow
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
@@ -317,6 +317,9 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._mgt: InterfaceDetail | None = None
         self._boot_time: datetime | None = None
         self.ssid_draft = SsidDraft()
+        # Set by a delete made from Home Assistant: remove stale entities on the next poll.
+        self.expect_removal = False
+        self._polled = False
         self._config: RunningConfigSummary | None = None
         self._config_dirty = True
         self._lldp: dict[str, LldpNeighbor] = {}
@@ -354,9 +357,18 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 return out
         return None
 
+    @callback
+    def async_update_listeners(self) -> None:
+        super().async_update_listeners()
+        if self._polled:  # only a real poll ends the "remove right away" window
+            self._polled = False
+            self.expect_removal = False
+
     async def _async_update_data(self) -> AerohiveData:
         try:
-            return await self._fetch()
+            data = await self._fetch()
+            self._polled = True
+            return data
         except AerohiveAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
         except AerohiveError as err:
@@ -739,7 +751,12 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         bound = [r for r in self.data.radio_names() if self.data.ssid_on_radio(ssid, r)]
         cmds = self._validated(commands.delete_ssid, ssid, bound, obj)
         _LOGGER.info("%s: deleting SSID %s", self.client.host, ssid)
-        await self._apply(cmds)
+        self.expect_removal = True
+        try:
+            await self._apply(cmds)
+        except HomeAssistantError:
+            self.expect_removal = False
+            raise
 
     async def async_set_port_enabled(self, port: str, enable: bool, force: bool = False) -> None:
         if not enable and not force and port in self.data.uplink_ports():
