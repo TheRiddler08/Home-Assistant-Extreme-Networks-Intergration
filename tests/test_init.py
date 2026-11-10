@@ -491,3 +491,26 @@ async def test_diagnostics_redacted(hass: HomeAssistant, entry: MockConfigEntry)
     assert "192.168.1.50" not in text
     assert diag["data"]["station_count"] == 3
     assert diag["data"]["version"]["platform"] == "AP460C"
+
+
+async def test_migration_enables_wifi_key_and_port_switches(hass: HomeAssistant) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=MAC, data=USER_INPUT, title="AH-7c0680", version=1, minor_version=1)
+    entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    psk = registry.async_get_or_create(
+        "text", DOMAIN, f"{MAC}_psk_AP460C", config_entry=entry,
+        disabled_by=er.RegistryEntryDisabler.INTEGRATION,
+    )  # fmt: skip
+    raw = registry.async_get_or_create(
+        "sensor", DOMAIN, f"{MAC}_raw_if_wifi0_mtu", config_entry=entry,
+        disabled_by=er.RegistryEntryDisabler.INTEGRATION,
+    )  # fmt: skip
+    mine = registry.async_get_or_create(
+        "switch", DOMAIN, f"{MAC}_port_eth1", config_entry=entry, disabled_by=er.RegistryEntryDisabler.USER
+    )
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.minor_version == 2
+    assert registry.async_get(psk.entity_id).disabled_by is None
+    assert registry.async_get(raw.entity_id).disabled_by is er.RegistryEntryDisabler.INTEGRATION
+    assert registry.async_get(mine.entity_id).disabled_by is er.RegistryEntryDisabler.USER

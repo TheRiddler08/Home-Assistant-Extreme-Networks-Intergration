@@ -12,6 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import AerohiveConfigEntry, AerohiveCoordinator, AerohiveData
 from .entity import AerohiveEntity, DebouncedSetter, async_add_dynamic_entities
+from .overview import is_overview
 
 PARALLEL_UPDATES = 1
 
@@ -19,6 +20,8 @@ PARALLEL_UPDATES = 1
 async def async_setup_entry(
     hass: HomeAssistant, entry: AerohiveConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    if is_overview(entry):
+        return
     coordinator = entry.runtime_data
 
     def factory(data: AerohiveData) -> Iterable[tuple[str, Callable[[], Entity]]]:

@@ -39,8 +39,22 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_RAW_SENSORS, CONF_TRACKED_CLIENTS, DEFAULT_RAW_SENSORS
 from .coordinator import AerohiveConfigEntry, AerohiveCoordinator, AerohiveData
-from .entity import AerohiveEntity, async_add_dynamic_entities, extra_attrs, port_label, radio_label
-from .parsers import COUNTER_FIELDS, normalize_mac, parse_number, parse_raw_value, parse_rate_mbps, radio_band
+from .entity import (
+    AerohiveEntity,
+    async_add_dynamic_entities,
+    extra_attrs,
+    port_label,
+    radio_label,
+)
+from .overview import async_setup_platform_entities, is_overview
+from .parsers import (
+    COUNTER_FIELDS,
+    normalize_mac,
+    parse_number,
+    parse_rate_mbps,
+    parse_raw_value,
+    radio_band,
+)
 
 PARALLEL_UPDATES = 0
 
@@ -99,6 +113,44 @@ def _rate_desc(key: str, value_fn: Callable[[AerohiveData], Any], exists_fn: Cal
         value_fn=value_fn,
         exists_fn=exists_fn,
     )
+
+
+def _sum_ports(d: AerohiveData, *fields: str) -> int | None:
+    """Sum counters over all ports that reported them (None if none did)."""
+    values = [
+        getattr(d.details[p], f)
+        for p in d.ports() if p in d.details
+        for f in fields if getattr(d.details[p], f) is not None
+    ]  # fmt: skip
+    return sum(values) if values else None
+
+
+def _port_summary(d: AerohiveData) -> list[dict[str, Any]]:
+    """One row per port, for dashboards (markdown/flex-table cards)."""
+    uplinks = d.uplink_ports()
+    rows = []
+    for port in d.ports():
+        iface = d.interfaces[port]
+        poe = d.poe_ports.get(port)
+        rate = d.throughput.get(port)
+        neighbor = d.lldp.get(port)
+        rows.append(
+            extra_attrs(
+                port=port,
+                link=iface.state,
+                enabled=d.port_enabled(port),
+                speed=iface.speed or (d.details[port].speed if port in d.details else None),
+                duplex=iface.duplex,
+                uplink=port in uplinks,
+                clients=len(d.port_clients(port)) if d.fdb else None,
+                neighbor=(neighbor.system_name or neighbor.chassis_id) if neighbor else None,
+                poe_w=poe.power_w if poe else None,
+                poe_status=poe.status if poe else None,
+                rx_kbps=rate.rx_kbps if rate else None,
+                tx_kbps=rate.tx_kbps if rate else None,
+            )
+        )
+    return rows
 
 
 def _has_wireless_rates(d: AerohiveData) -> bool:
@@ -261,6 +313,51 @@ DEVICE_SENSORS: tuple[DeviceSensorDescription, ...] = (
         value_fn=lambda d: sum(1 for p in d.poe_ports.values() if p.delivering),
         exists_fn=lambda d: bool(d.poe_ports),
     ),
+    DeviceSensorDescription(
+        key="ports_up", translation_key="ports_up", state_class=SensorStateClass.MEASUREMENT, icon="mdi:ethernet",
+        value_fn=lambda d: sum(1 for p in d.ports() if d.interfaces[p].is_up),
+        exists_fn=lambda d: d.has_switch_ports and bool(d.ports()),
+        attrs_fn=lambda d: {"total": len(d.ports()), "ports": _port_summary(d)},
+    ),
+    DeviceSensorDescription(
+        key="ports_down", translation_key="ports_down", state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:ethernet-off",
+        value_fn=lambda d: sum(1 for p in d.ports() if not d.interfaces[p].is_up),
+        exists_fn=lambda d: d.has_switch_ports and bool(d.ports()),
+        attrs_fn=lambda d: {"ports": [p for p in d.ports() if not d.interfaces[p].is_up]},
+    ),
+    DeviceSensorDescription(
+        key="ports_disabled", translation_key="ports_disabled", state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:ethernet-cable-off",
+        value_fn=lambda d: sum(1 for p in d.ports() if d.port_enabled(p) is False),
+        exists_fn=lambda d: d.has_switch_ports and bool(d.ports()),
+        attrs_fn=lambda d: {"ports": [p for p in d.ports() if d.port_enabled(p) is False]},
+    ),
+    _rate_desc(
+        "wired_total_throughput", lambda d: d.wired_throughput().total_kbps, _has_wired_rates
+    ),
+    DeviceSensorDescription(
+        key="ports_rx_bytes", translation_key="ports_rx_bytes", device_class=SensorDeviceClass.DATA_SIZE,
+        native_unit_of_measurement=UnitOfInformation.BYTES, suggested_unit_of_measurement=UnitOfInformation.GIGABYTES,
+        suggested_display_precision=2, entity_category=DIAG, entity_registry_enabled_default=False,
+        value_fn=lambda d: _sum_ports(d, "rx_bytes"), exists_fn=lambda d: _sum_ports(d, "rx_bytes") is not None,
+    ),
+    DeviceSensorDescription(
+        key="ports_tx_bytes", translation_key="ports_tx_bytes", device_class=SensorDeviceClass.DATA_SIZE,
+        native_unit_of_measurement=UnitOfInformation.BYTES, suggested_unit_of_measurement=UnitOfInformation.GIGABYTES,
+        suggested_display_precision=2, entity_category=DIAG, entity_registry_enabled_default=False,
+        value_fn=lambda d: _sum_ports(d, "tx_bytes"), exists_fn=lambda d: _sum_ports(d, "tx_bytes") is not None,
+    ),
+    DeviceSensorDescription(
+        key="ports_errors", translation_key="ports_errors", entity_category=DIAG, icon="mdi:alert-circle-outline",
+        value_fn=lambda d: _sum_ports(d, "rx_errors", "tx_errors"),
+        exists_fn=lambda d: _sum_ports(d, "rx_errors", "tx_errors") is not None,
+    ),
+    DeviceSensorDescription(
+        key="ports_discards", translation_key="ports_discards", entity_category=DIAG, icon="mdi:delete-alert-outline",
+        value_fn=lambda d: _sum_ports(d, "rx_dropped", "tx_dropped"),
+        exists_fn=lambda d: _sum_ports(d, "rx_dropped", "tx_dropped") is not None,
+    ),
     _rate_desc("wireless_rx_throughput", lambda d: d.wireless_throughput().rx_kbps, _has_wireless_rates),
     _rate_desc("wireless_tx_throughput", lambda d: d.wireless_throughput().tx_kbps, _has_wireless_rates),
     _rate_desc("wireless_total_throughput", lambda d: d.wireless_throughput().total_kbps, _has_wireless_rates),
@@ -272,7 +369,7 @@ DEVICE_SENSORS: tuple[DeviceSensorDescription, ...] = (
 class AerohiveDeviceSensor(AerohiveEntity, SensorEntity):
     entity_description: DeviceSensorDescription
     # The per-client list can be large; keep it out of the recorder.
-    _unrecorded_attributes = frozenset({"clients"})
+    _unrecorded_attributes = frozenset({"clients", "ports"})
 
     def __init__(self, coordinator: AerohiveCoordinator, description: DeviceSensorDescription) -> None:
         super().__init__(coordinator, description.key)
@@ -896,6 +993,9 @@ class AerohiveRawSensor(AerohiveEntity, SensorEntity):
 async def async_setup_entry(
     hass: HomeAssistant, entry: AerohiveConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    if is_overview(entry):
+        await async_setup_platform_entities("sensor", hass, entry, async_add_entities)
+        return
     coordinator = entry.runtime_data
     raw_enabled = entry.options.get(CONF_RAW_SENSORS, DEFAULT_RAW_SENSORS)
     tracked = sorted(

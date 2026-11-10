@@ -325,9 +325,10 @@ async def test_switch_entities(hass: HomeAssistant, switch_entry: MockConfigEntr
     assert st(_sw(hass, "sensor", "iface_1/0/9_wired_clients")).state == "21"
     assert st(_sw(hass, "sensor", "iface_1/0/7_wired_clients")).state == "3"
     assert st(_sw(hass, "sensor", "wired_clients")).state == "9"
-    # Port 1/0/5 is shut down in the running config.
-    port5 = er.async_get(hass).async_get(_sw(hass, "switch", "port_1/0/5"))
-    assert port5.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+    # Port switches are enabled; 1/0/5 is shut down in the running config.
+    assert st(_sw(hass, "switch", "port_1/0/5")).state == "off"
+    assert st(_sw(hass, "switch", "port_1/0/1")).state == "on"
+    assert st(_sw(hass, "switch", "port_1/0/9")).attributes["uplink"] is True
     # No Wi-Fi entities on a switch.
     ents = er.async_entries_for_config_entry(er.async_get(hass), switch_entry.entry_id)
     assert not [e for e in ents if "wifi" in e.unique_id or "ssid" in e.unique_id]
@@ -372,13 +373,20 @@ async def test_switch_poe_and_port_control(hass: HomeAssistant, switch_entry: Mo
     ]  # fmt: skip
     client.responses.pop("poe reset")
 
+    # Uplink protection: 1/0/9 leads to the core switch.
     client.commands.clear()
-    client.responses["interface 1/0/4"] = "An invalid interface has been used for this command."
-    registry = er.async_get(hass)
-    registry.async_update_entity(_sw(hass, "switch", "port_1/0/4"), disabled_by=None)
-    await hass.config_entries.async_reload(switch_entry.entry_id)
-    await hass.async_block_till_done()
-    client = FakeClient.instances[-1]
+    with pytest.raises(HomeAssistantError, match="uplink"):
+        await hass.services.async_call(
+            "switch", "turn_off", {"entity_id": _sw(hass, "switch", "port_1/0/9")}, blocking=True
+        )
+    assert client.commands == [] or all(c.startswith("show") for c in client.commands)
+    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, SWITCH_MAC)})
+    await hass.services.async_call(
+        DOMAIN, "set_port", {"device_id": device.id, "port": "1/0/9", "enabled": False, "force": True}, blocking=True
+    )
+    assert client.commands[:6] == ["configure", "interface 1/0/9", "shutdown", "exit", "exit", "write memory"]
+
+    client.commands.clear()
     client.responses["interface 1/0/4"] = "An invalid interface has been used for this command."
     client.commands.clear()
     with pytest.raises(HomeAssistantError, match="invalid interface"):
@@ -419,3 +427,119 @@ async def test_config_flow_switch_uses_burned_in_mac(hass: HomeAssistant) -> Non
     assert result["title"] == "AH-Switch"
     assert result["result"].unique_id == SWITCH_MAC
     assert "show interface" not in FakeClient.instances[-1].commands
+
+
+# --------------------------------------------------------------------------
+# On-screen SSID management (per AP) and the network overview
+# --------------------------------------------------------------------------
+
+
+def _id(hass: HomeAssistant, platform: str, unique_id: str) -> str:
+    entity_id = er.async_get(hass).async_get_entity_id(platform, DOMAIN, unique_id)
+    assert entity_id, f"no {platform} entity {unique_id}"
+    return entity_id
+
+
+async def test_ap_create_and_delete_ssid_from_entities(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    client = _client()
+    client.commands.clear()
+    await hass.services.async_call("text", "set_value", {"entity_id": _id(hass, "text", f"{MAC}_new_ssid_name"), "value": "Guest"}, blocking=True)
+    pw = _id(hass, "text", f"{MAC}_new_ssid_password")
+    await hass.services.async_call("text", "set_value", {"entity_id": pw, "value": "guest-pass-1"}, blocking=True)
+    assert hass.states.get(pw).state == "unknown"  # never shown
+    assert hass.states.get(pw).attributes["password_entered"] is True
+    await hass.services.async_call("button", "press", {"entity_id": _id(hass, "button", f"{MAC}_create_ssid")}, blocking=True)
+    assert [c for c in client.commands if not c.startswith("show")][:6] == [
+        "security-object Guest",
+        "security-object Guest security protocol-suite wpa2-aes-psk ascii-key guest-pass-1",
+        "ssid Guest",
+        "ssid Guest security-object Guest",
+        "interface wifi0 ssid Guest",
+        "interface wifi1 ssid Guest",
+    ]
+    # Draft cleared after creating.
+    assert hass.states.get(_id(hass, "text", f"{MAC}_new_ssid_name")).state == ""
+
+    select = _id(hass, "select", f"{MAC}_ssid_delete_target")
+    assert hass.states.get(select).attributes["options"] == ["—", "AP460C"]
+    delete = _id(hass, "button", f"{MAC}_delete_ssid")
+    with pytest.raises(HomeAssistantError, match="Pick the SSID"):
+        await hass.services.async_call("button", "press", {"entity_id": delete}, blocking=True)
+    await hass.services.async_call("select", "select_option", {"entity_id": select, "option": "AP460C"}, blocking=True)
+    client.commands.clear()
+    await hass.services.async_call("button", "press", {"entity_id": delete}, blocking=True)
+    assert "no ssid AP460C" in client.commands
+    assert hass.states.get(select).state == "—"
+
+
+async def test_overview_combines_ap_and_switch(
+    hass: HomeAssistant, entry: MockConfigEntry, switch_entry: MockConfigEntry
+) -> None:
+    await hass.async_block_till_done()
+    overview = [e for e in hass.config_entries.async_entries(DOMAIN) if e.data.get("entry_type") == "overview"]
+    assert len(overview) == 1
+    await overview[0].runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    st = hass.states.get
+    assert st(_id(hass, "sensor", "overview_devices_online")).state == "2"
+    assert st(_id(hass, "sensor", "overview_aps_online")).state == "1"
+    assert st(_id(hass, "sensor", "overview_switches_online")).state == "1"
+    clients = st(_id(hass, "sensor", "overview_wireless_clients"))
+    assert clients.state == "3"
+    assert {c["ap"] for c in clients.attributes["clients"]} == {"AH-7c0680"}
+    assert st(_id(hass, "sensor", "overview_clients_5ghz")).state == "1"
+    assert st(_id(hass, "sensor", "overview_wired_clients")).state == "9"
+    assert st(_id(hass, "sensor", "overview_poe_power_used")).state == "15.3"
+    ssids = st(_id(hass, "sensor", "overview_ssids"))
+    assert ssids.state == "1"
+    assert ssids.attributes["ssids"][0]["ssid"] == "AP460C"
+    assert ssids.attributes["ssids"][0]["access_points"] == ["AH-7c0680"]
+    assert st(_id(hass, "sensor", "overview_ssid_clients_AP460C")).state == "3"
+    assert st(_id(hass, "binary_sensor", "overview_all_online")).state == "on"
+    assert st(_id(hass, "switch", "overview_ssid_all_AP460C")).state == "on"
+    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, "overview")})
+    assert device.name == "Aerohive Network"
+
+    # Change the Wi-Fi key on every AP at once.
+    ap_client = next(c for c in FakeClient.instances if c.dialect == "hiveos")
+    ap_client.commands.clear()
+    await hass.services.async_call(
+        "text", "set_value",
+        {"entity_id": _id(hass, "text", "overview_psk_AP460C"), "value": "network-wide-key"}, blocking=True,
+    )  # fmt: skip
+    assert "security-object sec-ap460c security protocol-suite wpa2-aes-psk ascii-key network-wide-key" in ap_client.commands
+
+    # Turn the SSID off everywhere.
+    ap_client.commands.clear()
+    await hass.services.async_call(
+        "switch", "turn_off", {"entity_id": _id(hass, "switch", "overview_ssid_all_AP460C")}, blocking=True
+    )
+    assert "no interface wifi0 ssid AP460C" in ap_client.commands
+    assert "no interface wifi1 ssid AP460C" in ap_client.commands
+
+    # Create an SSID on all APs from the overview.
+    await hass.services.async_call(
+        "text", "set_value", {"entity_id": _id(hass, "text", "overview_new_ssid_name"), "value": "Staff"}, blocking=True
+    )
+    ap_client.commands.clear()
+    await hass.services.async_call(
+        "button", "press", {"entity_id": _id(hass, "button", "overview_create_ssid")}, blocking=True
+    )
+    assert "ssid Staff" in ap_client.commands and "security-object Staff" in ap_client.commands
+
+    # The switch never received any Wi-Fi command.
+    sw_client = next(c for c in FakeClient.instances if c.dialect == "switch")
+    assert not [c for c in sw_client.commands if "ssid" in c or "security-object" in c]
+
+
+async def test_switch_port_summary(hass: HomeAssistant, switch_entry: MockConfigEntry) -> None:
+    st = hass.states.get
+    up = st(_sw(hass, "sensor", "ports_up"))
+    assert up.state == "9"
+    assert up.attributes["total"] == 10
+    rows = {r["port"]: r for r in up.attributes["ports"]}
+    assert rows["1/0/2"]["neighbor"] == "AH-112200" and rows["1/0/2"]["poe_w"] == 8.8
+    assert rows["1/0/9"]["uplink"] is True
+    assert st(_sw(hass, "sensor", "ports_down")).state == "1"
+    assert st(_sw(hass, "sensor", "ports_disabled")).state == "1"  # 1/0/5 shut down in config
+    assert st(_sw(hass, "sensor", "ports_errors")).state == "0"

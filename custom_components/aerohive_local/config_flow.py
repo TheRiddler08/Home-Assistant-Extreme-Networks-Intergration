@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import asyncssh
 import voluptuous as vol
-
+from homeassistant.components import network
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME
-from homeassistant.components import network
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.selector import (
     NumberSelector,
@@ -25,6 +24,7 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
     TextSelectorType,
 )
+from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
 
 from . import async_create_client
 from .client import AerohiveAuthError, AerohiveError
@@ -32,6 +32,7 @@ from .commands import DIALECT_SWITCH
 from .const import (
     CONF_DETAILED_STATS,
     CONF_ENABLE_ALL,
+    CONF_ENTRY_TYPE,
     CONF_RAW_SENSORS,
     CONF_SCAN_INTERVAL,
     CONF_SSH_KEY,
@@ -42,11 +43,10 @@ from .const import (
     DEFAULT_RAW_SENSORS,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    ENTRY_TYPE_OVERVIEW,
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
 )
-from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
-
 from .discovery import ScanResult, async_scan, narrow_network, scan_targets
 from .parsers import normalize_mac, parse_show_interface, parse_show_version
 
@@ -100,6 +100,7 @@ async def _probe(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
 
 class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
+    MINOR_VERSION = 2
 
     async def _validate(self, data: dict[str, Any], errors: dict[str, str]) -> dict[str, Any] | None:
         try:
@@ -125,6 +126,8 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
         """Pre-fill the username (and port) from an existing entry."""
         defaults: dict[str, Any] = {}
         for entry in self._async_current_entries(include_ignore=False):
+            if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_OVERVIEW:
+                continue
             defaults.setdefault(CONF_USERNAME, entry.data.get(CONF_USERNAME))
             defaults.setdefault(CONF_PORT, entry.data.get(CONF_PORT, DEFAULT_PORT))
         defaults.update({k: v for k, v in (extra or {}).items() if v not in (None, "")})
@@ -272,6 +275,19 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
                 "name": self.context.get("title_placeholders", {}).get("name", self._discovered_host),
             },
         )
+
+    async def async_step_import(self, import_data: dict[str, Any]) -> ConfigFlowResult:
+        """Create the network overview entry (started automatically)."""
+        if import_data.get(CONF_ENTRY_TYPE) != ENTRY_TYPE_OVERVIEW:
+            return self.async_abort(reason="not_supported")
+        await self.async_set_unique_id("overview")
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(title="Aerohive Network", data={CONF_ENTRY_TYPE: ENTRY_TYPE_OVERVIEW})
+
+    @classmethod
+    @callback
+    def async_supports_options_flow(cls, config_entry) -> bool:  # type: ignore[no-untyped-def]
+        return config_entry.data.get(CONF_ENTRY_TYPE) != ENTRY_TYPE_OVERVIEW
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
         return await self.async_step_reauth_confirm()

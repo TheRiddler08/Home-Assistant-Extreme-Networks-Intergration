@@ -194,21 +194,49 @@ out of the recorder, so it doesn't grow your database.
 
 ## Managing Wi-Fi networks (SSIDs)
 
-Everything below runs `save config` afterwards so the change survives a reboot.
+Everything below runs `save config` afterwards, so changes survive a reboot. You can do it
+all from the device page or a dashboard; you don't need the Actions page.
 
-| What | How |
+**See existing SSIDs:** each AP's `SSIDs broadcasting` sensor (attributes `configured`,
+`broadcasting`, `not_broadcasting`), and the overview's `SSIDs` sensor (one row per SSID: which
+APs have it, where it's broadcasting, clients, hidden, security).
+
+| What | On one AP | On all APs (Aerohive Network device) |
+| --- | --- | --- |
+| Change the Wi-Fi password | text `<SSID> Wi-Fi key`: type the new key, press Enter | text `<SSID> Wi-Fi key (all APs)` |
+| Turn an SSID on/off | switches `<SSID> on wifiN (band)` / `<SSID> on all radios` | switch `<SSID> on all APs` |
+| Hide / unhide the SSID name | switch `<SSID> hidden` | – |
+| Create a new SSID | type into `New SSID name` + `New SSID password` (leave empty for open), press `Create SSID` | the same three entities with "(all APs)" |
+| Delete an SSID | pick it in `SSID to delete`, press `Delete selected SSID` | the same with "(all APs)" |
+| Max clients | number `<SSID> max clients` | – |
+| Security type | sensor `<SSID> security` | in the `SSIDs` sensor attributes |
+
+Passwords are write-only: the device stores keys encrypted, and the integration never keeps a
+typed key in an entity's state, the recorder or the logs. That's why the password boxes always
+look empty. The actions `create_ssid`, `delete_ssid` and `set_ssid_password` do the same for
+automations.
+
+**Upgrading from an older version:** the Wi-Fi key boxes and port switches used to be created
+disabled. Version 0.5 enables them once, automatically. Anything you disabled yourself stays
+disabled.
+
+## Network overview ("Aerohive Network" device)
+
+Created automatically once you add a device. It combines every AP and switch:
+
+| Entity | Notes |
 | --- | --- |
-| Turn an SSID on/off on one radio | switch `<SSID> on wifiN (band)` |
-| Turn an SSID on/off on all radios | switch `<SSID> on all radios` |
-| Hide / unhide the SSID name | switch `<SSID> hidden` (`ssid <name> hide-ssid`) |
-| Change the Wi-Fi password | text `<SSID> Wi-Fi key`: type the new key and press Enter. The field stays empty afterwards because the key is never stored. You can also use the `set_ssid_password` action |
-| Change max clients | number `<SSID> max clients` |
-| See the security type | sensor `<SSID> security` (e.g. `wpa2-aes-psk`, `open`) |
-| Create a new SSID | action `aerohive_local.create_ssid` (name, optional password, optional radios) |
-| Delete an SSID | action `aerohive_local.delete_ssid` |
+| Devices online / Access points online / Switches online, All devices online (binary) | attribute `devices`: name, model, IP, online, clients |
+| Wireless clients (attribute `clients`: every client with its AP, SSID, band, signal) | plus Clients 2.4 GHz / 5 GHz |
+| `<SSID> clients (all APs)` | per SSID, with a per-AP breakdown |
+| SSIDs, SSIDs broadcasting | attribute `ssids` (see above) |
+| Wireless RX / TX / total throughput, Wired RX / TX throughput | sums over all APs / switches |
+| Wired clients, Switch ports up, PoE power used / budget | from all switches |
+| SSID controls (all APs) | see the table above |
 
-The hidden/security state is read from `show running-config`. It's refreshed every 15
-minutes, and right after any change made from Home Assistant.
+It sends no commands of its own. It aggregates what the devices already polled every 15 s,
+and fans control actions out to each AP (a failure on one AP is reported, the others still
+get the change). You can't add it twice; disable it if you don't want it.
 
 ## Switches (SR2208P and other SR-series)
 
@@ -245,7 +273,9 @@ re-runs the command.
 | `Port 1/0/N PoE voltage`, `current`, `temperature`, `class`, `max power` | per PoE port, disabled by default |
 | `Port 1/0/N PoE` switch | PoE on/off (`poe` / `no poe`), saved with `write memory` |
 | `Port 1/0/N PoE power cycle` button | `poe reset`: reboots whatever the port powers (AP, camera, phone); config unchanged |
-| `Port 1/0/N enabled` switch | **disabled by default**: shutting down the port Home Assistant reaches the switch through locks you out |
+| `Port 1/0/N enabled` switch | port on/off (`shutdown` / `no shutdown`). **Uplink ports are protected**: turning off a port whose LLDP neighbour is a switch/router (or that has ≥16 devices behind it) is refused, since it could disconnect Home Assistant. Override with the `set_port` action and `force: true` |
+| Ports up / Ports down / Ports disabled | "all ports" summary; `Ports up` has a `ports` attribute with one row per port (link, enabled, speed, uplink, clients, neighbour, PoE W/status, RX/TX kbit/s) |
+| Wired total throughput, All ports RX/TX bytes, errors, discards | sums over all ports |
 | RX / TX throughput per port | from `Total Packets Received/Transmitted (Octets)`. Counters (bytes, packets, errors, discards) are disabled by default; the other ~60 statistics lines are not turned into entities |
 
 **Finds your APs for you:** when a configured switch or AP sees an Aerohive/Extreme device

@@ -192,6 +192,30 @@
       },
       "poe_ports_active": {
         "name": "PoE ports active"
+      },
+      "ports_up": {
+        "name": "Ports up"
+      },
+      "ports_down": {
+        "name": "Ports down"
+      },
+      "ports_disabled": {
+        "name": "Ports disabled"
+      },
+      "wired_total_throughput": {
+        "name": "Wired total throughput"
+      },
+      "ports_rx_bytes": {
+        "name": "All ports RX bytes"
+      },
+      "ports_tx_bytes": {
+        "name": "All ports TX bytes"
+      },
+      "ports_errors": {
+        "name": "All ports errors"
+      },
+      "ports_discards": {
+        "name": "All ports discards"
       }
     },
     "button": {
@@ -302,6 +326,28 @@
         "port": {
           "name": "Port",
           "description": "Port name, e.g. eth1/1."
+        }
+      }
+    },
+    "set_port": {
+      "name": "Enable or disable a port",
+      "description": "Turn an Ethernet port on or off and save the configuration. Uplink ports are protected unless force is set.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Aerohive switch or router."
+        },
+        "port": {
+          "name": "Port",
+          "description": "Port name, e.g. 1/0/3 or eth1."
+        },
+        "enabled": {
+          "name": "Enabled",
+          "description": "On or off."
+        },
+        "force": {
+          "name": "Force",
+          "description": "Also allow turning off an uplink port (may disconnect Home Assistant from the device)."
         }
       }
     }

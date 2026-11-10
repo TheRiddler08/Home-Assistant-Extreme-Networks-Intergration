@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import CONF_SSH_KEY, CONF_TRACKED_CLIENTS
 from .coordinator import AerohiveConfigEntry
+from .overview import is_overview
 from .parsers import to_dict
 
 TO_REDACT = {CONF_PASSWORD, CONF_USERNAME, CONF_HOST, CONF_SSH_KEY, CONF_TRACKED_CLIENTS}
@@ -20,6 +21,9 @@ ADDRESS_REDACT = {"ip_address", "gateway", "ip_addr", "default_gateway", "serial
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: AerohiveConfigEntry
 ) -> dict[str, Any]:
+    if is_overview(entry):
+        overview = entry.runtime_data.data
+        return {"overview": True, "devices": [{"title": d.title, "online": d.online} for d in overview.devices]}
     coordinator = entry.runtime_data
     data = coordinator.data
     stations = []

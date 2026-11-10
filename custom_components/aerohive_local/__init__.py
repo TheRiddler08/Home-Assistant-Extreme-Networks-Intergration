@@ -7,14 +7,28 @@ from typing import Any
 
 import asyncssh
 import voluptuous as vol
-
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME, Platform
-from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
+from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntryState
+from homeassistant.const import (
+    CONF_HOST,
+    CONF_PASSWORD,
+    CONF_PORT,
+    CONF_USERNAME,
+    Platform,
+)
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+)
 from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 from homeassistant.helpers import (
     config_validation as cv,
+)
+from homeassistant.helpers import (
     device_registry as dr,
+)
+from homeassistant.helpers import (
     entity_registry as er,
 )
 from homeassistant.helpers.typing import ConfigType
@@ -24,15 +38,17 @@ from .const import (
     ATTR_COMMAND,
     ATTR_DEVICE_ID,
     ATTR_MAC,
+    ATTR_PASSWORD,
     ATTR_PORT,
     ATTR_RADIOS,
-    ATTR_PASSWORD,
     ATTR_REDACT,
     ATTR_SECURITY_OBJECT,
     ATTR_SSID,
+    CONF_ENTRY_TYPE,
     CONF_SSH_KEY,
     DEFAULT_PORT,
     DOMAIN,
+    ENTRY_TYPE_OVERVIEW,
     SERVICE_CREATE_SSID,
     SERVICE_DELETE_SSID,
     SERVICE_DISCONNECT_CLIENT,
@@ -41,6 +57,7 @@ from .const import (
     SERVICE_SET_SSID_PASSWORD,
 )
 from .coordinator import AerohiveConfigEntry, AerohiveCoordinator
+from .overview import OverviewCoordinator, is_overview
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,6 +66,7 @@ PLATFORMS: list[Platform] = [
     Platform.BUTTON,
     Platform.DEVICE_TRACKER,
     Platform.NUMBER,
+    Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
     Platform.TEXT,
@@ -83,6 +101,14 @@ DELETE_SSID_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_DEVICE_ID): cv.string,
         vol.Required(ATTR_SSID): cv.string,
+    }
+)
+SET_PORT_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_DEVICE_ID): cv.string,
+        vol.Required(ATTR_PORT): cv.string,
+        vol.Required("enabled"): cv.boolean,
+        vol.Optional("force", default=False): cv.boolean,
     }
 )
 POWER_CYCLE_SCHEMA = vol.Schema(
@@ -128,7 +154,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             raise ServiceValidationError(f"Unknown device {call.data[ATTR_DEVICE_ID]}")
         for entry_id in device.config_entries:
             entry = hass.config_entries.async_get_entry(entry_id)
-            if entry is not None and entry.domain == DOMAIN and entry.state is ConfigEntryState.LOADED:
+            if (
+                entry is not None
+                and entry.domain == DOMAIN
+                and entry.state is ConfigEntryState.LOADED
+                and isinstance(entry.runtime_data, AerohiveCoordinator)
+            ):
                 return entry.runtime_data
         raise ServiceValidationError("Device is not a loaded Aerohive Local device")
 
@@ -167,10 +198,33 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.services.async_register(DOMAIN, SERVICE_CREATE_SSID, create_ssid, CREATE_SSID_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DELETE_SSID, delete_ssid, DELETE_SSID_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_POWER_CYCLE_POE, power_cycle_poe, POWER_CYCLE_SCHEMA)
+
+    async def set_port(call: ServiceCall) -> None:
+        await coordinator_for(call).async_set_port_enabled(
+            call.data[ATTR_PORT].strip().lower(), call.data["enabled"], call.data["force"]
+        )
+
+    hass.services.async_register(DOMAIN, "set_port", set_port, SET_PORT_SCHEMA)
     return True
 
 
+OVERVIEW_PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.SELECT,
+    Platform.SENSOR,
+    Platform.SWITCH,
+    Platform.TEXT,
+]
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: AerohiveConfigEntry) -> bool:
+    if is_overview(entry):
+        overview = OverviewCoordinator(hass, entry)
+        await overview.async_config_entry_first_refresh()
+        entry.runtime_data = overview  # type: ignore[assignment]
+        await hass.config_entries.async_forward_entry_setups(entry, OVERVIEW_PLATFORMS)
+        return True
     try:
         client = await async_create_client(hass, dict(entry.data))
     except (OSError, asyncssh.KeyImportError) as err:
@@ -186,7 +240,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: AerohiveConfigEntry) -> 
         _enable_integration_disabled_entities(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    _ensure_overview_entry(hass)
     return True
+
+
+def _ensure_overview_entry(hass: HomeAssistant) -> None:
+    """Create the 'Aerohive Network' overview entry once (it can be disabled, not re-added)."""
+    if any(is_overview(e) for e in hass.config_entries.async_entries(DOMAIN, include_ignore=True)):
+        return
+    if hass.data.setdefault(f"{DOMAIN}_overview_requested", False):
+        return
+    hass.data[f"{DOMAIN}_overview_requested"] = True
+    hass.async_create_task(
+        hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_IMPORT}, data={CONF_ENTRY_TYPE: ENTRY_TYPE_OVERVIEW}
+        )
+    )
 
 
 def _enable_integration_disabled_entities(hass: HomeAssistant, entry: AerohiveConfigEntry) -> None:
@@ -197,11 +266,32 @@ def _enable_integration_disabled_entities(hass: HomeAssistant, entry: AerohiveCo
             registry.async_update_entity(reg_entry.entity_id, disabled_by=None)
 
 
+# Entities created disabled by earlier versions that are now enabled by default.
+_NOW_ENABLED_PREFIXES = ("psk_", "port_")
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: AerohiveConfigEntry) -> bool:
+    """1.1 -> 1.2: enable the Wi-Fi key text and port switches created disabled before."""
+    if entry.version == 1 and entry.minor_version < 2 and not is_overview(entry):
+        registry = er.async_get(hass)
+        base = entry.unique_id or entry.entry_id
+        for reg_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
+            key = (reg_entry.unique_id or "").removeprefix(f"{base}_")
+            if reg_entry.disabled_by is er.RegistryEntryDisabler.INTEGRATION and key.startswith(
+                _NOW_ENABLED_PREFIXES
+            ):
+                registry.async_update_entity(reg_entry.entity_id, disabled_by=None)
+        hass.config_entries.async_update_entry(entry, minor_version=2)
+    return True
+
+
 async def _async_update_listener(hass: HomeAssistant, entry: AerohiveConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: AerohiveConfigEntry) -> bool:
+    if is_overview(entry):
+        return await hass.config_entries.async_unload_platforms(entry, OVERVIEW_PLATFORMS)
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     coordinator = getattr(entry, "runtime_data", None)
     if unloaded and coordinator is not None:

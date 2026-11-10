@@ -97,3 +97,24 @@ power_cycle_poe:
       example: "eth1/1"
       selector:
         text:
+
+set_port:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+    port:
+      required: true
+      example: "1/0/3"
+      selector:
+        text:
+    enabled:
+      required: true
+      selector:
+        boolean:
+    force:
+      default: false
+      selector:
+        boolean:

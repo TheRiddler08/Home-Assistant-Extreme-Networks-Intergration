@@ -12,6 +12,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import CONF_TRACKED_CLIENTS
 from .coordinator import AerohiveConfigEntry, AerohiveCoordinator
 from .entity import extra_attrs
+from .overview import is_overview
 from .parsers import normalize_mac
 
 PARALLEL_UPDATES = 0
@@ -20,6 +21,8 @@ PARALLEL_UPDATES = 0
 async def async_setup_entry(
     hass: HomeAssistant, entry: AerohiveConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    if is_overview(entry):
+        return
     coordinator = entry.runtime_data
     macs = {
         mac

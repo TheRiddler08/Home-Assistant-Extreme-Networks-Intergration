@@ -12,6 +12,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import AerohiveConfigEntry, AerohiveCoordinator, AerohiveData
 from .entity import AerohiveEntity, async_add_dynamic_entities, port_label
+from .overview import async_setup_platform_entities, is_overview
+from .ssid_manager import manager_buttons
 
 PARALLEL_UPDATES = 1
 
@@ -19,10 +21,16 @@ PARALLEL_UPDATES = 1
 async def async_setup_entry(
     hass: HomeAssistant, entry: AerohiveConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    if is_overview(entry):
+        await async_setup_platform_entities("button", hass, entry, async_add_entities)
+        return
     coordinator = entry.runtime_data
 
     def factory(data: AerohiveData) -> Iterable[tuple[str, Callable[[], Entity]]]:
         yield "reboot", lambda: AerohiveRebootButton(coordinator)
+        if data.radio_names():
+            for entity in manager_buttons(coordinator, entry.unique_id or entry.entry_id, coordinator.device_info):
+                yield entity.unique_id, lambda entity=entity: entity
         for port in data.poe_ports:
             yield f"poe_cycle_{port}", lambda port=port: AerohivePoeCycleButton(coordinator, port)
 

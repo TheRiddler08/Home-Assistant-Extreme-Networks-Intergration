@@ -15,13 +15,13 @@ No Home Assistant imports here so it can be unit tested.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
-from dataclasses import dataclass
 import ipaddress
 import logging
-from pathlib import Path
 import re
 import socket
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
 
 _LOGGER = logging.getLogger(__name__)
 

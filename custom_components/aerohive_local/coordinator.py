@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 import logging
 import re
 import time
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 
 from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY, ConfigEntry
 from homeassistant.const import CONF_HOST
@@ -29,9 +29,9 @@ from .client import (
 from .const import (
     CONF_DETAILED_STATS,
     CONF_ENABLE_ALL,
-    DEFAULT_ENABLE_ALL,
     CONF_SCAN_INTERVAL,
     DEFAULT_DETAILED_STATS,
+    DEFAULT_ENABLE_ALL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     MANUFACTURER,
@@ -41,13 +41,13 @@ from .discovery import is_aerohive_mac
 from .parsers import (
     BootParams,
     FdbEntry,
+    HardwareInfo,
+    Interface,
+    InterfaceDetail,
     LldpNeighbor,
     PoePort,
     PoeSummary,
     RunningConfigSummary,
-    HardwareInfo,
-    Interface,
-    InterfaceDetail,
     Ssid,
     Station,
     SystemStats,
@@ -56,25 +56,25 @@ from .parsers import (
     is_aerohive_hostname,
     is_unsupported_command,
     normalize_mac,
+    parse_key_values,
     parse_lldp_neighbors,
     parse_mac_address_table,
+    parse_poe_port_detail,
     parse_running_config_summary,
     parse_show_boot_param,
-    parse_show_network,
-    parse_key_values,
-    parse_poe_port_detail,
-    poe_port_count,
-    parse_show_poe,
-    parse_show_port_all,
     parse_show_cpu,
     parse_show_hw_info,
     parse_show_interface,
     parse_show_interface_detail,
     parse_show_memory,
+    parse_show_network,
+    parse_show_poe,
+    parse_show_port_all,
     parse_show_ssid,
     parse_show_station,
     parse_show_version,
     parse_ssid_security_objects,
+    poe_port_count,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,6 +83,19 @@ type AerohiveConfigEntry = ConfigEntry[AerohiveCoordinator]
 
 UPLINK_MAC_THRESHOLD = 16
 POE_MAX_PORTS = 24  # per-port PoE probing stops at this port number
+
+
+@dataclass
+class SsidDraft:
+    """Values typed into the 'new SSID' / 'SSID to delete' entities (in memory only)."""
+
+    name: str = ""
+    password: str = ""
+    delete: str | None = None
+
+    def clear(self) -> None:
+        self.name = ""
+        self.password = ""
 
 
 @dataclass
@@ -303,6 +316,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._hardware: HardwareInfo | None = None
         self._mgt: InterfaceDetail | None = None
         self._boot_time: datetime | None = None
+        self.ssid_draft = SsidDraft()
         self._config: RunningConfigSummary | None = None
         self._config_dirty = True
         self._lldp: dict[str, LldpNeighbor] = {}
@@ -688,6 +702,9 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         _LOGGER.info("%s: changing Wi-Fi key of security-object %s", self.client.host, obj)
         await self._apply([cmd], secret=password)
 
+    def ssid_names(self) -> list[str]:
+        return sorted(self.data.ssids) if self.data else []
+
     async def async_set_ssid_all_radios(self, ssid: str, enable: bool) -> None:
         data = self.data
         cmds = [
@@ -724,7 +741,13 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         _LOGGER.info("%s: deleting SSID %s", self.client.host, ssid)
         await self._apply(cmds)
 
-    async def async_set_port_enabled(self, port: str, enable: bool) -> None:
+    async def async_set_port_enabled(self, port: str, enable: bool, force: bool = False) -> None:
+        if not enable and not force and port in self.data.uplink_ports():
+            raise HomeAssistantError(
+                f"{port} is an uplink port on {self.client.host} (LLDP neighbour is a switch/router or "
+                "many devices are learned on it). Turning it off could disconnect Home Assistant from "
+                "the device. Use the set_port action with force: true if you really mean it."
+            )
         if self.is_switch_cli:
             await self._apply(self._validated(commands.switch_port_enable, port, enable), sequence=True)
         else:

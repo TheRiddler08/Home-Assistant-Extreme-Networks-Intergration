@@ -12,7 +12,14 @@ from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import AerohiveConfigEntry, AerohiveCoordinator, AerohiveData
-from .entity import AerohiveEntity, DebouncedSetter, async_add_dynamic_entities, port_label, radio_label
+from .entity import (
+    AerohiveEntity,
+    DebouncedSetter,
+    async_add_dynamic_entities,
+    port_label,
+    radio_label,
+)
+from .overview import async_setup_platform_entities, is_overview
 
 PARALLEL_UPDATES = 1
 
@@ -20,6 +27,9 @@ PARALLEL_UPDATES = 1
 async def async_setup_entry(
     hass: HomeAssistant, entry: AerohiveConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    if is_overview(entry):
+        await async_setup_platform_entities("switch", hass, entry, async_add_entities)
+        return
     coordinator = entry.runtime_data
 
     def factory(data: AerohiveData) -> Iterable[tuple[str, Callable[[], Entity]]]:
@@ -163,12 +173,11 @@ class AerohiveSsidHiddenSwitch(_DebouncedSwitch):
 class AerohivePortSwitch(_DebouncedSwitch):
     """Administratively enable/disable an Ethernet port.
 
-    Disabled by default: shutting down the port Home Assistant uses to reach
-    the device would lock you out until someone re-enables it on the console.
+    Turning off an uplink port (LLDP neighbour is a switch/router, or many
+    MACs learned) is refused: it would cut Home Assistant off from the device.
     """
 
     _attr_icon = "mdi:ethernet"
-    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: AerohiveCoordinator, port: str) -> None:
         super().__init__(coordinator, f"port_{port}")
@@ -178,6 +187,12 @@ class AerohivePortSwitch(_DebouncedSwitch):
     @property
     def available(self) -> bool:
         return super().available and self._port in self.coordinator.data.interfaces
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        data = self.coordinator.data
+        return {"uplink": self._port in data.uplink_ports(), "link": data.interfaces[self._port].state
+                if self._port in data.interfaces else None}  # fmt: skip
 
     def _device_state(self) -> bool | None:
         return self.coordinator.data.port_enabled(self._port)

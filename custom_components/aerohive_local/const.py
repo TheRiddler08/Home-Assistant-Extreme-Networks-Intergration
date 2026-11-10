@@ -8,6 +8,8 @@ DOMAIN: Final = "aerohive_local"
 MANUFACTURER: Final = "Extreme Networks / Aerohive"
 
 CONF_SSH_KEY: Final = "ssh_key_path"
+CONF_ENTRY_TYPE: Final = "entry_type"
+ENTRY_TYPE_OVERVIEW: Final = "overview"
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 CONF_TRACKED_CLIENTS: Final = "tracked_clients"
 CONF_DETAILED_STATS: Final = "detailed_stats"

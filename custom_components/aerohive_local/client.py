@@ -8,10 +8,10 @@ No Home Assistant imports so it can be tested standalone.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
 import logging
 import re
 import time
+from collections.abc import Sequence
 from typing import Any
 
 import asyncssh

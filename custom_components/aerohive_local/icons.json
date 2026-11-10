@@ -17,6 +17,9 @@
     },
     "power_cycle_poe": {
       "service": "mdi:restart"
+    },
+    "set_port": {
+      "service": "mdi:ethernet"
     }
   }
 }
