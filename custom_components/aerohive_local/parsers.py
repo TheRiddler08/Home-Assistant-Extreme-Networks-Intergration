@@ -889,18 +889,24 @@ _DETAIL_FIELDS: dict[str, list[str]] = {
         r"^tx_bytes$", r"^tx_octets$", r"^transmitted_bytes$", r"^tx_.*bytes$",
         r"^total_packets_transmitted_octets$", r"^octets_transmitted$", r"transmitted_octets", r"^out_octets$",
     ],
-    "rx_packets": [r"^rx_packets$", r"^rx_pkts$", r"^rx_frames$", r"^rx_data_frames$"],
-    "tx_packets": [r"^tx_packets$", r"^tx_pkts$", r"^tx_frames$", r"^tx_data_frames$"],
-    "rx_errors": [r"^rx_errors$", r"^rx_errs?$", r"^rx_error"],
-    "tx_errors": [r"^tx_errors$", r"^tx_errs?$", r"^tx_error"],
-    "rx_dropped": [r"^rx_dropped$", r"^rx_drops?$", r"^rx_drop"],
-    "tx_dropped": [r"^tx_dropped$", r"^tx_drops?$", r"^tx_drop"],
+    "rx_packets": [
+        r"^rx_packets$", r"^rx_pkts$", r"^rx_frames$", r"^rx_data_frames$",
+        r"^total_packets_received_without_errors$",
+    ],
+    "tx_packets": [
+        r"^tx_packets$", r"^tx_pkts$", r"^tx_frames$", r"^tx_data_frames$",
+        r"^total_packets_transmitted_successfully$",
+    ],
+    "rx_errors": [r"^rx_errors$", r"^rx_errs?$", r"^rx_error", r"^total_packets_received_with_mac_errors$"],
+    "tx_errors": [r"^tx_errors$", r"^tx_errs?$", r"^tx_error", r"^total_transmit_errors$"],
+    "rx_dropped": [r"^rx_dropped$", r"^rx_drops?$", r"^rx_drop", r"^receive_packets_discarded$"],
+    "tx_dropped": [r"^tx_dropped$", r"^tx_drops?$", r"^tx_drop", r"^transmit_packets_discarded$"],
     # ethernet / addressing
     "speed": [r"^speed$", r"^link_speed$", r"^operational_speed$"],
     "duplex": [r"^duplex$", r"^operational_duplex$"],
     "admin_state": [r"^admin_state$", r"^admin_status$"],
     "operational_state": [r"^operational_state$", r"^oper_state$", r"^link_state$", r"^link$"],
-    "mtu": [r"^mtu$"],
+    "mtu": [r"^mtu$", r"^maximum_transmit_unit$"],
     "ip_address": [r"^ip_addr$", r"^ip_address$", r"^ipv4_addr(ess)?$", r"^ip$"],
     "netmask": [r"^netmask$", r"^mask$", r"^subnet_mask$"],
     "gateway": [r"^default_gateway$", r"^gateway$", r"^default_gw$"],
@@ -1428,6 +1434,35 @@ def parse_show_poe(text: str) -> tuple[PoeSummary, dict[str, PoePort]]:
     return summary, ports
 
 
+def parse_poe_port_detail(text: str, port: str) -> PoePort | None:
+    """'show poe port <u/s/p>'-style key/value output for one port (best effort)."""
+    kv = parse_key_values(text)
+    if not kv:
+        return None
+    entry = PoePort(port=port)
+    used: set[str] = set()
+    for key, value in kv.items():
+        if entry.power_w is None and "power" in key and any(w in key for w in ("output", "consum", "used", "actual", "draw")):
+            entry.power_w = _watts(value, key)
+        elif entry.max_power_w is None and "power" in key and any(w in key for w in ("max", "limit", "alloc")):
+            entry.max_power_w = _watts(value, key)
+        elif entry.admin is None and ("admin" in key or key in {"mode", "poe_mode", "port_mode"}):
+            entry.admin = _none_if_empty(value)
+        elif entry.status is None and any(w in key for w in ("status", "state", "detection")):
+            entry.status = _none_if_empty(value)
+        elif entry.poe_class is None and "class" in key:
+            entry.poe_class = _none_if_empty(value)
+        elif entry.priority is None and "prior" in key:
+            entry.priority = _none_if_empty(value)
+        else:
+            continue
+        used.add(key)
+    entry.extra = {k: v for k, v in kv.items() if k not in used and v}
+    if entry.power_w is None and entry.status is None and entry.admin is None:
+        return None
+    return entry
+
+
 # --------------------------------------------------------------------------
 # Switch / router: MAC address table
 # --------------------------------------------------------------------------
@@ -1583,6 +1618,7 @@ class RunningConfigSummary:
     security_suites: dict[str, str] = field(default_factory=dict)  # security-object -> protocol suite
     pse_shutdown_ports: set[str] = field(default_factory=set)
     shutdown_ports: set[str] = field(default_factory=set)
+    uptime_seconds: int | None = None  # SR switch: '!System Up Time "0 days 1 hrs 35 mins"'
 
     def ssid_security(self, ssid: str) -> str | None:
         obj = self.ssid_security_objects.get(ssid, ssid)
@@ -1594,6 +1630,7 @@ _HIDE_RE = re.compile(rf"^\s*ssid\s+{_ARG}\s+hide-ssid\b", re.IGNORECASE)
 _SUITE_RE = re.compile(rf"^\s*security-object\s+{_ARG}\s+security\s+protocol-suite\s+(\S+)", re.IGNORECASE)
 _PSE_OFF_RE = re.compile(r"^\s*interface\s+(eth\S+)\s+pse\s+shutdown\b", re.IGNORECASE)
 _PORT_OFF_RE = re.compile(r"^\s*interface\s+(eth\S+)\s+shutdown\s*$", re.IGNORECASE)
+_UPTIME_COMMENT_RE = re.compile(r'^\s*!\s*System Up Time\s+"?([^"]+)"?', re.IGNORECASE)
 _BLOCK_IF_RE = re.compile(r"^\s*interface\s+(\d+/\d+/\d+)\s*$", re.IGNORECASE)
 
 
@@ -1603,6 +1640,9 @@ def parse_running_config_summary(config: str) -> RunningConfigSummary:
     block_port: str | None = None  # SR switch: "interface 1/0/4" ... "exit"
     for line in clean_output(config).split("\n"):
         stripped = line.strip().lower()
+        if summary.uptime_seconds is None and (m := _UPTIME_COMMENT_RE.match(line)):
+            summary.uptime_seconds = parse_uptime(m.group(1))
+            continue
         if m := _BLOCK_IF_RE.match(line):
             block_port = m.group(1).lower()
             continue

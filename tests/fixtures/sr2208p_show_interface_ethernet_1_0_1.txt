@@ -1,0 +1,83 @@
+
+Total Packets Received (Octets)................ 297039
+Packets Received 64 Octets..................... 780
+Packets Received 65-127 Octets................. 881
+Packets Received 128-255 Octets................ 146
+Packets Received 256-511 Octets................ 16
+Packets Received 512-1023 Octets............... 12
+Packets Received 1024-1518 Octets.............. 108
+Packets Received > 1518 Octets................. 0
+Packets RX and TX 64 Octets.................... 87753
+Packets RX and TX 65-127 Octets................ 14694
+Packets RX and TX 128-255 Octets............... 4676
+Packets RX and TX 256-511 Octets............... 3778
+Packets RX and TX 512-1023 Octets.............. 350
+Packets RX and TX 1024-1518 Octets............. 274
+Packets RX and TX 1519-2047 Octets............. 0
+Packets RX and TX 2048-4095 Octets............. 0
+Packets RX and TX 4096-9216 Octets............. 0
+
+Total Packets Received Without Errors.......... 1943
+Unicast Packets Received....................... 963
+Multicast Packets Received..................... 899
+Broadcast Packets Received..................... 81
+
+Receive Packets Discarded...................... 0
+
+Total Packets Received with MAC Errors......... 0
+Jabbers Received............................... 0
+Fragments Received............................. 0
+Undersize Received............................. 0
+Alignment Errors............................... 0
+FCS Errors..................................... 0
+Overruns....................................... 0
+
+Total Received Packets Not Forwarded........... 0
+802.3x Pause Frames Received................... 0
+Unacceptable Frame Type........................ 0
+
+Total Packets Transmitted (Octets)............. 9706311
+Packets Transmitted 64 Octets.................. 86973
+Packets Transmitted 65-127 Octets.............. 13813
+Packets Transmitted 128-255 Octets............. 4530
+Packets Transmitted 256-511 Octets............. 3762
+Packets Transmitted 512-1023 Octets............ 338
+Packets Transmitted 1024-1518 Octets........... 166
+Packets Transmitted > 1518 Octets.............. 0
+Max Frame Size................................. 1518
+Maximum Transmit Unit.......................... 1500
+
+Total Packets Transmitted Successfully......... 109582
+Unicast Packets Transmitted.................... 954
+Multicast Packets Transmitted.................. 13955
+Broadcast Packets Transmitted.................. 94673
+
+Transmit Packets Discarded..................... 0
+
+Total Transmit Errors.......................... 0
+
+Total Transmit Packets Discarded............... 0
+Single Collision Frames........................ 0
+Multiple Collision Frames...................... 0
+Excessive Collision Frames..................... 0
+
+802.3x Pause Frames Transmitted................ 0
+GVRP PDUs received............................. 0
+GVRP PDUs Transmitted.......................... 0
+GVRP Failed Registrations...................... 0
+GMRP PDUs Received............................. 0
+GMRP PDUs Transmitted.......................... 0
+GMRP Failed Registrations...................... 0
+
+STP BPDUs Transmitted.......................... 0
+STP BPDUs Received............................. 0
+RSTP BPDUs Transmitted......................... 0
+RSTP BPDUs Received............................ 0
+MSTP BPDUs Transmitted......................... 2764
+MSTP BPDUs Received............................ 0
+
+EAPOL Frames Transmitted....................... 0
+EAPOL Start Frames Received.................... 0
+
+Time Since Counters Last Cleared............... 0 day 1 hr 35 min 27 sec
+

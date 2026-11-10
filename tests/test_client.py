@@ -371,3 +371,70 @@ async def test_switch_cli_login_prompt_config_mode_and_save() -> None:
         await client.close()
         srv.close()
         await srv.wait_closed()
+
+
+async def test_switch_idle_timeout_relogin() -> None:
+    """After an idle timeout the switch asks for User:/Password: and drops to '>'."""
+    received: list[str] = []
+    state = {"timed_out": False}
+
+    async def handler(process: asyncssh.SSHServerProcess) -> None:
+        mode = ">"
+
+        def prompt() -> None:
+            process.stdout.write(f"\r\n(AH-Switch) {mode}")
+
+        prompt()
+        while True:
+            line = await _read_line(process)
+            if line is None:
+                break
+            cmd = line.strip()
+            received.append(cmd)
+            if cmd == "enable":
+                mode = "#"
+            elif cmd == "terminal length 0":
+                pass
+            elif cmd == "show version" and not state["timed_out"]:
+                state["timed_out"] = True
+                process.stdout.write("Machine Model..... Aerohive SR2208P\r\n")
+                prompt()
+                # idle timeout fires while we wait for the next command
+                process.stdout.write("\r\n*** IDLE TIMEOUT ***\r\n\r\n\r\nUser:")
+                user = await _read_line(process)
+                process.stdout.write("Password:")
+                await _read_line(process)
+                received.append(f"relogin-user:{user}")
+                if user != USER:
+                    process.stdout.write("\r\nUser:")
+                    user = await _read_line(process)
+                    process.stdout.write("Password:")
+                    await _read_line(process)
+                    received.append(f"relogin-user:{user}")
+                mode = ">"
+            elif cmd == "show version":
+                if mode != "#":
+                    process.stdout.write("% Invalid input detected at '^' marker.\r\n")
+                else:
+                    process.stdout.write("Machine Model..... Aerohive SR2208P\r\n")
+            else:
+                process.stdout.write("% Invalid input detected at '^' marker.\r\n")
+            prompt()
+        process.exit(0)
+
+    key = asyncssh.generate_private_key("ssh-rsa", 2048)
+    srv = await asyncssh.create_server(
+        _Server, "127.0.0.1", 0, server_host_keys=[key], process_factory=handler, line_editor=False
+    )
+    port = srv.sockets[0].getsockname()[1]
+    client = _client(port)
+    try:
+        assert "SR2208P" in await client.run("show version")
+        out = await client.run("show version")  # typed into the User: prompt, then re-run
+        assert "SR2208P" in out
+        assert client.prompt_mode == "#"
+        assert f"relogin-user:{USER}" in received
+    finally:
+        await client.close()
+        srv.close()
+        await srv.wait_closed()

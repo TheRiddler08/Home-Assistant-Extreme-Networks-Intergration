@@ -218,15 +218,13 @@ def _switch_responses() -> dict[str, str]:
         "show mac-addr-table": load_fixture("sr2208p_show_mac_addr_table.txt"),
         "show lldp remote-device all": load_fixture("sr2208p_show_lldp_remote_device_all.txt"),
         detail: load_fixture("sr2208p_show_lldp_remote_device_detail_1_0_2.txt"),
-        # Per-port PoE (format not captured yet): synthetic table in switch naming.
-        "show poe port all": (
-            "Intf      Admin    Status        Power(W)  Class\n"
-            "--------- -------- ------------- --------- -----\n"
-            "1/0/1     Enable   Delivering    6.50      4\n"
-            "1/0/2     Enable   Delivering    8.80      4\n"
-            "1/0/3     Disable  Disabled      0.00      -\n"
-        ),
-        "show running-config": "interface 1/0/3\nno poe\nexit\ninterface 1/0/5\nshutdown\nexit\n",
+        # Per-port PoE: real command form not captured yet; synthetic single-port output.
+        "show poe port 1/0/1": "Admin Mode........ Enable\nPort Status....... Delivering Power\nOutput Power (mW)....... 6500\nClass.... 4\n",
+        "show poe port 1/0/2": "Admin Mode........ Enable\nPort Status....... Delivering Power\nOutput Power (mW)....... 8800\nClass.... 4\n",
+        "show poe port 1/0/3": "Admin Mode........ Disable\nPort Status....... Disabled\nOutput Power (mW)....... 0\n",
+        "show interface ethernet 1/0/1": load_fixture("sr2208p_show_interface_ethernet_1_0_1.txt"),
+        "show running-config": load_fixture("sr2208p_show_running_config.txt")
+        + "interface 1/0/3\nno poe\nexit\ninterface 1/0/5\nshutdown\nexit\n",
     }
 
 
@@ -288,6 +286,23 @@ async def test_switch_entities(hass: HomeAssistant, switch_entry: MockConfigEntr
     assert st(_sw(hass, "sensor", "poe_power_budget")).state == "130.0"
     assert st(_sw(hass, "sensor", "poe_power_remaining")).state == "114.7"
     assert st(_sw(hass, "sensor", "iface_1/0/2_poe_power")).state == "8.8"
+    assert st(_sw(hass, "sensor", "iface_1/0/2_poe_status")).state == "Delivering Power"
+    # Real 'show interface ethernet' counters (byte counters -> throughput after 2 polls).
+    rx_bytes = er.async_get(hass).async_get(_sw(hass, "sensor", "iface_1/0/1_rx_bytes"))
+    assert rx_bytes.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+    coordinator = switch_entry.runtime_data
+    assert coordinator.data.details["1/0/1"].rx_bytes == 297039
+    assert coordinator.data.details["1/0/1"].tx_bytes == 9706311
+    assert coordinator.data.details["1/0/1"].tx_packets == 109582
+    assert coordinator.data.details["1/0/1"].mtu == 1500
+    assert st(_sw(hass, "sensor", "iface_1/0/1_rx_throughput")).state == "unknown"
+    # Uptime from the running-config header.
+    assert coordinator.data.version.uptime_seconds >= 5739
+    assert st(_sw(hass, "sensor", "boot_time")).state not in ("unknown", "unavailable")
+    # No raw sensors for the ~70 per-port switch counters.
+    raw = [e for e in er.async_entries_for_config_entry(er.async_get(hass), switch_entry.entry_id)
+           if e.unique_id.startswith(f"{SWITCH_MAC}_raw_if_1/0/")]
+    assert raw == []
     assert st(_sw(hass, "switch", "poe_1/0/1")).state == "on"
     assert st(_sw(hass, "switch", "poe_1/0/3")).state == "off"
     # LLDP: summary + detail (management address of the neighbouring AP).

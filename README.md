@@ -223,10 +223,14 @@ commands. Verified against an SR2208P on software 1.0.1.28:
 | Port link, speed, duplex, admin state | `show port all` |
 | PoE budget / consumed / remaining | `show poe` |
 | Clients per port | `show mac-addr-table` |
+| Per-port octet/packet/error counters → throughput | `show interface ethernet 1/0/N` (ports that are up) |
+| Uptime / boot time, port & PoE admin state | `show running-config` (header + `interface` blocks) |
 | LLDP neighbours + their IP and capabilities | `show lldp remote-device all` + `… detail <port>` (every 15 min) |
 
 On connect it answers a `User:` / `Password:` prompt if the switch asks again, runs `enable`
-if the session starts at `>`, and runs `terminal length 0`.
+if the session starts at `>`, and runs `terminal length 0`. If the switch's idle timeout logs
+the session out (`*** IDLE TIMEOUT ***`), the integration logs back in, re-enters `enable` and
+re-runs the command.
 
 | Entity | Notes |
 | --- | --- |
@@ -238,7 +242,7 @@ if the session starts at `>`, and runs `terminal length 0`.
 | IP address, firmware, serial number, reboot | `reload`, confirmations answered |
 | `Port 1/0/N PoE` switch, `PoE power`, `PoE status`, `PoE power cycle` button | only if a per-port PoE command works (see assumptions) |
 | `Port 1/0/N enabled` switch | **disabled by default**: shutting down the port Home Assistant reaches the switch through locks you out |
-| RX / TX throughput per port | only if `show interface ethernet <port>` reports octet counters |
+| RX / TX throughput per port | from `Total Packets Received/Transmitted (Octets)`. Counters (bytes, packets, errors, discards) are disabled by default; the other ~60 statistics lines are not turned into entities |
 
 **Finds your APs for you:** when a configured switch or AP sees an Aerohive/Extreme device
 as an LLDP neighbour, with a management IP, that isn't set up yet, it shows up as
@@ -377,13 +381,15 @@ These commands and formats couldn't be checked against real hardware. Please tes
 17. **`show hw-info`** reports `Serial number:` and `Hardware revision:`.
     Any of the commands in 13–17 that the firmware rejects are skipped quietly.
 
-18. **SR switch per-port PoE status** is read with `show poe port all`, then `show poe port info all`,
-    then `show poe port configuration all`. Not captured yet.
+18. **SR switch per-port PoE status:** `show poe port all` is rejected on 1.0.1.28. The
+    integration tries `show poe port info all`, `show poe port info`,
+    `show poe port configuration all` and `show poe port status all`, then falls back to
+    `show poe port 1/0/N` / `show poe port info 1/0/N` one port at a time. **Needed:** the
+    output of `show poe port ?`.
 19. **SR switch PoE on/off** uses `configure` → `interface 1/0/N` → `poe` / `no poe` → `exit` → `exit`.
 20. **SR switch port on/off** uses the same block with `shutdown` / `no shutdown`.
 21. **SR switch save** is `write memory`, answering `y` to the confirmation.
-22. **SR switch counters** come from `show interface ethernet 1/0/N`, as
-    `Total Packets Received (Octets)` / `Total Packets Transmitted (Octets)`.
+22. **SR switch counters:** verified (`show interface ethernet 1/0/N`).
 23. **SR switch admin state** comes from the running config (`interface 1/0/N` / `shutdown` /
     `no poe` blocks) and from `show port all`.
 24. **HiveOS-style switches** (older SR firmware with an `AH-xxxx#` prompt): `show pse`,
@@ -396,8 +402,8 @@ These commands and formats couldn't be checked against real hardware. Please tes
 
 Please also send me `run_show_command` output for `show interface eth0`, `show interface wifi0.1`,
 `show interface mgt0`, `show cpu`, `show memory` and `show hw-info`. From the SR2208P, please send
-`show poe port all` (or whichever of `show poe ?` works), `show interface ethernet 1/0/1`,
-`show running-config` (only the `interface 1/0/…` blocks are needed) and `show switch`.
+`show poe port ?`, then whichever form it suggests for one port (e.g. `show poe port 1/0/1`
+or `show poe port info 1/0/1`).
 
 ## Development
 

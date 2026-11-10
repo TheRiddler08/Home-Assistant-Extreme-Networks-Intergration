@@ -202,7 +202,15 @@ SW_SHOW_VERSION = "show version"
 SW_SHOW_NETWORK = "show network"
 SW_SHOW_PORTS = "show port all"
 SW_SHOW_POE = "show poe"
-SW_POE_PORT_COMMANDS = ("show poe port all", "show poe port info all", "show poe port configuration all")
+# "show poe port all" is rejected on 1.0.1.28 ("port" is accepted, "all" is not).
+SW_POE_PORT_COMMANDS = (
+    "show poe port info all",
+    "show poe port info",
+    "show poe port configuration all",
+    "show poe port status all",
+)
+# Fallback: one port at a time.
+SW_POE_PORT_SINGLE = ("show poe port {port}", "show poe port info {port}")
 SW_MAC_TABLE = "show mac-addr-table"
 SW_LLDP = "show lldp remote-device all"
 SW_LLDP_DETAIL = "show lldp remote-device detail {port}"

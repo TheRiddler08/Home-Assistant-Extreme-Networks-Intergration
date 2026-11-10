@@ -1,0 +1,39 @@
+
+!Current Configuration:
+!
+!System Description "Aerohive SR2208P: 8 GE POE+ ports, 2 GE dual media ports, 1.0.1.28, Linux 3.6.5"
+!System Software Version "1.0.1.28"
+!System Up Time          "0 days 1 hrs 35 mins 39 secs"
+!Additional Packages     FASTPATH QOS,FASTPATH IPv6 Management,FASTPATH Stacking,FASTPATH Routing
+!Current SNTP Synchronized Time: Nov 10 16:59:21 2026 UTC
+!
+vlan database
+exit
+
+ip ssh server enable
+ip ssh protocol 2
+no ip telnet server enable
+configure
+sntp client mode unicast
+sntp server "0.aerohive.pool.ntp.org" 3
+stack
+member 1 3
+exit
+slot 1/0 5
+set slot power 1/0
+no set slot disable 1/0
+no username guest
+line console
+exit
+
+line telnet
+exit
+
+line ssh
+exit
+
+snmp-server sysname "AH-Switch"
+!
+application install hiveagent start-on-boot
+exit
+

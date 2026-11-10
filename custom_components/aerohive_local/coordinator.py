@@ -61,6 +61,7 @@ from .parsers import (
     parse_running_config_summary,
     parse_show_boot_param,
     parse_show_network,
+    parse_poe_port_detail,
     parse_show_poe,
     parse_show_port_all,
     parse_show_cpu,
@@ -79,6 +80,7 @@ _LOGGER = logging.getLogger(__name__)
 type AerohiveConfigEntry = ConfigEntry[AerohiveCoordinator]
 
 UPLINK_MAC_THRESHOLD = 16
+POE_MAX_PORTS = 24  # per-port PoE probing stops at this port number
 
 
 @dataclass
@@ -304,6 +306,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._lldp: dict[str, LldpNeighbor] = {}
         self._chosen: dict[str, str] = {}
         self._port_detail_ok: bool | None = None
+        self._poe_single: str | bool | None = None
+        self._config_read_at: float | None = None
         self._announced: set[str] = set()
         # name -> (monotonic time, rx_bytes, tx_bytes) from the previous poll
         self._counters: dict[str, tuple[float, int | None, int | None]] = {}
@@ -434,6 +438,10 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             data.details["mgt0"] = self._mgt
         data.hostname = self.client.hostname
 
+        self._update_boot_time(data)
+        return data
+
+    def _update_boot_time(self, data: AerohiveData) -> None:
         if data.version.uptime_seconds is not None:
             boot = dt_util.utcnow() - timedelta(seconds=data.version.uptime_seconds)
             # Keep the timestamp stable across polls (uptime has coarse
@@ -441,7 +449,6 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             if self._boot_time is None or abs((boot - self._boot_time).total_seconds()) > 120:
                 self._boot_time = boot.replace(microsecond=0)
         data.boot_time = self._boot_time
-        return data
 
     async def _fetch_switch(self, data: AerohiveData, version_out: str) -> AerohiveData:
         """Poll an SR-series switch (FASTPATH-style CLI)."""
@@ -471,6 +478,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             data.poe_ports = ports
         if not data.poe_ports and (out := await self._first_supported("poe_ports", commands.SW_POE_PORT_COMMANDS)):
             data.poe_ports = parse_show_poe(out)[1]
+        if not data.poe_ports and data.poe is not None and self._poe_single is not False:
+            data.poe_ports = await self._poe_ports_one_by_one(data)
         if out := await self._optional(commands.SW_MAC_TABLE):
             data.fdb = parse_mac_address_table(out)
 
@@ -479,6 +488,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             self._config_dirty = False
             if out := await self._optional("show running-config"):
                 self._config = parse_running_config_summary(out)
+                self._config_read_at = time.monotonic()
         if self._slow_at is None or now - self._slow_at > SLOW_REFRESH_SECONDS:
             self._slow_at = now
             self._config_dirty = True
@@ -497,7 +507,35 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             data.details["mgt0"] = self._mgt
         data.config = self._config
         data.lldp = self._lldp
+        if self._config is not None and self._config.uptime_seconds is not None and self._config_read_at:
+            # Uptime from the running-config header, aged by the time since it was read.
+            data.version.uptime_seconds = self._config.uptime_seconds + int(now - self._config_read_at)
+        self._update_boot_time(data)
         return data
+
+    async def _poe_ports_one_by_one(self, data: AerohiveData) -> dict[str, PoePort]:
+        """Read PoE port by port when no 'all ports' form is accepted."""
+        result: dict[str, PoePort] = {}
+        templates = (
+            [self._poe_single] if isinstance(self._poe_single, str) else list(commands.SW_POE_PORT_SINGLE)
+        )
+        ports = [p for p in data.ports() if p.split("/")[-1].isdigit() and int(p.split("/")[-1]) <= POE_MAX_PORTS]
+        for port in ports:
+            for template in list(templates):
+                out = await self.client.run(template.format(port=port))
+                if is_unsupported_command(out):
+                    templates.remove(template)
+                    continue
+                if entry := parse_poe_port_detail(out, port):
+                    result[port] = entry
+                    self._poe_single = template
+                    templates = [template]
+                break
+            if not templates:
+                break
+        if not result and not templates:
+            self._poe_single = False  # no per-port PoE command on this firmware
+        return result
 
     def _announce_neighbors(self) -> None:
         """Offer unconfigured Aerohive/Extreme neighbours seen via LLDP for setup."""

@@ -798,6 +798,9 @@ def _raw_sources(data: AerohiveData) -> dict[str, tuple[str, dict[str, str], set
         )
     }
     for name, detail in data.details.items():
+        iface = data.interfaces.get(name)
+        if data.is_switch and iface is not None and iface.is_port:
+            continue  # switch port statistics: ~70 counters per port, only mapped ones are exposed
         mapped = {key for attr, key in detail.mapped_fields.items() if attr in _DETAIL_WITH_ENTITY}
         sources[f"if_{name}"] = (interface_label(data, name), detail.raw, mapped)
     for key, label, obj in (

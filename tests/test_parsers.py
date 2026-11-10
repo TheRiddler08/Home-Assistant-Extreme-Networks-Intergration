@@ -533,3 +533,25 @@ def test_config_mode_prompt() -> None:
     m = p.PROMPT_RE.search("(AH-Switch) (Interface 1/0/1)#")
     assert m.group("submode") == "Interface 1/0/1"
     assert p.find_cli_error("Command not found / Incomplete command. Use ? to list commands.")
+
+
+def test_sr2208p_ethernet_counters_and_uptime() -> None:
+    d = p.parse_show_interface_detail(load_fixture("sr2208p_show_interface_ethernet_1_0_1.txt"), "1/0/1")
+    assert (d.rx_bytes, d.tx_bytes) == (297039, 9706311)
+    assert (d.rx_packets, d.tx_packets) == (1943, 109582)
+    assert (d.rx_errors, d.tx_errors, d.rx_dropped, d.tx_dropped) == (0, 0, 0, 0)
+    assert d.mtu == 1500
+    cfg = p.parse_running_config_summary(load_fixture("sr2208p_show_running_config.txt"))
+    assert cfg.uptime_seconds == 3600 + 35 * 60 + 39
+    assert cfg.shutdown_ports == set() and cfg.pse_shutdown_ports == set()
+
+
+def test_poe_port_detail() -> None:
+    entry = p.parse_poe_port_detail(
+        "Admin Mode........ Enable\nPort Status....... Delivering Power\nOutput Power (mW)....... 6500\nClass.... 4\n",
+        "1/0/1",
+    )
+    assert entry is not None
+    assert (entry.admin, entry.status, entry.power_w, entry.poe_class) == ("Enable", "Delivering Power", 6.5, "4")
+    assert entry.enabled is True and entry.delivering is True
+    assert p.parse_poe_port_detail("", "1/0/1") is None

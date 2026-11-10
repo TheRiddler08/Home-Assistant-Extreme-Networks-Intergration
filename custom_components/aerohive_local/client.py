@@ -71,6 +71,9 @@ READ_CHUNK = 65536
 TERM_SIZE = (250, 1000)  # wide/tall pty to minimise wrapping and paging
 
 
+IDLE_TIMEOUT_RE = re.compile(r"\*+\s*IDLE TIMEOUT\s*\*+", re.IGNORECASE)
+
+
 class AerohiveError(Exception):
     """Base error."""
 
@@ -375,6 +378,14 @@ class AerohiveClient:
                         await self._ensure_privileged()
                     _LOGGER.debug("%s: > %s", self._host, redact(command))
                     output = await self._exec(command, timeout, confirm=confirm)
+                    if self.dialect == DIALECT_SWITCH and not keep_mode and (
+                        self.prompt_mode == ">" or IDLE_TIMEOUT_RE.search(output)
+                    ):
+                        # The switch timed the session out and logged us in again
+                        # at the user prompt: the output is not the command's.
+                        _LOGGER.debug("%s: session was reset (idle timeout), re-running command", self._host)
+                        await self._ensure_privileged()
+                        output = await self._exec(command, timeout, confirm=confirm)
                 except AerohiveAuthError:
                     await self._close()
                     raise
