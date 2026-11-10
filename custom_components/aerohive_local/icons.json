@@ -1,7 +1,22 @@
 {
   "services": {
-    "run_show_command": { "service": "mdi:console" },
-    "set_ssid_password": { "service": "mdi:form-textbox-password" },
-    "disconnect_client": { "service": "mdi:lan-disconnect" }
+    "run_show_command": {
+      "service": "mdi:console"
+    },
+    "set_ssid_password": {
+      "service": "mdi:form-textbox-password"
+    },
+    "disconnect_client": {
+      "service": "mdi:lan-disconnect"
+    },
+    "create_ssid": {
+      "service": "mdi:wifi-plus"
+    },
+    "delete_ssid": {
+      "service": "mdi:wifi-remove"
+    },
+    "power_cycle_poe": {
+      "service": "mdi:restart"
+    }
   }
 }

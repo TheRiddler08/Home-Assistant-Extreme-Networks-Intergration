@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import logging
+import re
 import time
 
 from homeassistant.config_entries import ConfigEntry
@@ -24,6 +26,8 @@ from .client import (
 )
 from .const import (
     CONF_DETAILED_STATS,
+    CONF_ENABLE_ALL,
+    DEFAULT_ENABLE_ALL,
     CONF_SCAN_INTERVAL,
     DEFAULT_DETAILED_STATS,
     DEFAULT_SCAN_INTERVAL,
@@ -33,6 +37,11 @@ from .const import (
 )
 from .parsers import (
     BootParams,
+    FdbEntry,
+    LldpNeighbor,
+    PoePort,
+    PoeSummary,
+    RunningConfigSummary,
     HardwareInfo,
     Interface,
     InterfaceDetail,
@@ -42,7 +51,11 @@ from .parsers import (
     VersionInfo,
     find_cli_error,
     is_unsupported_command,
+    parse_lldp_neighbors,
+    parse_mac_address_table,
+    parse_running_config_summary,
     parse_show_boot_param,
+    parse_show_poe,
     parse_show_cpu,
     parse_show_hw_info,
     parse_show_interface,
@@ -100,6 +113,65 @@ class AerohiveData:
     cpu: SystemStats | None = None
     memory: SystemStats | None = None
     boot_time: datetime | None = None
+    poe: PoeSummary | None = None
+    poe_ports: dict[str, PoePort] = field(default_factory=dict)
+    fdb: list[FdbEntry] = field(default_factory=list)
+    lldp: dict[str, LldpNeighbor] = field(default_factory=dict)
+    config: RunningConfigSummary | None = None
+
+    @property
+    def is_switch(self) -> bool:
+        """SR-series switches (or anything with eth1/1-style ports)."""
+        platform = (self.version.platform or "").upper()
+        return platform.startswith("SR") or any("/" in n for n in self.interfaces)
+
+    @property
+    def has_switch_ports(self) -> bool:
+        """Switches and branch routers (BR100 eth1-eth4) have LAN ports worth managing."""
+        return self.is_switch or (self.version.platform or "").upper().startswith("BR")
+
+    def ports(self) -> list[str]:
+        """Physical Ethernet ports, naturally sorted (eth1/2 before eth1/10)."""
+
+        def key(name: str) -> list[int]:
+            return [int(x) for x in re.findall(r"\d+", name)]
+
+        return sorted((n for n, i in self.interfaces.items() if i.is_port), key=key)
+
+    def port_clients(self, port: str) -> list[FdbEntry]:
+        return [e for e in self.fdb if e.port == port]
+
+    def wired_client_macs(self) -> set[str]:
+        return {e.mac for e in self.fdb}
+
+    def port_enabled(self, port: str) -> bool | None:
+        """Administrative state of a port, best effort."""
+        if self.config is not None and port in self.config.shutdown_ports:
+            return False
+        detail = self.details.get(port)
+        iface = self.interfaces.get(port)
+        admin = (detail.admin_state if detail else None) or (iface.admin_state if iface else None)
+        if admin:
+            return not any(w in admin.lower() for w in ("disable", "down", "shut"))
+        if iface is not None and iface.is_up:
+            return True
+        if self.config is not None:
+            return True  # not listed as shut down in the running config
+        return None
+
+    def poe_enabled(self, port: str) -> bool | None:
+        if self.config is not None and port in self.config.pse_shutdown_ports:
+            return False
+        poe = self.poe_ports.get(port)
+        return poe.enabled if poe else None
+
+    def ssid_hidden(self, ssid: str) -> bool | None:
+        return None if self.config is None else ssid in self.config.hidden_ssids
+
+    def ssid_enabled(self, ssid: str) -> bool:
+        """Bound to every exposed radio."""
+        radios = self.radio_names()
+        return bool(radios) and all(self.ssid_on_radio(ssid, r) for r in radios)
 
     @property
     def mac(self) -> str | None:
@@ -188,12 +260,17 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         )
         self.client = client
         self.detailed_stats: bool = entry.options.get(CONF_DETAILED_STATS, DEFAULT_DETAILED_STATS)
+        self.enable_all_entities: bool = entry.options.get(CONF_ENABLE_ALL, DEFAULT_ENABLE_ALL)
         self._unsupported: set[str] = set()
         self._slow_at: float | None = None
         self._boot_params: BootParams | None = None
         self._hardware: HardwareInfo | None = None
         self._mgt: InterfaceDetail | None = None
         self._boot_time: datetime | None = None
+        self._config: RunningConfigSummary | None = None
+        self._config_dirty = True
+        self._lldp: dict[str, LldpNeighbor] = {}
+        self._chosen: dict[str, str] = {}
         # name -> (monotonic time, rx_bytes, tx_bytes) from the previous poll
         self._counters: dict[str, tuple[float, int | None, int | None]] = {}
 
@@ -211,6 +288,17 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             self._unsupported.add(command)
             return None
         return output
+
+    async def _first_supported(self, group: str, candidates: tuple[str, ...]) -> str | None:
+        """Run the first command of a group the firmware accepts (remembered)."""
+        if group in self._chosen:
+            return await self._optional(self._chosen[group])
+        for command in candidates:
+            out = await self._optional(command)
+            if out is not None:
+                self._chosen[group] = command
+                return out
+        return None
 
     async def _async_update_data(self) -> AerohiveData:
         try:
@@ -253,9 +341,11 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         data = AerohiveData()
         data.version = parse_show_version(await self.client.run("show version"))
         data.interfaces = parse_show_interface(await self.client.run("show interface"))
-        data.ssids = parse_show_ssid(await self.client.run("show ssid"))
-        station_out = await self._optional("show station")
-        data.stations = parse_show_station(station_out) if station_out else {}
+        ssid_out = await self._optional("show ssid")
+        data.ssids = parse_show_ssid(ssid_out) if ssid_out else {}
+        if data.radio_names():
+            station_out = await self._optional("show station")
+            data.stations = parse_show_station(station_out) if station_out else {}
 
         for name in self._detail_targets(data):
             out = await self._optional(f"show interface {name}")
@@ -273,9 +363,25 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             out = await self._optional("show memory")
             data.memory = parse_show_memory(out) if out else None
 
+        if data.is_switch or (data.has_switch_ports and self.detailed_stats):
+            if out := await self._first_supported("poe", commands.POE_STATUS_COMMANDS):
+                data.poe, data.poe_ports = parse_show_poe(out)
+                if not data.poe_ports and data.poe.budget_w is None:
+                    data.poe = None
+        if data.has_switch_ports:
+            if out := await self._first_supported("fdb", commands.MAC_TABLE_COMMANDS):
+                data.fdb = parse_mac_address_table(out)
+
         now = time.monotonic()
+        if self._config_dirty:
+            self._config_dirty = False
+            if out := await self._optional("show running-config"):
+                self._config = parse_running_config_summary(out)
         if self._slow_at is None or now - self._slow_at > SLOW_REFRESH_SECONDS:
             self._slow_at = now
+            self._config_dirty = True  # re-read on the next poll
+            if out := await self._first_supported("lldp", commands.LLDP_COMMANDS):
+                self._lldp = parse_lldp_neighbors(out)
             if out := await self._optional("show boot-param"):
                 self._boot_params = parse_show_boot_param(out)
             if out := await self._optional("show hw-info"):
@@ -284,6 +390,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 self._mgt = parse_show_interface_detail(out, "mgt0")
         data.boot_params = self._boot_params
         data.hardware = self._hardware
+        data.config = self._config
+        data.lldp = self._lldp
         if self._mgt is not None and "mgt0" not in data.details:
             data.details["mgt0"] = self._mgt
         data.hostname = self.client.hostname
@@ -346,11 +454,17 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                     )
             await self._save()
         except AerohiveCommandError as err:
+            self._config_dirty = True
             raise HomeAssistantError(scrub(str(err))) from err
         except AerohiveError as err:
+            self._config_dirty = True
             raise HomeAssistantError(
                 f"Error communicating with {self.client.host}: {scrub(str(err))}"
             ) from err
+        except HomeAssistantError:
+            self._config_dirty = True
+            raise
+        self._config_dirty = True
         await self.async_request_refresh()
 
     async def _save(self) -> None:
@@ -376,6 +490,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
 
     async def async_get_security_object(self, ssid: str) -> str:
         """Find the security-object bound to an SSID (defaults to its name)."""
+        if self._config is not None and ssid in self._config.ssid_security_objects:
+            return self._config.ssid_security_objects[ssid]
         try:
             config = await self.client.run("show running-config")
         except AerohiveError as err:
@@ -391,6 +507,64 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         cmd = self._validated(commands.ssid_psk, obj, password)
         _LOGGER.info("%s: changing Wi-Fi key of security-object %s", self.client.host, obj)
         await self._apply([cmd], secret=password)
+
+    async def async_set_ssid_all_radios(self, ssid: str, enable: bool) -> None:
+        data = self.data
+        cmds = [
+            self._validated(commands.ssid_bind, radio, ssid, enable)
+            for radio in data.radio_names()
+            if data.ssid_on_radio(ssid, radio) != enable
+        ]
+        if cmds:
+            await self._apply(cmds)
+
+    async def async_set_ssid_hidden(self, ssid: str, hidden: bool) -> None:
+        await self._apply([self._validated(commands.ssid_hide, ssid, hidden)])
+
+    async def async_create_ssid(self, ssid: str, password: str | None, radios: list[str] | None) -> None:
+        if ssid in self.data.ssids:
+            raise HomeAssistantError(f"SSID {ssid} already exists")
+        available = self.data.radio_names()
+        if not available:
+            raise HomeAssistantError(f"{self.client.host} has no Wi-Fi radios")
+        targets = radios or available
+        unknown = [r for r in targets if r not in available]
+        if unknown:
+            raise HomeAssistantError(f"Unknown radio(s) {', '.join(unknown)}; available: {', '.join(available)}")
+        cmds = self._validated(commands.create_ssid, ssid, targets, password or None)
+        _LOGGER.info("%s: creating SSID %s on %s", self.client.host, ssid, ", ".join(targets))
+        await self._apply(cmds, secret=password or None)
+
+    async def async_delete_ssid(self, ssid: str) -> None:
+        if ssid not in self.data.ssids:
+            raise HomeAssistantError(f"SSID {ssid} does not exist")
+        obj = await self.async_get_security_object(ssid)
+        bound = [r for r in self.data.radio_names() if self.data.ssid_on_radio(ssid, r)]
+        cmds = self._validated(commands.delete_ssid, ssid, bound, obj)
+        _LOGGER.info("%s: deleting SSID %s", self.client.host, ssid)
+        await self._apply(cmds)
+
+    async def async_set_port_enabled(self, port: str, enable: bool) -> None:
+        await self._apply([self._validated(commands.port_enable, port, enable)])
+
+    async def async_set_poe(self, port: str, enable: bool) -> None:
+        await self._apply([self._validated(commands.port_poe, port, enable)])
+
+    async def async_power_cycle_poe(self, port: str, off_seconds: float = 5) -> None:
+        """Turn PoE off and on again (runtime only, nothing is saved)."""
+        off = self._validated(commands.port_poe, port, False)
+        on = self._validated(commands.port_poe, port, True)
+        try:
+            output = await self.client.run(off)
+            if error := find_cli_error(output):
+                raise HomeAssistantError(f"{self.client.host} rejected '{off}': {error}")
+            await asyncio.sleep(off_seconds)
+            output = await self.client.run(on)
+            if error := find_cli_error(output):
+                raise HomeAssistantError(f"{self.client.host} rejected '{on}': {error}")
+        except AerohiveError as err:
+            raise HomeAssistantError(f"Error communicating with {self.client.host}: {err}") from err
+        await self.async_request_refresh()
 
     async def async_disconnect_client(self, mac: str) -> None:
         candidates = self._validated(commands.disconnect_commands, mac)

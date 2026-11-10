@@ -2,7 +2,15 @@
   "config": {
     "step": {
       "user": {
-        "title": "Aerohive / Extreme Networks device",
+        "title": "Add Aerohive / Extreme Networks device",
+        "description": "Find access points, branch routers and switches on your network automatically, or enter an IP address yourself.",
+        "menu_options": {
+          "scan": "Scan my network",
+          "manual": "Enter IP address manually"
+        }
+      },
+      "manual": {
+        "title": "Enter device details",
         "description": "Connect to an access point or branch router over SSH. Provide a password, an SSH private key path, or both.",
         "data": {
           "host": "Host",
@@ -14,6 +22,37 @@
         },
         "data_description": {
           "host": "IP address or hostname of the device.",
+          "ssh_key_path": "Absolute path to a private key file readable by Home Assistant, e.g. /config/.ssh/aerohive.",
+          "scan_interval": "Seconds between polls. Keep this at 60 or higher for a BR100."
+        }
+      },
+      "pick": {
+        "title": "Pick a discovered device",
+        "description": "Found {count} likely Aerohive/Extreme device(s) out of {total} SSH devices. Pick one (or type an IP) and enter its CLI login.",
+        "data": {
+          "host": "Device",
+          "username": "Username",
+          "password": "Password",
+          "port": "Port",
+          "ssh_key_path": "SSH private key path (optional)",
+          "scan_interval": "Scan interval"
+        },
+        "data_description": {
+          "ssh_key_path": "Absolute path to a private key file readable by Home Assistant, e.g. /config/.ssh/aerohive.",
+          "scan_interval": "Seconds between polls. Keep this at 60 or higher for a BR100."
+        }
+      },
+      "discovery_confirm": {
+        "title": "Set up {name}",
+        "description": "Found an Aerohive / Extreme Networks device at {host}. Enter its CLI login to add it.",
+        "data": {
+          "username": "Username",
+          "password": "Password",
+          "port": "Port",
+          "ssh_key_path": "SSH private key path (optional)",
+          "scan_interval": "Scan interval"
+        },
+        "data_description": {
           "ssh_key_path": "Absolute path to a private key file readable by Home Assistant, e.g. /config/.ssh/aerohive.",
           "scan_interval": "Seconds between polls. Keep this at 60 or higher for a BR100."
         }
@@ -32,11 +71,17 @@
       "invalid_auth": "Invalid username, password or key.",
       "invalid_key": "The SSH key file could not be read.",
       "password_or_key": "Enter a password or an SSH key path.",
-      "unknown": "Unexpected error, see the log."
+      "unknown": "Unexpected error, see the log.",
+      "no_devices_found": "No devices found by the network scan. Enter the IP address manually."
     },
     "abort": {
       "already_configured": "This device is already configured.",
-      "reauth_successful": "Re-authentication was successful."
+      "reauth_successful": "Re-authentication was successful.",
+      "already_in_progress": "Setup for this device is already in progress."
+    },
+    "flow_title": "{name} ({host})",
+    "progress": {
+      "scanning": "Scanning the local network for SSH devices. This takes up to about 15 seconds."
     }
   },
   "options": {
@@ -47,12 +92,14 @@
           "scan_interval": "Scan interval",
           "tracked_clients": "Clients to track",
           "detailed_stats": "Read detailed statistics",
-          "raw_sensors": "Create sensors for every raw field"
+          "raw_sensors": "Create sensors for every raw field",
+          "enable_all_entities": "Enable all entities"
         },
         "data_description": {
           "tracked_clients": "Create a device tracker and detail sensors (signal, SNR, rates, SSID) only for these client MAC addresses (pick from connected clients or type a MAC).",
           "detailed_stats": "Throughput and counters for Ethernet ports and SSID sub-interfaces, plus CPU and memory. Adds a few CLI commands per poll; turn off for a slow BR100.",
-          "raw_sensors": "One sensor (disabled by default) for every other field the CLI reports, so you can enable anything you need."
+          "raw_sensors": "One sensor (disabled by default) for every other field the CLI reports, so you can enable anything you need.",
+          "enable_all_entities": "Turn on every entity, including the diagnostic ones that are disabled by default (counters, raw fields, port switches)."
         }
       }
     },
@@ -130,6 +177,21 @@
       },
       "wired_tx_throughput": {
         "name": "Wired TX throughput"
+      },
+      "wired_clients": {
+        "name": "Wired clients"
+      },
+      "poe_power_used": {
+        "name": "PoE power used"
+      },
+      "poe_power_budget": {
+        "name": "PoE power budget"
+      },
+      "poe_power_remaining": {
+        "name": "PoE power remaining"
+      },
+      "poe_ports_active": {
+        "name": "PoE ports active"
       }
     },
     "button": {
@@ -190,6 +252,56 @@
         "mac": {
           "name": "MAC address",
           "description": "Client MAC address in any common format."
+        }
+      }
+    },
+    "create_ssid": {
+      "name": "Create SSID",
+      "description": "Create a new Wi-Fi network (security-object + SSID) and broadcast it, then save the configuration.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Aerohive device."
+        },
+        "ssid": {
+          "name": "SSID",
+          "description": "Network name (1-32 characters)."
+        },
+        "password": {
+          "name": "Password",
+          "description": "WPA2-PSK key (8-63 characters). Leave empty for an open network."
+        },
+        "radios": {
+          "name": "Radios",
+          "description": "Radios to broadcast on, e.g. wifi0, wifi1. Default: all active radios."
+        }
+      }
+    },
+    "delete_ssid": {
+      "name": "Delete SSID",
+      "description": "Stop broadcasting an SSID and remove it (and its own security-object) from the configuration.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Aerohive device."
+        },
+        "ssid": {
+          "name": "SSID",
+          "description": "Network name to delete."
+        }
+      }
+    },
+    "power_cycle_poe": {
+      "name": "Power cycle PoE port",
+      "description": "Turn PoE off for 5 seconds and on again (switches).",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Aerohive device."
+        },
+        "port": {
+          "name": "Port",
+          "description": "Port name, e.g. eth1/1."
         }
       }
     }

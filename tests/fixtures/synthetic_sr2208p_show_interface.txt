@@ -1,0 +1,13 @@
+Name        MAC addr       Mode      State Speed    Duplex  VLAN Hive
+----------- -------------- --------- ----- -------- ------- ---- -------
+Mgt0        e01c:4100:1000 -         U     -        -       1    hive0
+Eth1/1      e01c:4100:1001 access    U     1000M    full    1    -
+Eth1/2      e01c:4100:1002 access    U     100M     full    1    -
+Eth1/3      e01c:4100:1003 access    D     -        -       1    -
+Eth1/4      e01c:4100:1004 access    D     -        -       1    -
+Eth1/5      e01c:4100:1005 access    D     -        -       1    -
+Eth1/6      e01c:4100:1006 access    D     -        -       1    -
+Eth1/7      e01c:4100:1007 access    D     -        -       1    -
+Eth1/8      e01c:4100:1008 access    D     -        -       1    -
+Eth1/9      e01c:4100:1009 trunk     U     1000M    full    1    -
+Eth1/10     e01c:4100:100a trunk     D     -        -       1    -

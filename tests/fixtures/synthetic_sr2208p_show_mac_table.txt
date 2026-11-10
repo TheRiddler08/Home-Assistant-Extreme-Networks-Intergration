@@ -1,0 +1,7 @@
+VLAN  MAC address     Type     Interface
+----  --------------  -------  ---------
+1     bcf3:107c:0680  dynamic  eth1/1
+1     bcf3:107c:0694  dynamic  eth1/1
+1     a4c3:f0aa:0002  dynamic  eth1/2
+1     0011:2233:4455  dynamic  eth1/9
+1     e01c:4100:1000  self     mgt0

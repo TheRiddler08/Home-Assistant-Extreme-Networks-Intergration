@@ -1,0 +1,4 @@
+Version:              HiveOS 6.5r8 build-123456
+Build time:           Fri Mar 10 10:00:00 UTC 2017
+Platform:             SR2208P
+Uptime:               1 weeks, 2 days, 3 hours, 4 minutes, 5 seconds

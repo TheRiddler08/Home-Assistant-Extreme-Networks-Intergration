@@ -1,14 +1,61 @@
 {
   "domain": "aerohive_local",
   "name": "Aerohive / Extreme Networks (Local SSH)",
-  "codeowners": ["@theriddler08"],
+  "after_dependencies": [
+    "dhcp"
+  ],
+  "codeowners": [
+    "@theriddler08"
+  ],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": [
+    "network"
+  ],
+  "dhcp": [
+    {
+      "hostname": "ah-*"
+    },
+    {
+      "registered_devices": true
+    },
+    {
+      "macaddress": "001977*"
+    },
+    {
+      "macaddress": "08EA44*"
+    },
+    {
+      "macaddress": "4018B1*"
+    },
+    {
+      "macaddress": "885BDD*"
+    },
+    {
+      "macaddress": "9C5D12*"
+    },
+    {
+      "macaddress": "BCF310*"
+    },
+    {
+      "macaddress": "C413E2*"
+    },
+    {
+      "macaddress": "E01C41*"
+    },
+    {
+      "macaddress": "F09CE9*"
+    }
+  ],
   "documentation": "https://github.com/theriddler08/home-assistant-extreme-networks-intergration",
   "integration_type": "device",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/theriddler08/home-assistant-extreme-networks-intergration/issues",
-  "loggers": ["asyncssh", "custom_components.aerohive_local"],
-  "requirements": ["asyncssh==2.21.0"],
-  "version": "0.1.0"
+  "loggers": [
+    "asyncssh",
+    "custom_components.aerohive_local"
+  ],
+  "requirements": [
+    "asyncssh==2.21.0"
+  ],
+  "version": "0.3.0"
 }

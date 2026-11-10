@@ -124,9 +124,18 @@ def _entity_id(hass: HomeAssistant, platform: str, key: str) -> str:
 # --------------------------------------------------------------------------
 
 
-async def test_config_flow_creates_entry(hass: HomeAssistant) -> None:
+async def _start_manual(hass: HomeAssistant) -> dict[str, Any]:
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    assert result["type"] is FlowResultType.MENU
+    assert result["menu_options"] == ["scan", "manual"]
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "manual"})
     assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "manual"
+    return result
+
+
+async def test_config_flow_creates_entry(hass: HomeAssistant) -> None:
+    result = await _start_manual(hass)
     with patch("custom_components.aerohive_local.async_setup_entry", return_value=True):
         result = await hass.config_entries.flow.async_configure(result["flow_id"], USER_INPUT)
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -143,7 +152,7 @@ async def test_config_flow_errors(hass: HomeAssistant, error: Exception, expecte
     async def failing_run(self, command, **kwargs):  # noqa: ANN001
         raise error
 
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    result = await _start_manual(hass)
     with patch.object(FakeClient, "run", failing_run):
         result = await hass.config_entries.flow.async_configure(result["flow_id"], USER_INPUT)
     assert result["type"] is FlowResultType.FORM
@@ -151,7 +160,7 @@ async def test_config_flow_errors(hass: HomeAssistant, error: Exception, expecte
 
 
 async def test_config_flow_requires_password_or_key(hass: HomeAssistant) -> None:
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    result = await _start_manual(hass)
     data = {k: v for k, v in USER_INPUT.items() if k != CONF_PASSWORD}
     result = await hass.config_entries.flow.async_configure(result["flow_id"], data)
     assert result["errors"] == {"base": "password_or_key"}
@@ -333,8 +342,8 @@ async def test_set_password_service_never_logs_key(
         {"device_id": device.id, "ssid": "AP460C", "password": "N3w-S3cret-Key"},
         blocking=True,
     )
-    assert client.commands[:3] == [
-        "show running-config",
+    # The security-object comes from the cached running-config summary.
+    assert client.commands[:2] == [
         "security-object sec-ap460c security protocol-suite wpa2-aes-psk ascii-key N3w-S3cret-Key",
         "save config",
     ]

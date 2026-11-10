@@ -28,6 +28,7 @@ from homeassistant.const import (
     EntityCategory,
     UnitOfDataRate,
     UnitOfInformation,
+    UnitOfPower,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import Entity
@@ -132,12 +133,14 @@ DEVICE_SENSORS: tuple[DeviceSensorDescription, ...] = (
     ),
     DeviceSensorDescription(
         key="clients", translation_key="clients", state_class=SensorStateClass.MEASUREMENT,
+        exists_fn=lambda d: bool(d.radio_names()),
         value_fn=lambda d: len(d.stations),
         attrs_fn=lambda d: {"clients": _client_list(d)},
     ),
     DeviceSensorDescription(
         key="ssids_broadcasting", translation_key="ssids_broadcasting",
         state_class=SensorStateClass.MEASUREMENT,
+        exists_fn=lambda d: bool(d.radio_names()),
         value_fn=lambda d: len(d.broadcasting_ssids()),
         attrs_fn=lambda d: {
             "broadcasting": d.broadcasting_ssids(),
@@ -221,6 +224,39 @@ DEVICE_SENSORS: tuple[DeviceSensorDescription, ...] = (
         key="country_code", translation_key="country_code", entity_category=DIAG,
         value_fn=lambda d: d.boot_params.country_code if d.boot_params else None,
         exists_fn=lambda d: bool(d.boot_params and d.boot_params.country_code),
+    ),
+    DeviceSensorDescription(
+        key="wired_clients", translation_key="wired_clients", state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:lan-connect",
+        value_fn=lambda d: len(d.wired_client_macs()),
+        exists_fn=lambda d: bool(d.fdb),
+        attrs_fn=lambda d: {"clients": [extra_attrs(mac=e.mac, port=e.port, vlan=e.vlan) for e in d.fdb]},
+    ),
+    DeviceSensorDescription(
+        key="poe_power_used", translation_key="poe_power_used", device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT, state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=lambda d: (d.poe.used_w if d.poe and d.poe.used_w is not None
+                            else round(sum(p.power_w or 0 for p in d.poe_ports.values()), 2) if d.poe_ports else None),
+        exists_fn=lambda d: bool(d.poe_ports) or bool(d.poe and d.poe.used_w is not None),
+    ),
+    DeviceSensorDescription(
+        key="poe_power_budget", translation_key="poe_power_budget", device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT, entity_category=DIAG,
+        value_fn=lambda d: d.poe.budget_w if d.poe else None,
+        exists_fn=lambda d: bool(d.poe and d.poe.budget_w is not None),
+    ),
+    DeviceSensorDescription(
+        key="poe_power_remaining", translation_key="poe_power_remaining", device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT, state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.poe.remaining_w if d.poe else None,
+        exists_fn=lambda d: bool(d.poe and d.poe.remaining_w is not None),
+    ),
+    DeviceSensorDescription(
+        key="poe_ports_active", translation_key="poe_ports_active", state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:power-plug",
+        value_fn=lambda d: sum(1 for p in d.poe_ports.values() if p.delivering),
+        exists_fn=lambda d: bool(d.poe_ports),
     ),
     _rate_desc("wireless_rx_throughput", lambda d: d.wireless_throughput().rx_kbps, _has_wireless_rates),
     _rate_desc("wireless_tx_throughput", lambda d: d.wireless_throughput().tx_kbps, _has_wireless_rates),
@@ -396,6 +432,40 @@ class InterfaceSensorDescription(SensorEntityDescription):
     label: str
     value_fn: Callable[[AerohiveData, str], Any]
     exists_fn: Callable[[AerohiveData, str], bool]
+    attrs_fn: Callable[[AerohiveData, str], dict[str, Any]] | None = None
+
+
+def _speed(d: AerohiveData, n: str) -> int | None:
+    detail = d.details.get(n)
+    if detail is not None and detail.speed_mbps is not None:
+        return detail.speed_mbps
+    iface = d.interfaces.get(n)
+    if iface is None or not iface.speed:
+        return None
+    rate = parse_rate_mbps(iface.speed)
+    return int(rate) if rate is not None else None
+
+
+def _poe(attr: str) -> Callable[[AerohiveData, str], Any]:
+    def value(d: AerohiveData, n: str) -> Any:
+        poe = d.poe_ports.get(n)
+        return getattr(poe, attr) if poe else None
+
+    return value
+
+
+def _lldp_attrs(d: AerohiveData, n: str) -> dict[str, Any]:
+    nb = d.lldp.get(n)
+    if nb is None:
+        return {}
+    return extra_attrs(
+        chassis_id=nb.chassis_id, port_id=nb.port_id, port_description=nb.port_description,
+        management_address=nb.management_address, capabilities=nb.capabilities,
+    )
+
+
+def _port_clients_attrs(d: AerohiveData, n: str) -> dict[str, Any]:
+    return {"clients": [extra_attrs(mac=e.mac, vlan=e.vlan, type=e.entry_type) for e in d.port_clients(n)]}
 
 
 def _tp(direction: str) -> Callable[[AerohiveData, str], Any]:
@@ -448,12 +518,46 @@ INTERFACE_SENSORS: tuple[InterfaceSensorDescription, ...] = (
     InterfaceSensorDescription(
         key="link_speed", label="link speed", device_class=SensorDeviceClass.DATA_RATE,
         native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
-        value_fn=lambda d, n: d.details[n].speed_mbps if n in d.details else None,
-        exists_fn=lambda d, n: n in d.details and d.details[n].speed_mbps is not None,
+        value_fn=_speed,
+        exists_fn=lambda d, n: _speed(d, n) is not None or (d.is_switch and n in d.interfaces and d.interfaces[n].is_port),
     ),
     InterfaceSensorDescription(
         key="duplex", label="duplex", entity_category=DIAG,
-        value_fn=_detail("duplex"), exists_fn=_detail_exists("duplex"),
+        value_fn=lambda d, n: _detail("duplex")(d, n) or _table("duplex")(d, n),
+        exists_fn=lambda d, n: _detail_exists("duplex")(d, n) or _table("duplex")(d, n) is not None,
+    ),
+    InterfaceSensorDescription(
+        key="poe_power", label="PoE power", device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT, state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=_poe("power_w"), exists_fn=lambda d, n: n in d.poe_ports,
+    ),
+    InterfaceSensorDescription(
+        key="poe_status", label="PoE status", icon="mdi:power-plug-outline",
+        value_fn=_poe("status"), exists_fn=lambda d, n: n in d.poe_ports,
+    ),
+    InterfaceSensorDescription(
+        key="poe_class", label="PoE class", entity_category=DIAG, entity_registry_enabled_default=False,
+        value_fn=_poe("poe_class"), exists_fn=lambda d, n: n in d.poe_ports,
+    ),
+    InterfaceSensorDescription(
+        key="poe_max_power", label="PoE max power", device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT, entity_category=DIAG,
+        entity_registry_enabled_default=False,
+        value_fn=_poe("max_power_w"), exists_fn=lambda d, n: n in d.poe_ports and d.poe_ports[n].max_power_w is not None,
+    ),
+    InterfaceSensorDescription(
+        key="wired_clients", label="clients", icon="mdi:lan-connect",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d, n: len(d.port_clients(n)),
+        exists_fn=lambda d, n: bool(d.fdb) and n in d.interfaces and d.interfaces[n].is_port,
+        attrs_fn=_port_clients_attrs,
+    ),
+    InterfaceSensorDescription(
+        key="lldp_neighbor", label="LLDP neighbor", icon="mdi:lan",
+        value_fn=lambda d, n: (d.lldp[n].system_name or d.lldp[n].chassis_id) if n in d.lldp else "none",
+        exists_fn=lambda d, n: n in d.lldp,
+        attrs_fn=_lldp_attrs,
     ),
     InterfaceSensorDescription(
         key="mode", label="mode", entity_category=DIAG, entity_registry_enabled_default=False,
@@ -485,6 +589,7 @@ def interface_label(data: AerohiveData, name: str) -> str:
 
 class AerohiveInterfaceSensor(AerohiveEntity, SensorEntity):
     entity_description: InterfaceSensorDescription
+    _unrecorded_attributes = frozenset({"clients"})
 
     def __init__(self, coordinator: AerohiveCoordinator, name: str, description: InterfaceSensorDescription) -> None:
         super().__init__(coordinator, f"iface_{name}_{description.key}")
@@ -501,6 +606,12 @@ class AerohiveInterfaceSensor(AerohiveEntity, SensorEntity):
     @property
     def native_value(self) -> Any:
         return self.entity_description.value_fn(self.coordinator.data, self._iface)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        if self.entity_description.attrs_fn is None:
+            return None
+        return self.entity_description.attrs_fn(self.coordinator.data, self._iface)
 
 
 # --------------------------------------------------------------------------
@@ -543,6 +654,11 @@ SSID_SENSORS: tuple[SsidSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT, native_unit_of_measurement=KBPS,
         suggested_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND, suggested_display_precision=2,
         value_fn=lambda d, s: d.ssid_throughput(s).tx_kbps, exists_fn=_ssid_has_rates,
+    ),
+    SsidSensorDescription(
+        key="security", label="security", icon="mdi:shield-lock", entity_category=DIAG,
+        value_fn=lambda d, s: (d.config.ssid_security(s) if d.config else None) or "open",
+        exists_fn=lambda d, s: d.config is not None,
     ),
     SsidSensorDescription(
         key="dtim_period", label="DTIM period", entity_category=DIAG, entity_registry_enabled_default=False,
@@ -774,7 +890,7 @@ async def async_setup_entry(
                         f"ssid_{sdesc.key}_{ssid}",
                         lambda ssid=ssid, sdesc=sdesc: AerohiveSsidSensor(coordinator, ssid, sdesc),
                     )
-        for mac in tracked:
+        for mac in tracked if data.radio_names() else ():
             for cdesc in CLIENT_SENSORS:
                 yield (
                     f"client_{mac}_{cdesc.key}",

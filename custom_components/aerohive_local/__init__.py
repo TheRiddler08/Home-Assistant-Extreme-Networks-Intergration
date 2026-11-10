@@ -12,7 +12,11 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
-from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.helpers import (
+    config_validation as cv,
+    device_registry as dr,
+    entity_registry as er,
+)
 from homeassistant.helpers.typing import ConfigType
 
 from .client import AerohiveClient
@@ -20,6 +24,8 @@ from .const import (
     ATTR_COMMAND,
     ATTR_DEVICE_ID,
     ATTR_MAC,
+    ATTR_PORT,
+    ATTR_RADIOS,
     ATTR_PASSWORD,
     ATTR_REDACT,
     ATTR_SECURITY_OBJECT,
@@ -27,7 +33,10 @@ from .const import (
     CONF_SSH_KEY,
     DEFAULT_PORT,
     DOMAIN,
+    SERVICE_CREATE_SSID,
+    SERVICE_DELETE_SSID,
     SERVICE_DISCONNECT_CLIENT,
+    SERVICE_POWER_CYCLE_POE,
     SERVICE_RUN_SHOW_COMMAND,
     SERVICE_SET_SSID_PASSWORD,
 )
@@ -60,6 +69,26 @@ SET_PASSWORD_SCHEMA = vol.Schema(
         vol.Required(ATTR_SSID): cv.string,
         vol.Required(ATTR_PASSWORD): cv.string,
         vol.Optional(ATTR_SECURITY_OBJECT): cv.string,
+    }
+)
+CREATE_SSID_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_DEVICE_ID): cv.string,
+        vol.Required(ATTR_SSID): cv.string,
+        vol.Optional(ATTR_PASSWORD): cv.string,
+        vol.Optional(ATTR_RADIOS): vol.All(cv.ensure_list, [cv.string]),
+    }
+)
+DELETE_SSID_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_DEVICE_ID): cv.string,
+        vol.Required(ATTR_SSID): cv.string,
+    }
+)
+POWER_CYCLE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_DEVICE_ID): cv.string,
+        vol.Required(ATTR_PORT): cv.string,
     }
 )
 DISCONNECT_SCHEMA = vol.Schema(
@@ -123,6 +152,21 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     )
     hass.services.async_register(DOMAIN, SERVICE_SET_SSID_PASSWORD, set_password, SET_PASSWORD_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DISCONNECT_CLIENT, disconnect, DISCONNECT_SCHEMA)
+
+    async def create_ssid(call: ServiceCall) -> None:
+        coordinator = coordinator_for(call)
+        radios = [r.strip().lower() for r in call.data.get(ATTR_RADIOS, []) if r.strip()]
+        await coordinator.async_create_ssid(call.data[ATTR_SSID], call.data.get(ATTR_PASSWORD), radios or None)
+
+    async def delete_ssid(call: ServiceCall) -> None:
+        await coordinator_for(call).async_delete_ssid(call.data[ATTR_SSID])
+
+    async def power_cycle_poe(call: ServiceCall) -> None:
+        await coordinator_for(call).async_power_cycle_poe(call.data[ATTR_PORT].strip().lower())
+
+    hass.services.async_register(DOMAIN, SERVICE_CREATE_SSID, create_ssid, CREATE_SSID_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_DELETE_SSID, delete_ssid, DELETE_SSID_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_POWER_CYCLE_POE, power_cycle_poe, POWER_CYCLE_SCHEMA)
     return True
 
 
@@ -138,9 +182,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: AerohiveConfigEntry) -> 
         await client.close()
         raise
     entry.runtime_data = coordinator
+    if coordinator.enable_all_entities:
+        _enable_integration_disabled_entities(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
+
+
+def _enable_integration_disabled_entities(hass: HomeAssistant, entry: AerohiveConfigEntry) -> None:
+    """Re-enable entities this integration disabled by default (not user-disabled ones)."""
+    registry = er.async_get(hass)
+    for reg_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if reg_entry.disabled_by is er.RegistryEntryDisabler.INTEGRATION:
+            registry.async_update_entity(reg_entry.entity_id, disabled_by=None)
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: AerohiveConfigEntry) -> None:

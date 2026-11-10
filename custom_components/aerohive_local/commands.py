@@ -108,3 +108,78 @@ def validate_show_command(command: str) -> str:
 def redact(text: str) -> str:
     """Hide secrets that may appear in a command line or config output."""
     return _SECRET_ARG_RE.sub(lambda m: f"{m.group(1)} ***", text or "")
+
+
+# --------------------------------------------------------------------------
+# Switch ports / PoE (SR-series switches, BR-series Ethernet ports)
+# --------------------------------------------------------------------------
+
+_PORT_CMD_RE = re.compile(r"^eth\d+(?:/\d+){0,2}$")
+
+# Assumptions (unverified): HiveOS switch CLI uses
+#   "interface <port> shutdown" / "no interface <port> shutdown"
+#   "interface <port> pse shutdown" / "no interface <port> pse shutdown"
+POE_STATUS_COMMANDS = ("show pse", "show poe", "show interface pse")
+MAC_TABLE_COMMANDS = ("show mac-address-table", "show mac-address-table all", "show fdb")
+LLDP_COMMANDS = ("show lldp neighbor", "show lldp neighbors")
+
+
+def validate_port(port: str) -> str:
+    port = (port or "").strip().lower()
+    if not _PORT_CMD_RE.match(port):
+        raise InvalidArgument(f"Invalid Ethernet port: {port!r}")
+    return port
+
+
+def port_enable(port: str, enable: bool) -> str:
+    cmd = f"interface {validate_port(port)} shutdown"
+    return f"no {cmd}" if enable else cmd
+
+
+def port_poe(port: str, enable: bool) -> str:
+    cmd = f"interface {validate_port(port)} pse shutdown"
+    return f"no {cmd}" if enable else cmd
+
+
+# --------------------------------------------------------------------------
+# SSID lifecycle
+# --------------------------------------------------------------------------
+
+_SSID_NAME_RE = re.compile(r"^[\x20-\x21\x23-\x7e]{1,32}$")
+
+
+def validate_ssid_name(name: str) -> str:
+    if not _SSID_NAME_RE.match(name or "") or name != name.strip():
+        raise InvalidArgument("SSID name must be 1-32 printable ASCII characters without double quotes")
+    return name
+
+
+def ssid_hide(ssid: str, hidden: bool) -> str:
+    cmd = f"ssid {quote(ssid, 'SSID')} hide-ssid"
+    return cmd if hidden else f"no {cmd}"
+
+
+def create_ssid(ssid: str, radios: list[str], password: str | None) -> list[str]:
+    """Create a security-object + SSID with the same name and bind it to radios.
+
+    Assumption (unverified): mirrors how HiveManager provisions an SSID.
+    Without a password the security-object stays open.
+    """
+    validate_ssid_name(ssid)
+    name = quote(ssid, "SSID")
+    cmds = [f"security-object {name}"]
+    if password:
+        cmds.append(ssid_psk(ssid, password))
+    cmds += [f"ssid {name}", f"ssid {name} security-object {name}"]
+    cmds += [ssid_bind(radio, ssid, True) for radio in radios]
+    return cmds
+
+
+def delete_ssid(ssid: str, bound_radios: list[str], security_object: str | None) -> list[str]:
+    """Unbind from radios, remove the SSID and (if it has its own) its security-object."""
+    name = quote(ssid, "SSID")
+    cmds = [ssid_bind(radio, ssid, False) for radio in bound_radios]
+    cmds.append(f"no ssid {name}")
+    if security_object and security_object == ssid:
+        cmds.append(f"no security-object {quote(security_object, 'security object')}")
+    return cmds

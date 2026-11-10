@@ -48,3 +48,52 @@ disconnect_client:
       example: "aa:bb:cc:dd:ee:ff"
       selector:
         text:
+
+create_ssid:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+    ssid:
+      required: true
+      example: "Guest"
+      selector:
+        text:
+    password:
+      required: false
+      selector:
+        text:
+          type: password
+    radios:
+      required: false
+      example: "wifi0, wifi1"
+      selector:
+        text:
+          multiple: true
+
+delete_ssid:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+    ssid:
+      required: true
+      selector:
+        text:
+
+power_cycle_poe:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+    port:
+      required: true
+      example: "eth1/1"
+      selector:
+        text:

@@ -12,9 +12,11 @@ CONF_SCAN_INTERVAL: Final = "scan_interval"
 CONF_TRACKED_CLIENTS: Final = "tracked_clients"
 CONF_DETAILED_STATS: Final = "detailed_stats"
 CONF_RAW_SENSORS: Final = "raw_sensors"
+CONF_ENABLE_ALL: Final = "enable_all_entities"
 
 DEFAULT_DETAILED_STATS: Final = True
 DEFAULT_RAW_SENSORS: Final = True
+DEFAULT_ENABLE_ALL: Final = False
 
 DEFAULT_PORT: Final = 22
 DEFAULT_SCAN_INTERVAL: Final = 60
@@ -30,6 +32,11 @@ SLOW_REFRESH_SECONDS: Final = 900
 SERVICE_RUN_SHOW_COMMAND: Final = "run_show_command"
 SERVICE_SET_SSID_PASSWORD: Final = "set_ssid_password"
 SERVICE_DISCONNECT_CLIENT: Final = "disconnect_client"
+SERVICE_CREATE_SSID: Final = "create_ssid"
+SERVICE_DELETE_SSID: Final = "delete_ssid"
+SERVICE_POWER_CYCLE_POE: Final = "power_cycle_poe"
+ATTR_RADIOS: Final = "radios"
+ATTR_PORT: Final = "port"
 
 ATTR_DEVICE_ID: Final = "device_id"
 ATTR_COMMAND: Final = "command"

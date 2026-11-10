@@ -70,3 +70,39 @@ def test_redact() -> None:
     assert c.redact('ascii-key "a b c d e"') == "ascii-key ***"
     assert c.redact("admin password foo") == "admin password ***"
     assert c.redact("show ssid") == "show ssid"
+
+
+def test_port_commands() -> None:
+    assert c.port_enable("Eth1/3", False) == "interface eth1/3 shutdown"
+    assert c.port_enable("eth1/3", True) == "no interface eth1/3 shutdown"
+    assert c.port_poe("eth1/4", False) == "interface eth1/4 pse shutdown"
+    assert c.port_poe("eth1/4", True) == "no interface eth1/4 pse shutdown"
+    assert c.port_enable("eth2", True) == "no interface eth2 shutdown"
+    for bad in ("wifi0", "eth1/1; reboot", "", "eth1/1\nreboot"):
+        with pytest.raises(c.InvalidArgument):
+            c.port_poe(bad, True)
+
+
+def test_ssid_lifecycle_commands() -> None:
+    assert c.create_ssid("Guest Wifi", ["wifi0", "wifi1"], "password123") == [
+        'security-object "Guest Wifi"',
+        'security-object "Guest Wifi" security protocol-suite wpa2-aes-psk ascii-key password123',
+        'ssid "Guest Wifi"',
+        'ssid "Guest Wifi" security-object "Guest Wifi"',
+        'interface wifi0 ssid "Guest Wifi"',
+        'interface wifi1 ssid "Guest Wifi"',
+    ]
+    assert c.create_ssid("Open", ["wifi0"], None) == [
+        "security-object Open", "ssid Open", "ssid Open security-object Open", "interface wifi0 ssid Open",
+    ]
+    assert c.delete_ssid("Guest", ["wifi0"], "Guest") == [
+        "no interface wifi0 ssid Guest", "no ssid Guest", "no security-object Guest",
+    ]
+    assert c.delete_ssid("Guest", [], "shared-sec") == ["no ssid Guest"]
+    assert c.ssid_hide("AP460C", True) == "ssid AP460C hide-ssid"
+    assert c.ssid_hide("AP460C", False) == "no ssid AP460C hide-ssid"
+    for bad in ("", "x" * 33, 'a"b', " lead"):
+        with pytest.raises(c.InvalidArgument):
+            c.create_ssid(bad, ["wifi0"], None)
+    with pytest.raises(c.InvalidArgument):
+        c.create_ssid("Ok", ["wifi0"], "short")

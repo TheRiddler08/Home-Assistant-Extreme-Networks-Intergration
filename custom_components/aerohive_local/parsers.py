@@ -449,7 +449,15 @@ class Interface:
     radio_profile: str | None = None
     hive: str | None = None
     ssid: str | None = None
+    speed: str | None = None  # switch ports, e.g. "1000M"
+    duplex: str | None = None
+    admin_state: str | None = None
     extra: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def is_port(self) -> bool:
+        """Physical Ethernet port (eth0, eth1/1...)."""
+        return self.name.startswith("eth") and "." not in self.name
 
     @property
     def is_up(self) -> bool | None:
@@ -486,11 +494,11 @@ def _parse_channel(value: str | None) -> tuple[int | None, str | None, str | Non
     return chan, chan_raw, width
 
 
-_IFACE_HEADER_RE = re.compile(r"^\s*Name\s+MAC\s+addr", re.IGNORECASE)
+_IFACE_HEADER_RE = re.compile(r"^\s*(Name|Port|Interface)\s+MAC\s+addr", re.IGNORECASE)
 
 
 def _interface_from_cells(cells: dict[str, str]) -> Interface | None:
-    name = (cells.get("name") or "").strip()
+    name = (cells.get("name") or cells.get("port") or cells.get("interface") or "").strip()
     if not name or not _IFACE_NAME_RE.match(name):
         return None
     iface = Interface(name=name.lower())
@@ -504,7 +512,13 @@ def _interface_from_cells(cells: dict[str, str]) -> Interface | None:
     iface.radio_profile = _none_if_empty(cells.get("radio"))
     iface.hive = _none_if_empty(cells.get("hive"))
     iface.ssid = _none_if_empty(cells.get("ssid"))
-    known = {"name", "mac_addr", "mac", "mode", "state", "chan_width", "chan", "channel", "vlan", "radio", "hive", "ssid"}
+    iface.speed = _none_if_empty(cells.get("speed"))
+    iface.duplex = _none_if_empty(cells.get("duplex"))
+    iface.admin_state = _none_if_empty(cells.get("admin") or cells.get("admin_state") or cells.get("admin_status"))
+    known = {
+        "name", "port", "interface", "mac_addr", "mac", "mode", "state", "chan_width", "chan", "channel", "vlan", "radio",
+        "hive", "ssid", "speed", "duplex", "admin", "admin_state", "admin_status",
+    }  # fmt: skip
     iface.extra = {k: v for k, v in cells.items() if k not in known and v}
     return iface
 
@@ -538,7 +552,9 @@ def _interface_from_tokens(line: str) -> Interface | None:
 def parse_show_interface(text: str) -> dict[str, Interface]:
     """Parse the 'show interface' summary table, keyed by lower-case name."""
     result: dict[str, Interface] = {}
-    tables = [t for t in parse_tables(text, _IFACE_HEADER_RE) if "name" in t.columns]
+    tables = [
+        t for t in parse_tables(text, _IFACE_HEADER_RE) if {"name", "port", "interface"} & set(t.columns)
+    ]
     if tables:
         for table in tables:
             for cells, raw in zip(table.rows, table.raw_rows, strict=True):
@@ -1162,6 +1178,281 @@ def parse_ssid_security_objects(config: str) -> dict[str, str]:
             obj = match.group("oq") or match.group("ou")
             result[ssid] = obj
     return result
+
+
+# --------------------------------------------------------------------------
+# Switch: PoE (show pse / show poe)
+# --------------------------------------------------------------------------
+
+PORT_RE = re.compile(r"^(?:eth|ge|gi|port|xe|te)?\s*\d+(?:/\d+){0,2}$", re.IGNORECASE)
+_PORT_TOKEN_RE = re.compile(r"\b(eth\d+(?:/\d+){0,2}|agg\d+|wifi\d+(?:\.\d+)?|mgt\d+|red\d+)\b", re.IGNORECASE)
+
+
+def normalize_port(value: str | None) -> str | None:
+    """'Eth1/1' -> 'eth1/1', '1/1' -> 'eth1/1', '3' -> 'eth3'."""
+    value = _none_if_empty(value)
+    if value is None:
+        return None
+    value = value.strip().lower().replace(" ", "")
+    if re.match(r"^(eth|agg|wifi|mgt|red)\d", value):
+        return value
+    match = re.match(r"^(?:ge|gi|port|xe|te)?(\d+(?:/\d+){0,2})$", value)
+    return f"eth{match.group(1)}" if match else None
+
+
+@dataclass
+class PoePort:
+    port: str
+    power_w: float | None = None
+    max_power_w: float | None = None
+    status: str | None = None
+    admin: str | None = None
+    poe_class: str | None = None
+    priority: str | None = None
+    extra: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def enabled(self) -> bool | None:
+        """Administrative PoE state."""
+        value = (self.admin or self.status or "").lower()
+        if not value:
+            return None
+        if any(w in value for w in ("disable", "shutdown", "admin-off", "admin off", "forced-off")):
+            return False
+        if self.admin and value in {"off", "no", "down"}:
+            return False
+        return True
+
+    @property
+    def delivering(self) -> bool:
+        status = (self.status or "").lower()
+        if any(w in status for w in ("deliver", "power on", "powered", "on")) and "off" not in status:
+            return True
+        return (self.power_w or 0) > 0
+
+
+@dataclass
+class PoeSummary:
+    budget_w: float | None = None
+    used_w: float | None = None
+    remaining_w: float | None = None
+    raw: dict[str, str] = field(default_factory=dict)
+
+
+def _watts(value: str | None, header: str = "") -> float | None:
+    num = parse_number(value)
+    if num is None:
+        return None
+    unit_src = f"{header} {value}".lower()
+    if "mw" in unit_src:
+        return round(num / 1000, 3)
+    return num
+
+
+def parse_show_poe(text: str) -> tuple[PoeSummary, dict[str, PoePort]]:
+    summary = PoeSummary()
+    ports: dict[str, PoePort] = {}
+    cleaned = clean_output(text)
+    # Summary lines are the key/value lines outside the table.
+    kv = {}
+    for line in cleaned.split("\n"):
+        if re.match(r"^\s*[A-Za-z][^:=]*[:=]", line) and not _PORT_TOKEN_RE.match(line.strip()):
+            kv.update(parse_key_values(line))
+    summary.raw = kv
+    for key, value in kv.items():
+        if summary.used_w is None and any(w in key for w in ("consum", "used", "usage")):
+            summary.used_w = _watts(value, key)
+        elif summary.remaining_w is None and any(w in key for w in ("remain", "free", "available_power", "left")):
+            summary.remaining_w = _watts(value, key)
+        elif summary.budget_w is None and ("budget" in key or ("total" in key and "power" in key) or "max" in key):
+            summary.budget_w = _watts(value, key)
+    if summary.remaining_w is None and summary.budget_w is not None and summary.used_w is not None:
+        summary.remaining_w = round(summary.budget_w - summary.used_w, 2)
+
+    for table in parse_tables(cleaned, re.compile(r"^\s*(Port|Interface)\b", re.IGNORECASE)):
+        cols = table.columns
+        if not table.rows:
+            continue
+        port_col = next((c for c in cols if c in {"port", "interface", "ifname", "name"}), None)
+        if port_col is None:
+            port_col = next(
+                (c for c in cols if all(normalize_port(r.get(c)) for r in table.rows if r.get(c))), None
+            )
+        if port_col is None:
+            continue
+
+        def col(*words: str, exclude: tuple[str, ...] = (), cols: list[str] = cols) -> str | None:
+            return next((c for c in cols if any(w in c for w in words) and not any(x in c for x in exclude)), None)
+
+        power_col = col("consum", "actual", "used", "output") or col("power", exclude=("max", "limit", "budget", "alloc", "class", "prior"))
+        max_col = col("max", "limit", "alloc", "budget")
+        admin_col = col("admin", "enable", exclude=("status",)) or (cols and next((c for c in cols if c == "mode"), None))
+        status_col = col("status", "state", "oper", "detect", exclude=("admin",))
+        class_col = col("class")
+        prio_col = col("prior")
+        used = {port_col, power_col, max_col, admin_col, status_col, class_col, prio_col}
+        for row in table.rows:
+            port = normalize_port(row.get(port_col))
+            if port is None:
+                continue
+            entry = PoePort(port=port)
+            entry.power_w = _watts(row.get(power_col), power_col or "") if power_col else None
+            entry.max_power_w = _watts(row.get(max_col), max_col or "") if max_col else None
+            entry.admin = _none_if_empty(row.get(admin_col)) if admin_col else None
+            entry.status = _none_if_empty(row.get(status_col)) if status_col else None
+            entry.poe_class = _none_if_empty(row.get(class_col)) if class_col else None
+            entry.priority = _none_if_empty(row.get(prio_col)) if prio_col else None
+            entry.extra = {k: v for k, v in row.items() if k not in used and v}
+            ports[port] = entry
+    return summary, ports
+
+
+# --------------------------------------------------------------------------
+# Switch / router: MAC address table
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class FdbEntry:
+    mac: str
+    port: str | None = None
+    vlan: int | None = None
+    entry_type: str | None = None
+
+
+_FDB_SELF = {"self", "cpu", "mgmt", "management", "local", "system"}
+
+
+def parse_mac_address_table(text: str) -> list[FdbEntry]:
+    """Tolerant parser: any line with a MAC address and (ideally) a port."""
+    entries: list[FdbEntry] = []
+    seen: set[tuple[str, str | None]] = set()
+    for line in clean_output(text).split("\n"):
+        mac_match = MAC_SEARCH_RE.search(line)
+        if not mac_match:
+            continue
+        mac = normalize_mac(mac_match.group(0))
+        if mac is None:
+            continue
+        rest = line[: mac_match.start()] + " " + line[mac_match.end() :]
+        port_match = _PORT_TOKEN_RE.search(rest)
+        port = port_match.group(1).lower() if port_match else None
+        tokens = rest.split()
+        entry_type = next((t.lower() for t in tokens if t.lower() in _FDB_SELF | {"dynamic", "static", "learned", "learning"}), None)
+        if entry_type in _FDB_SELF or (port and port.startswith("mgt")):
+            continue
+        vlan = None
+        for tok in tokens:
+            if tok.isdigit() and 1 <= int(tok) <= 4094:
+                vlan = int(tok)
+                break
+        if (mac, port) in seen:
+            continue
+        seen.add((mac, port))
+        entries.append(FdbEntry(mac=mac, port=port, vlan=vlan, entry_type=entry_type))
+    return entries
+
+
+# --------------------------------------------------------------------------
+# LLDP neighbours
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class LldpNeighbor:
+    local_port: str
+    system_name: str | None = None
+    chassis_id: str | None = None
+    port_id: str | None = None
+    port_description: str | None = None
+    management_address: str | None = None
+    capabilities: str | None = None
+    raw: dict[str, str] = field(default_factory=dict)
+
+
+def _lldp_from_dict(d: dict[str, str]) -> LldpNeighbor | None:
+    def pick(*words: str, exclude: tuple[str, ...] = ()) -> str | None:
+        for key, value in d.items():
+            if any(w in key for w in words) and not any(x in key for x in exclude):
+                val = _none_if_empty(value)
+                if val is not None:
+                    return val
+        return None
+
+    local = pick("local_port", "local_interface", "local_intf", "interface", "ifname", "local")
+    if local is None:
+        local = d.get("port") if normalize_port(d.get("port")) else None
+    local = normalize_port(local) if local else None
+    if local is None:
+        return None
+    return LldpNeighbor(
+        local_port=local,
+        system_name=pick("system_name", "sys_name", "device_id", "neighbor", "system"),
+        chassis_id=pick("chassis"),
+        port_id=pick("port_id", "remote_port", "neighbor_port", "port_identifier", exclude=("local",)),
+        port_description=pick("port_desc", "port_description"),
+        management_address=pick("management", "mgmt", "address", "ip"),
+        capabilities=pick("capabilit", "cap"),
+        raw=d,
+    )
+
+
+def parse_lldp_neighbors(text: str) -> dict[str, LldpNeighbor]:
+    result: dict[str, LldpNeighbor] = {}
+    cleaned = clean_output(text)
+    for table in parse_tables(cleaned, re.compile(r"^\s*Local\s", re.IGNORECASE)):
+        for row in table.rows:
+            neighbor = _lldp_from_dict(row)
+            if neighbor is not None:
+                result[neighbor.local_port] = neighbor
+    if result:
+        return result
+    # Block format: "Key: value" lines, neighbours separated by blank lines.
+    for block in re.split(r"\n\s*\n", cleaned):
+        neighbor = _lldp_from_dict(parse_key_values(block))
+        if neighbor is not None:
+            result.setdefault(neighbor.local_port, neighbor)
+    return result
+
+
+# --------------------------------------------------------------------------
+# running-config summary (SSIDs, security, hidden)
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class RunningConfigSummary:
+    ssid_security_objects: dict[str, str] = field(default_factory=dict)
+    hidden_ssids: set[str] = field(default_factory=set)
+    security_suites: dict[str, str] = field(default_factory=dict)  # security-object -> protocol suite
+    pse_shutdown_ports: set[str] = field(default_factory=set)
+    shutdown_ports: set[str] = field(default_factory=set)
+
+    def ssid_security(self, ssid: str) -> str | None:
+        obj = self.ssid_security_objects.get(ssid, ssid)
+        return self.security_suites.get(obj)
+
+
+_ARG = r'(?:"([^"]+)"|(\S+))'
+_HIDE_RE = re.compile(rf"^\s*ssid\s+{_ARG}\s+hide-ssid\b", re.IGNORECASE)
+_SUITE_RE = re.compile(rf"^\s*security-object\s+{_ARG}\s+security\s+protocol-suite\s+(\S+)", re.IGNORECASE)
+_PSE_OFF_RE = re.compile(r"^\s*interface\s+(eth\S+)\s+pse\s+shutdown\b", re.IGNORECASE)
+_PORT_OFF_RE = re.compile(r"^\s*interface\s+(eth\S+)\s+shutdown\s*$", re.IGNORECASE)
+
+
+def parse_running_config_summary(config: str) -> RunningConfigSummary:
+    """Extract SSID/security/port state. Never returns key material."""
+    summary = RunningConfigSummary(ssid_security_objects=parse_ssid_security_objects(config))
+    for line in clean_output(config).split("\n"):
+        if m := _HIDE_RE.match(line):
+            summary.hidden_ssids.add(m.group(1) or m.group(2))
+        elif m := _SUITE_RE.match(line):
+            summary.security_suites[m.group(1) or m.group(2)] = m.group(3)
+        elif m := _PSE_OFF_RE.match(line):
+            summary.pse_shutdown_ports.add(m.group(1).lower())
+        elif m := _PORT_OFF_RE.match(line):
+            summary.shutdown_ports.add(m.group(1).lower())
+    return summary
 
 
 # --------------------------------------------------------------------------

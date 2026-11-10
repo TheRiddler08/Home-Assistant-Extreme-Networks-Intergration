@@ -62,7 +62,10 @@ class AerohiveClientTracker(CoordinatorEntity[AerohiveCoordinator], ScannerEntit
 
     @property
     def is_connected(self) -> bool:
-        return self._station is not None
+        if self._station is not None:
+            return True
+        data = self.coordinator.data
+        return data is not None and self._mac in data.wired_client_macs()
 
     @property
     def mac_address(self) -> str:
@@ -82,8 +85,17 @@ class AerohiveClientTracker(CoordinatorEntity[AerohiveCoordinator], ScannerEntit
     def extra_state_attributes(self) -> dict[str, Any]:
         station = self._station
         if station is None:
-            return {}
+            wired = [e for e in self.coordinator.data.fdb if e.mac == self._mac] if self.coordinator.data else []
+            if not wired:
+                return {}
+            return extra_attrs(
+                connection="wired",
+                port=wired[0].port,
+                vlan=wired[0].vlan,
+                access_point=self.coordinator.config_entry.title,
+            )
         return extra_attrs(
+            connection="wireless",
             ssid=self.coordinator.data.station_ssid(station),
             interface=station.interface,
             radio=station.radio,

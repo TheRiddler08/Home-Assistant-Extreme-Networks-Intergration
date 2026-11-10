@@ -9,6 +9,7 @@ Tested against output from:
 | --- | --- | --- |
 | Extreme Networks AP460C | IQ Engine 10.5r3 build-278650 | wifi0 2.4 GHz (`radio_axg0`), wifi1 5 GHz (`radio_axa0`), wifi2 unused |
 | Aerohive BR100 | HiveOS (circa 2014) | wifi0 2.4 GHz (`radio_ng0`), eth0 WAN, eth1–eth4 |
+| Aerohive SR2208P | HiveOS (switch) | 8× PoE ports + uplinks, `eth1/1`… (synthetic samples, please send real ones) |
 
 > **Status:** the `show interface`, `show ssid` and `show version` parsers are built
 > from real AP460C output. The `show station`, `show interface wifiN` and `show boot-param`
@@ -33,9 +34,26 @@ restart Home Assistant.
 
 **Settings → Devices & services → Add integration → Aerohive / Extreme Networks (Local SSH)**
 
+You get a menu with two choices:
+
+- **Scan my network**: the integration probes the local subnet(s) Home Assistant is on
+  for SSH (port 22, at most 1024 addresses, 32 at a time) and lists what answers.
+  Aerohive/Extreme devices are listed first, recognised by MAC prefix or by the default
+  `AH-xxxxxx` hostname. Pick one, enter the CLI login, and it's added. You can still type
+  an IP into the device box.
+- **Enter IP address manually**: the classic form.
+
+**Automatic discovery:** if Home Assistant sees an Aerohive/Extreme device request a DHCP
+lease, it shows up as **Discovered** under Settings → Devices & services, and you only need
+to enter the login. Matching is on the `AH-*` hostname and the MAC prefixes in
+`manifest.json`. For devices that are already configured, DHCP discovery also updates the
+stored IP address when it changes.
+
+The username and port are pre-filled from devices you've already added.
+
 | Field | Notes |
 | --- | --- |
-| Host | IP or hostname of the AP / router |
+| Host | IP or hostname of the AP / router / switch |
 | Username / Password | CLI credentials (default user on HiveOS is `admin`) |
 | Port | Default `22` |
 | SSH private key path | Optional. An absolute path readable by HA, e.g. `/config/.ssh/aerohive`. You can use it instead of, or as well as, a password |
@@ -47,12 +65,16 @@ Add one config entry per device. The unique ID is the `mgt0` MAC address.
 
 - **Scan interval**
 - **Clients to track**: pick connected clients, or type MAC addresses, to create a
-  `device_tracker` plus signal/SNR/rate/SSID sensors for each. This is opt-in to avoid
-  creating entities for every phone that walks past. Every client always appears in the
-  `clients` attribute of the connected-clients sensors.
+  `device_tracker` for each (plus signal/SNR/rate/SSID sensors on APs). On a switch, a
+  tracked MAC is "home" while it's in the switch's MAC address table. This is opt-in to
+  avoid creating entities for every phone that walks past. Every client always appears in
+  the `clients` attribute of the clients sensors.
 - **Read detailed statistics** (default on): throughput and counters for Ethernet ports and
   SSID sub-interfaces, plus CPU and memory.
 - **Create sensors for every raw field** (default on): see "Every other field" below.
+- **Enable all entities** (default off): switches on every entity this integration created
+  disabled by default (diagnostics, counters, raw fields, port switches). Entities you
+  disabled yourself stay disabled.
 
 ### SSH algorithms
 
@@ -107,7 +129,8 @@ RX / TX throughput (from the interface section below).
 | `<SSID> clients` (attribute `clients` list) | enabled |
 | `<SSID> RX / TX throughput` (sum of its sub-interfaces) | enabled |
 | `<SSID> on wifiN (band)` switch, `<SSID> max clients` number | enabled |
-| `<SSID> Wi-Fi key` text (write-only) | disabled |
+| `<SSID> Wi-Fi key` text (write-only: type a new key, it is never shown) | enabled |
+| `<SSID> on all radios` switch, `<SSID> hidden` switch, `<SSID> security` sensor | enabled |
 | DTIM period, RTS threshold, fragmentation threshold, MAC filter | disabled |
 
 ### Per tracked client (opt-in in the options)
@@ -169,6 +192,44 @@ Replace `ah_7c0680` with your device's entity prefix. The same `clients` attribu
 `<SSID> clients` and `wifiN clients` sensor, for per-SSID or per-band tables. The list is left
 out of the recorder, so it doesn't grow your database.
 
+## Managing Wi-Fi networks (SSIDs)
+
+Everything below runs `save config` afterwards so the change survives a reboot.
+
+| What | How |
+| --- | --- |
+| Turn an SSID on/off on one radio | switch `<SSID> on wifiN (band)` |
+| Turn an SSID on/off on all radios | switch `<SSID> on all radios` |
+| Hide / unhide the SSID name | switch `<SSID> hidden` (`ssid <name> hide-ssid`) |
+| Change the Wi-Fi password | text `<SSID> Wi-Fi key`: type the new key and press Enter. The field stays empty afterwards because the key is never stored. You can also use the `set_ssid_password` action |
+| Change max clients | number `<SSID> max clients` |
+| See the security type | sensor `<SSID> security` (e.g. `wpa2-aes-psk`, `open`) |
+| Create a new SSID | action `aerohive_local.create_ssid` (name, optional password, optional radios) |
+| Delete an SSID | action `aerohive_local.delete_ssid` |
+
+The hidden/security state is read from `show running-config`. It's refreshed every 15
+minutes, and right after any change made from Home Assistant.
+
+## Switches (SR2208P and other SR-series)
+
+Switches are detected automatically: the platform starts with `SR`, or ports are named
+`eth1/1`. They get:
+
+| Entity | Notes |
+| --- | --- |
+| `Eth1/N link` binary sensor, link speed, duplex, RX/TX throughput | per port |
+| `Eth1/N PoE` switch | PoE on/off (`interface eth1/N pse shutdown`) |
+| `Eth1/N PoE power cycle` button | PoE off for 5 s then on, e.g. to reboot a hung AP or camera. Not saved; the end state is unchanged |
+| `Eth1/N PoE power` (W), `PoE status` (+ class, max power, disabled) | from `show pse` |
+| PoE power used / budget / remaining, PoE ports active | device level |
+| `Eth1/N clients` (attribute `clients`: MAC + VLAN) and `Wired clients` | from the MAC address table |
+| `Eth1/N LLDP neighbor` (attributes: chassis ID, port ID, management address…) | what's plugged in, refreshed every 15 min |
+| `Eth1/N enabled` switch | **disabled by default**: shutting down the port Home Assistant reaches the switch through locks you out |
+| Firmware, CPU, memory, uptime, IP, serial, reboot | same as the APs |
+
+The BR100's Ethernet ports also get the clients, LLDP and port switch entities, and PoE
+too if its firmware reports it.
+
 ## Services
 
 ### `aerohive_local.run_show_command` (debug, returns a response)
@@ -205,6 +266,30 @@ data:
 If you don't pass `security_object`, the integration looks it up from
 `ssid <name> security-object <obj>` in `show running-config`, and falls back to the SSID name.
 The key is never logged. It is masked in error messages and isn't stored in any entity state.
+
+### `aerohive_local.create_ssid` / `aerohive_local.delete_ssid`
+
+```yaml
+action: aerohive_local.create_ssid
+data:
+  device_id: <AP>
+  ssid: Guest
+  password: "guest-password"   # optional, open network if omitted
+  radios: [wifi0, wifi1]       # optional, default: all active radios
+```
+
+This creates a security-object and an SSID with the same name, binds the SSID to the
+radios and saves. `delete_ssid` unbinds the SSID from every radio, removes it, and also
+removes its security-object if that object has the same name (i.e. it was created this way).
+
+### `aerohive_local.power_cycle_poe`
+
+```yaml
+action: aerohive_local.power_cycle_poe
+data:
+  device_id: <switch>
+  port: eth1/3
+```
 
 ### `aerohive_local.disconnect_client`
 
@@ -275,8 +360,27 @@ These commands and formats couldn't be checked against real hardware. Please tes
 17. **`show hw-info`** reports `Serial number:` and `Hardware revision:`.
     Any of the commands in 13–17 that the firmware rejects are skipped quietly.
 
+18. **Switch port names** are `eth1/1` … `eth1/10` in `show interface`, with optional
+    `Speed`/`Duplex` columns.
+19. **PoE status** comes from `show pse` (then `show poe`, then `show interface pse`; the
+    first one accepted is used). The parser looks for a port column and power/status/admin/class
+    columns by name, plus "budget/consumption/remaining" summary lines.
+20. **PoE on/off** uses `interface <port> pse shutdown` / `no interface <port> pse shutdown`.
+21. **Port on/off** uses `interface <port> shutdown` / `no interface <port> shutdown`.
+22. **MAC address table** comes from `show mac-address-table` (then `… all`, then `show fdb`).
+    Any line with a MAC and a port is used.
+23. **LLDP** comes from `show lldp neighbor(s)`, as either a table or `Key: value` blocks.
+24. **Hidden SSID** uses `ssid <name> hide-ssid`.
+25. **Create/delete SSID** uses `security-object <n>`, `ssid <n>`,
+    `ssid <n> security-object <n>`, `interface wifiN ssid <n>`, and the `no …` forms to delete.
+26. **DHCP/scan MAC prefixes** are a best-effort list of Aerohive/Extreme OUIs
+    (`custom_components/aerohive_local/discovery.py`). Tell me your devices' first 6 MAC
+    digits if one isn't recognised.
+
 Please also send me `run_show_command` output for `show interface eth0`, `show interface wifi0.1`,
-`show interface mgt0`, `show cpu`, `show memory` and `show hw-info`.
+`show interface mgt0`, `show cpu`, `show memory` and `show hw-info`. From the SR2208P, send
+`show version`, `show interface`, `show interface eth1/1`, `show pse`,
+`show mac-address-table` and `show lldp neighbor`.
 
 ## Development
 

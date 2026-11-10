@@ -30,6 +30,13 @@ class AerohiveEntity(CoordinatorEntity[AerohiveCoordinator]):
     def device_info(self) -> DeviceInfo:
         return self.coordinator.device_info
 
+    @property
+    def entity_registry_enabled_default(self) -> bool:
+        # Option "Enable all entities" overrides the per-entity default.
+        if self.coordinator.enable_all_entities:
+            return True
+        return super().entity_registry_enabled_default
+
 
 class DebouncedSetter[T]:
     """Coalesce rapid control requests; only the last value is applied.

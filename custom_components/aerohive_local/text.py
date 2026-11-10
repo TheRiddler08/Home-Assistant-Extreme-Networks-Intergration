@@ -41,7 +41,6 @@ class AerohiveSsidKeyText(AerohiveEntity, TextEntity):
     _attr_native_max = 63
     _attr_pattern = r'^[\x20\x21\x23-\x7e]{8,63}$'
     _attr_icon = "mdi:form-textbox-password"
-    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: AerohiveCoordinator, ssid: str) -> None:
         super().__init__(coordinator, f"psk_{ssid}")

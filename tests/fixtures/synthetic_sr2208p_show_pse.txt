@@ -1,0 +1,13 @@
+Total power budget:       125.0 W
+Total power consumption:  13.2 W
+
+Port     Admin   Status       Power(W)  Class  Priority  Max(W)
+-------- ------- ------------ --------- ------ --------- ------
+eth1/1   enable  delivering   6.50      4      low       30.0
+eth1/2   enable  delivering   6.70      3      low       30.0
+eth1/3   enable  searching    0.00      -      low       30.0
+eth1/4   disable disabled     0.00      -      low       30.0
+eth1/5   enable  searching    0.00      -      low       30.0
+eth1/6   enable  searching    0.00      -      low       30.0
+eth1/7   enable  searching    0.00      -      low       30.0
+eth1/8   enable  searching    0.00      -      low       30.0

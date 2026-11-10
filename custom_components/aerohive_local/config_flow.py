@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 import logging
 from typing import Any
@@ -11,6 +12,7 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME
+from homeassistant.components import network
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.selector import (
     NumberSelector,
@@ -28,11 +30,13 @@ from . import async_create_client
 from .client import AerohiveAuthError, AerohiveError
 from .const import (
     CONF_DETAILED_STATS,
+    CONF_ENABLE_ALL,
     CONF_RAW_SENSORS,
     CONF_SCAN_INTERVAL,
     CONF_SSH_KEY,
     CONF_TRACKED_CLIENTS,
     DEFAULT_DETAILED_STATS,
+    DEFAULT_ENABLE_ALL,
     DEFAULT_PORT,
     DEFAULT_RAW_SENSORS,
     DEFAULT_SCAN_INTERVAL,
@@ -40,6 +44,9 @@ from .const import (
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
 )
+from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
+
+from .discovery import ScanResult, async_scan, narrow_network, scan_targets
 from .parsers import normalize_mac, parse_show_interface, parse_show_version
 
 _LOGGER = logging.getLogger(__name__)
@@ -55,20 +62,23 @@ _INTERVAL_SELECTOR = NumberSelector(
 )
 
 
+def _credentials_fields(defaults: Mapping[str, Any]) -> dict[Any, Any]:
+    return {
+        vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME, "admin")): str,
+        vol.Optional(CONF_PASSWORD): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+        vol.Required(CONF_PORT, default=defaults.get(CONF_PORT, DEFAULT_PORT)): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=65535)
+        ),
+        vol.Optional(CONF_SSH_KEY, default=defaults.get(CONF_SSH_KEY, "")): str,
+        vol.Required(
+            CONF_SCAN_INTERVAL, default=defaults.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+        ): _INTERVAL_SELECTOR,
+    }
+
+
 def _user_schema(defaults: Mapping[str, Any]) -> vol.Schema:
     return vol.Schema(
-        {
-            vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "")): str,
-            vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME, "admin")): str,
-            vol.Optional(CONF_PASSWORD): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
-            vol.Required(CONF_PORT, default=defaults.get(CONF_PORT, DEFAULT_PORT)): vol.All(
-                vol.Coerce(int), vol.Range(min=1, max=65535)
-            ),
-            vol.Optional(CONF_SSH_KEY, default=defaults.get(CONF_SSH_KEY, "")): str,
-            vol.Required(
-                CONF_SCAN_INTERVAL, default=defaults.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
-            ): _INTERVAL_SELECTOR,
-        }
+        {vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "")): str, **_credentials_fields(defaults)}
     )
 
 
@@ -106,22 +116,150 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
             errors["base"] = "unknown"
         return None
 
+    def __init__(self) -> None:
+        self._scan_task: asyncio.Task[list[ScanResult]] | None = None
+        self._found: list[ScanResult] = []
+        self._discovered_host: str | None = None
+
+    def _defaults(self, extra: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Pre-fill the username (and port) from an existing entry."""
+        defaults: dict[str, Any] = {}
+        for entry in self._async_current_entries(include_ignore=False):
+            defaults.setdefault(CONF_USERNAME, entry.data.get(CONF_USERNAME))
+            defaults.setdefault(CONF_PORT, entry.data.get(CONF_PORT, DEFAULT_PORT))
+        defaults.update({k: v for k, v in (extra or {}).items() if v not in (None, "")})
+        return {k: v for k, v in defaults.items() if v is not None}
+
+    def _configured_hosts(self) -> set[str]:
+        return {e.data.get(CONF_HOST) for e in self._async_current_entries(include_ignore=False)}
+
+    async def _async_finish(
+        self, user_input: dict[str, Any], errors: dict[str, str]
+    ) -> ConfigFlowResult | None:
+        """Validate credentials and create the entry (None = show form again)."""
+        data = {k: v for k, v in user_input.items() if v not in ("", None)}
+        data[CONF_SCAN_INTERVAL] = int(user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+        if not data.get(CONF_PASSWORD) and not data.get(CONF_SSH_KEY):
+            errors["base"] = "password_or_key"
+            return None
+        info = await self._validate(data, errors)
+        if info is None:
+            return None
+        await self.async_set_unique_id(info["mac"] or data[CONF_HOST], raise_on_progress=False)
+        self._abort_if_unique_id_configured(updates={CONF_HOST: data[CONF_HOST]})
+        title = info["hostname"] or info["platform"] or data[CONF_HOST]
+        return self.async_create_entry(title=title, data=data)
+
+    # ---------------------------------------------------------------- #
+    # User: menu -> scan / manual
+    # ---------------------------------------------------------------- #
+
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return self.async_show_menu(step_id="user", menu_options=["scan", "manual"])
+
+    async def async_step_manual(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            data = {k: v for k, v in user_input.items() if v not in ("", None)}
-            data[CONF_SCAN_INTERVAL] = int(user_input[CONF_SCAN_INTERVAL])
-            if not data.get(CONF_PASSWORD) and not data.get(CONF_SSH_KEY):
-                errors["base"] = "password_or_key"
-            else:
-                info = await self._validate(data, errors)
-                if info is not None:
-                    await self.async_set_unique_id(info["mac"] or data[CONF_HOST])
-                    self._abort_if_unique_id_configured(updates={CONF_HOST: data[CONF_HOST]})
-                    title = info["hostname"] or info["platform"] or data[CONF_HOST]
-                    return self.async_create_entry(title=title, data=data)
+            if result := await self._async_finish(user_input, errors):
+                return result
         return self.async_show_form(
-            step_id="user", data_schema=_user_schema(user_input or {}), errors=errors
+            step_id="manual", data_schema=_user_schema(self._defaults(user_input)), errors=errors
+        )
+
+    async def _async_run_scan(self) -> list[ScanResult]:
+        networks = []
+        try:
+            adapters = await network.async_get_adapters(self.hass)
+        except Exception:  # noqa: BLE001 - network integration unavailable
+            adapters = []
+        for adapter in adapters:
+            if not adapter.get("enabled"):
+                continue
+            for ipv4 in adapter.get("ipv4", []):
+                try:
+                    networks.append(narrow_network(ipv4["address"], int(ipv4["network_prefix"])))
+                except (KeyError, ValueError):
+                    continue
+        own = {str(ipv4.get("address")) for a in adapters for ipv4 in a.get("ipv4", [])}
+        targets = scan_targets(networks, exclude=own | self._configured_hosts())
+        _LOGGER.debug("Scanning %d addresses for SSH", len(targets))
+        return await async_scan(targets)
+
+    async def async_step_scan(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if self._scan_task is None:
+            self._scan_task = self.hass.async_create_task(self._async_run_scan())
+        if not self._scan_task.done():
+            return self.async_show_progress(
+                step_id="scan", progress_action="scanning", progress_task=self._scan_task
+            )
+        try:
+            self._found = self._scan_task.result()
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Network scan failed")
+            self._found = []
+        self._scan_task = None
+        return self.async_show_progress_done(next_step_id="pick" if self._found else "scan_empty")
+
+    async def async_step_scan_empty(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return self.async_show_form(
+            step_id="manual", data_schema=_user_schema(self._defaults()), errors={"base": "no_devices_found"}
+        )
+
+    async def async_step_pick(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if result := await self._async_finish(user_input, errors):
+                return result
+        likely = [r for r in self._found if r.likely_aerohive]
+        options = [SelectOptionDict(value=r.host, label=r.label) for r in (likely or self._found)]
+        if likely:
+            others = [r for r in self._found if not r.likely_aerohive]
+            options += [SelectOptionDict(value=r.host, label=f"{r.label} (other SSH device)") for r in others]
+        default_host = (user_input or {}).get(CONF_HOST) or (options[0]["value"] if options else "")
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_HOST, default=default_host): SelectSelector(
+                    SelectSelectorConfig(options=options, custom_value=True)
+                ),
+                **_credentials_fields(self._defaults(user_input)),
+            }
+        )
+        return self.async_show_form(
+            step_id="pick",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"count": str(len(likely)), "total": str(len(self._found))},
+        )
+
+    # ---------------------------------------------------------------- #
+    # DHCP discovery
+    # ---------------------------------------------------------------- #
+
+    async def async_step_dhcp(self, discovery_info: DhcpServiceInfo) -> ConfigFlowResult:
+        mac = normalize_mac(discovery_info.macaddress)
+        host = discovery_info.ip
+        await self.async_set_unique_id(mac or host)
+        self._abort_if_unique_id_configured(updates={CONF_HOST: host})
+        self._async_abort_entries_match({CONF_HOST: host})
+        self._discovered_host = host
+        name = discovery_info.hostname or host
+        self.context["title_placeholders"] = {"name": name, "host": host}
+        return await self.async_step_discovery_confirm()
+
+    async def async_step_discovery_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        assert self._discovered_host is not None
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if result := await self._async_finish({CONF_HOST: self._discovered_host, **user_input}, errors):
+                return result
+        return self.async_show_form(
+            step_id="discovery_confirm",
+            data_schema=vol.Schema(_credentials_fields(self._defaults(user_input))),
+            errors=errors,
+            description_placeholders={
+                "host": self._discovered_host,
+                "name": self.context.get("title_placeholders", {}).get("name", self._discovered_host),
+            },
         )
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
@@ -176,6 +314,7 @@ class AerohiveOptionsFlow(OptionsFlow):
                         CONF_TRACKED_CLIENTS: tracked,
                         CONF_DETAILED_STATS: user_input.get(CONF_DETAILED_STATS, DEFAULT_DETAILED_STATS),
                         CONF_RAW_SENSORS: user_input.get(CONF_RAW_SENSORS, DEFAULT_RAW_SENSORS),
+                        CONF_ENABLE_ALL: user_input.get(CONF_ENABLE_ALL, DEFAULT_ENABLE_ALL),
                     }
                 )
 
@@ -210,6 +349,10 @@ class AerohiveOptionsFlow(OptionsFlow):
                 vol.Optional(
                     CONF_RAW_SENSORS,
                     default=self.config_entry.options.get(CONF_RAW_SENSORS, DEFAULT_RAW_SENSORS),
+                ): bool,
+                vol.Optional(
+                    CONF_ENABLE_ALL,
+                    default=self.config_entry.options.get(CONF_ENABLE_ALL, DEFAULT_ENABLE_ALL),
                 ): bool,
             }
         )

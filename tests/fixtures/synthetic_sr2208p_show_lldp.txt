@@ -1,0 +1,4 @@
+Local Port  Chassis ID       Port ID   Hold Time  System Name   Capabilities
+----------  ---------------  --------  ---------  ------------  ------------
+eth1/1      bcf3:107c:0680   eth0      120        AH-7c0680     B,W
+eth1/9      0011:2233:4455   gi0/1     120        core-switch   B,R
