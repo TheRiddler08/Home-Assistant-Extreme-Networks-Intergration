@@ -106,3 +106,14 @@ def test_ssid_lifecycle_commands() -> None:
             c.create_ssid(bad, ["wifi0"], None)
     with pytest.raises(c.InvalidArgument):
         c.create_ssid("Ok", ["wifi0"], "short")
+
+
+def test_switch_cli_blocks() -> None:
+    assert c.switch_poe("1/0/3", False) == ["configure", "interface 1/0/3", "no poe", "exit", "exit"]
+    assert c.switch_poe("1/0/3", True) == ["configure", "interface 1/0/3", "poe", "exit", "exit"]
+    assert c.switch_poe_reset("1/0/3") == ["configure", "interface 1/0/3", "poe reset", "exit", "exit"]
+    assert c.switch_port_enable("1/0/5", False) == ["configure", "interface 1/0/5", "shutdown", "exit", "exit"]
+    assert c.switch_port_enable("1/0/5", True) == ["configure", "interface 1/0/5", "no shutdown", "exit", "exit"]
+    for bad in ("0/3/1", "eth1/1", "1/0/1; reload", "1/0/1\nreload", ""):
+        with pytest.raises(c.InvalidArgument):
+            c.switch_poe(bad, True)

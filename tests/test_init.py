@@ -84,7 +84,7 @@ class FakeClient:
         self.commands.append(command)
         return self.responses.get(command, "")
 
-    async def run_sequence(self, commands: list[str]) -> list[str]:
+    async def run_sequence(self, commands: list[str], **kwargs: Any) -> list[str]:
         from custom_components.aerohive_local.client import AerohiveCommandError
         from custom_components.aerohive_local.parsers import find_cli_error
 

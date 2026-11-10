@@ -191,9 +191,9 @@ def delete_ssid(ssid: str, bound_radios: list[str], security_object: str | None)
 # SR-series switch CLI (FASTPATH-style, prompt "(AH-Switch) #")
 # --------------------------------------------------------------------------
 # Verified against an SR2208P (software 1.0.1.28): show version, show network,
-# show port all, show poe, show mac-addr-table, show lldp remote-device ...
-# Assumptions (unverified): per-port PoE status commands, config-mode
-# commands below and "write memory".
+# show port all, show poe, show poe port info <port>, show mac-addr-table,
+# show lldp remote-device ..., and in interface mode: "shutdown", "poe"
+# (bare "poe" accepted), "poe reset". Unverified: "write memory" prompt text.
 
 DIALECT_HIVEOS = "hiveos"
 DIALECT_SWITCH = "switch"
@@ -240,3 +240,8 @@ def switch_port_enable(port: str, enable: bool) -> list[str]:
 
 def switch_poe(port: str, enable: bool) -> list[str]:
     return switch_interface_block(port, ["poe" if enable else "no poe"])
+
+
+def switch_poe_reset(port: str) -> list[str]:
+    """'poe reset' power-cycles the port without changing the configuration."""
+    return switch_interface_block(port, ["poe reset"])

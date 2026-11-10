@@ -407,7 +407,7 @@ class AerohiveClient:
     async def run_many(self, commands: Sequence[str], *, check: bool = False) -> list[str]:
         return [await self.run(cmd, check=check) for cmd in commands]
 
-    async def run_sequence(self, commands: Sequence[str]) -> list[str]:
+    async def run_sequence(self, commands: Sequence[str], *, confirm: bool = True) -> list[str]:
         """Run commands that depend on CLI mode (configure -> interface -> ...).
 
         Mode is kept between them; on any error the session is returned to
@@ -417,7 +417,7 @@ class AerohiveClient:
         outputs: list[str] = []
         try:
             for cmd in commands:
-                out = await self.run(cmd, keep_mode=True, retry=False)
+                out = await self.run(cmd, keep_mode=True, retry=False, confirm=confirm)
                 outputs.append(out)
                 error = find_cli_error(out)
                 if error:

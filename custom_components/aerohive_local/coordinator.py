@@ -739,12 +739,18 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
     async def async_power_cycle_poe(self, port: str, off_seconds: float = 5) -> None:
         """Turn PoE off and on again (runtime only, nothing is saved)."""
         if self.is_switch_cli:
+            reset_block = self._validated(commands.switch_poe_reset, port)
             off_block = self._validated(commands.switch_poe, port, False)
             on_block = self._validated(commands.switch_poe, port, True)
             try:
-                await self.client.run_sequence(off_block)
-                await asyncio.sleep(off_seconds)
-                await self.client.run_sequence(on_block)
+                try:
+                    await self.client.run_sequence(reset_block)
+                except AerohiveCommandError:
+                    # Older firmware without "poe reset": switch PoE off and on again.
+                    _LOGGER.debug("%s: 'poe reset' rejected, cycling PoE off/on", self.client.host)
+                    await self.client.run_sequence(off_block)
+                    await asyncio.sleep(off_seconds)
+                    await self.client.run_sequence(on_block)
             except AerohiveCommandError as err:
                 raise HomeAssistantError(str(err)) from err
             except AerohiveError as err:

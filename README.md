@@ -243,7 +243,8 @@ re-runs the command.
 | IP address, firmware, serial number, reboot | `reload`, confirmations answered |
 | `Port 1/0/N PoE power` (W), `PoE status` (Searching / Delivering…), `PoE fault status` | per PoE port |
 | `Port 1/0/N PoE voltage`, `current`, `temperature`, `class`, `max power` | per PoE port, disabled by default |
-| `Port 1/0/N PoE` switch, `PoE power cycle` button | PoE on/off (see assumption 19) |
+| `Port 1/0/N PoE` switch | PoE on/off (`poe` / `no poe`), saved with `write memory` |
+| `Port 1/0/N PoE power cycle` button | `poe reset`: reboots whatever the port powers (AP, camera, phone); config unchanged |
 | `Port 1/0/N enabled` switch | **disabled by default**: shutting down the port Home Assistant reaches the switch through locks you out |
 | RX / TX throughput per port | from `Total Packets Received/Transmitted (Octets)`. Counters (bytes, packets, errors, discards) are disabled by default; the other ~60 statistics lines are not turned into entities |
 
@@ -387,8 +388,10 @@ These commands and formats couldn't be checked against real hardware. Please tes
 18. **SR switch per-port PoE status:** verified (`show poe port info 1/0/N`). One command per
     PoE port per poll; the integration first tries `show poe port info all` in case one
     command can cover them all.
-19. **SR switch PoE on/off** uses `configure` → `interface 1/0/N` → `poe` / `no poe` → `exit` → `exit`.
-20. **SR switch port on/off** uses the same block with `shutdown` / `no shutdown`.
+19. **SR switch PoE on/off:** verified. `configure` → `interface 1/0/N` → `poe` / `no poe` → `exit` → `exit`.
+    **PoE power cycle** uses `poe reset` (verified to exist; no config change, nothing saved),
+    falling back to `no poe` / wait 5 s / `poe`.
+20. **SR switch port on/off:** verified. Same block with `shutdown` / `no shutdown`.
 21. **SR switch save** is `write memory`, answering `y` to the confirmation.
 22. **SR switch counters:** verified (`show interface ethernet 1/0/N`).
 23. **SR switch admin state** comes from the running config (`interface 1/0/N` / `shutdown` /
@@ -402,8 +405,8 @@ These commands and formats couldn't be checked against real hardware. Please tes
     `80:95:62` and `B8:7C:F2` from your devices.
 
 Please also send me `run_show_command` output for `show interface eth0`, `show interface wifi0.1`,
-`show interface mgt0`, `show cpu`, `show memory` and `show hw-info`. From the SR2208P, the read-only side is now fully based on real output. Still unverified:
-the config-mode PoE/port commands (assumptions 19–21).
+`show interface mgt0`, `show cpu`, `show memory` and `show hw-info`. The SR2208P support is now based on real output and commands. The only unverified detail
+is the exact wording of the `write memory` confirmation (any y/n prompt is answered `y`).
 
 ## Development
 

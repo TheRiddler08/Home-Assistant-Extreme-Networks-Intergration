@@ -354,11 +354,23 @@ async def test_switch_poe_and_port_control(hass: HomeAssistant, switch_entry: Mo
         await hass.services.async_call(
             "button", "press", {"entity_id": _sw(hass, "button", "poe_cycle_1/0/1")}, blocking=True
         )
-    assert client.commands[:10] == [
-        "configure", "interface 1/0/1", "no poe", "exit", "exit",
-        "configure", "interface 1/0/1", "poe", "exit", "exit",
-    ]  # fmt: skip
+    assert client.commands[:5] == ["configure", "interface 1/0/1", "poe reset", "exit", "exit"]
     assert "write memory" not in client.commands
+
+    # Firmware without "poe reset": fall back to off, wait, on.
+    client.responses["poe reset"] = "% Invalid input detected at '^' marker."
+    client.commands.clear()
+    with patch("custom_components.aerohive_local.coordinator.asyncio.sleep", return_value=None):
+        await hass.services.async_call(
+            "button", "press", {"entity_id": _sw(hass, "button", "poe_cycle_1/0/1")}, blocking=True
+        )
+    # (the real client leaves config mode after the rejected block; see test_client)
+    assert client.commands[:11] == [
+        "configure", "interface 1/0/1", "poe reset",
+        "configure", "interface 1/0/1", "no poe", "exit", "exit",
+        "configure", "interface 1/0/1", "poe",
+    ]  # fmt: skip
+    client.responses.pop("poe reset")
 
     client.commands.clear()
     client.responses["interface 1/0/4"] = "An invalid interface has been used for this command."
