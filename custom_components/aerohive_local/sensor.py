@@ -27,8 +27,11 @@ from homeassistant.const import (
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     EntityCategory,
     UnitOfDataRate,
+    UnitOfElectricCurrent,
+    UnitOfElectricPotential,
     UnitOfInformation,
     UnitOfPower,
+    UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import Entity
@@ -37,7 +40,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import CONF_RAW_SENSORS, CONF_TRACKED_CLIENTS, DEFAULT_RAW_SENSORS
 from .coordinator import AerohiveConfigEntry, AerohiveCoordinator, AerohiveData
 from .entity import AerohiveEntity, async_add_dynamic_entities, extra_attrs, port_label, radio_label
-from .parsers import COUNTER_FIELDS, normalize_mac, parse_raw_value, parse_rate_mbps, radio_band
+from .parsers import COUNTER_FIELDS, normalize_mac, parse_number, parse_raw_value, parse_rate_mbps, radio_band
 
 PARALLEL_UPDATES = 0
 
@@ -454,6 +457,11 @@ def _poe(attr: str) -> Callable[[AerohiveData, str], Any]:
     return value
 
 
+def _poe_extra(d: AerohiveData, n: str, key: str) -> str | None:
+    poe = d.poe_ports.get(n)
+    return poe.extra.get(key) if poe else None
+
+
 def _lldp_attrs(d: AerohiveData, n: str) -> dict[str, Any]:
     nb = d.lldp.get(n)
     if nb is None:
@@ -545,6 +553,32 @@ INTERFACE_SENSORS: tuple[InterfaceSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfPower.WATT, entity_category=DIAG,
         entity_registry_enabled_default=False,
         value_fn=_poe("max_power_w"), exists_fn=lambda d, n: n in d.poe_ports and d.poe_ports[n].max_power_w is not None,
+    ),
+    InterfaceSensorDescription(
+        key="poe_fault", label="PoE fault status", entity_category=DIAG, icon="mdi:alert-circle-outline",
+        value_fn=lambda d, n: _poe_extra(d, n, "fault_status"),
+        exists_fn=lambda d, n: _poe_extra(d, n, "fault_status") is not None,
+    ),
+    InterfaceSensorDescription(
+        key="poe_voltage", label="PoE voltage", device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT, state_class=SensorStateClass.MEASUREMENT,
+        entity_category=DIAG, entity_registry_enabled_default=False,
+        value_fn=lambda d, n: parse_number(_poe_extra(d, n, "output_voltage_v")),
+        exists_fn=lambda d, n: _poe_extra(d, n, "output_voltage_v") is not None,
+    ),
+    InterfaceSensorDescription(
+        key="poe_current", label="PoE current", device_class=SensorDeviceClass.CURRENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.MILLIAMPERE, state_class=SensorStateClass.MEASUREMENT,
+        entity_category=DIAG, entity_registry_enabled_default=False,
+        value_fn=lambda d, n: parse_number(_poe_extra(d, n, "output_current_ma")),
+        exists_fn=lambda d, n: _poe_extra(d, n, "output_current_ma") is not None,
+    ),
+    InterfaceSensorDescription(
+        key="poe_temperature", label="PoE temperature", device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS, state_class=SensorStateClass.MEASUREMENT,
+        entity_category=DIAG, entity_registry_enabled_default=False,
+        value_fn=lambda d, n: parse_number(_poe_extra(d, n, "temperature_c")),
+        exists_fn=lambda d, n: _poe_extra(d, n, "temperature_c") is not None,
     ),
     InterfaceSensorDescription(
         key="wired_clients", label="clients", icon="mdi:lan-connect",

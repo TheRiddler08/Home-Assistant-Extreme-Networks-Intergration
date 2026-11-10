@@ -61,7 +61,9 @@ from .parsers import (
     parse_running_config_summary,
     parse_show_boot_param,
     parse_show_network,
+    parse_key_values,
     parse_poe_port_detail,
+    poe_port_count,
     parse_show_poe,
     parse_show_port_all,
     parse_show_cpu,
@@ -514,19 +516,32 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return data
 
     async def _poe_ports_one_by_one(self, data: AerohiveData) -> dict[str, PoePort]:
-        """Read PoE port by port when no 'all ports' form is accepted."""
+        """Read PoE port by port when no 'all ports' form is accepted.
+
+        SR2208P 1.0.1.28: 'show poe port info 1/0/N' (a one-row table).
+        Only the PoE-capable ports are probed (count from the model, e.g.
+        "8 GE POE+ ports").
+        """
         result: dict[str, PoePort] = {}
-        templates = (
-            [self._poe_single] if isinstance(self._poe_single, str) else list(commands.SW_POE_PORT_SINGLE)
-        )
-        ports = [p for p in data.ports() if p.split("/")[-1].isdigit() and int(p.split("/")[-1]) <= POE_MAX_PORTS]
+        if isinstance(self._poe_single, str):
+            templates = [self._poe_single]
+        else:
+            templates = list(commands.SW_POE_PORT_SINGLE)
+        limit = poe_port_count(data.version) or POE_MAX_PORTS
+        ports = [p for p in data.ports() if p.split("/")[-1].isdigit() and int(p.split("/")[-1]) <= limit]
         for port in ports:
-            for template in list(templates):
+            while templates:
+                template = templates[0]
                 out = await self.client.run(template.format(port=port))
                 if is_unsupported_command(out):
-                    templates.remove(template)
+                    if isinstance(self._poe_single, str):
+                        break  # this port has no PoE; keep the working template
+                    templates.pop(0)
                     continue
-                if entry := parse_poe_port_detail(out, port):
+                entry = parse_show_poe(out)[1].get(port) or parse_poe_port_detail(out, port)
+                if entry is not None:
+                    # Per-port counters (Overload, Short, Power Denied...) ride along as extras.
+                    entry.extra.update({k: v for k, v in parse_key_values(out).items() if "counter" in k})
                     result[port] = entry
                     self._poe_single = template
                     templates = [template]

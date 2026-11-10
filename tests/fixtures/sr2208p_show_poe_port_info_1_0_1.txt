@@ -1,0 +1,14 @@
+
+        High     Max                      Output  Output
+Intf    Power   Power     Class   Power   Current Voltage  Temperature      Status            Fault
+                 (mW)              (mW)     (mA)   (V)         (C)                            Status
+------ ------- -------- -------- -------  ------- -------  -----------  ----------------- -----------------
+1/0/1    Yes   30000    Unknown  0         0       0       48           Searching          No Error
+
+
+Overload Counter .............................. 0
+Short Counter ................................. 0
+Power Denied Counter .......................... 0
+Absent Counter ................................ 0
+Invalid Signature Counter ..................... 0
+

@@ -285,32 +285,27 @@ def parse_tables(text: str, header_re: re.Pattern[str] | None = None) -> list[Ta
             and not SEPARATOR_RE.match(lines[idx - 1])
         ):
             spans = [_Span(m.start(), m.end()) for m in re.finditer(r"-+", line)]
-            # Two-line headers ("Admin" above "Mode"): merge per column.
+            # Multi-line headers ("Admin" above "Mode", units row below): merge per column.
             header_lines = [lines[idx - 1]]
-            above = lines[idx - 2] if idx > 1 else ""
-            if (
-                above.strip()
-                and not SEPARATOR_RE.match(above)
-                and not re.search(r"[=:;]", above)
-                and len(above.split()) <= len(spans)
-            ):
-                header_lines.insert(0, lines[idx - 2])
-            if len(header_lines) == 2:
-                top = _split_by_spans(header_lines[0], spans)
-                bottom = _split_by_spans(header_lines[1], spans)
+            back = idx - 2
+            while back >= 0 and len(header_lines) < 3:
+                above = lines[back]
+                if (
+                    not above.strip()
+                    or SEPARATOR_RE.match(above)
+                    or re.search(r"[=:;]", above)
+                    or len(above.split()) > len(spans)
+                ):
+                    break
+                header_lines.insert(0, above)
+                back -= 1
+            if len(header_lines) > 1:
+                parts = [_split_by_spans(h, spans) for h in header_lines]
                 header = None
-                merged = [f"{t} {b}".strip() for t, b in zip(top, bottom, strict=True)]
+                merged = [" ".join(p[i] for p in parts if p[i]).strip() for i in range(len(spans))]
             else:
                 header = lines[idx - 1]
                 merged = None
-        elif header_re is not None and header_re.search(line):
-            nxt = lines[idx + 1] if idx + 1 < len(lines) else ""
-            if SEPARATOR_RE.match(nxt):
-                idx += 1  # handled by separator branch next iteration
-                continue
-            header = line
-            merged = None
-            spans = _header_spans(line)
         if spans is None:
             idx += 1
             continue
@@ -1400,7 +1395,7 @@ def parse_show_poe(text: str) -> tuple[PoeSummary, dict[str, PoePort]]:
         cols = table.columns
         if not table.rows:
             continue
-        port_col = next((c for c in cols if c in {"port", "interface", "ifname", "name"}), None)
+        port_col = next((c for c in cols if c in {"port", "interface", "ifname", "name", "intf"}), None)
         if port_col is None:
             port_col = next(
                 (c for c in cols if all(normalize_port(r.get(c)) for r in table.rows if r.get(c))), None
@@ -1411,10 +1406,17 @@ def parse_show_poe(text: str) -> tuple[PoeSummary, dict[str, PoePort]]:
         def col(*words: str, exclude: tuple[str, ...] = (), cols: list[str] = cols) -> str | None:
             return next((c for c in cols if any(w in c for w in words) and not any(x in c for x in exclude)), None)
 
-        power_col = col("consum", "actual", "used", "output") or col("power", exclude=("max", "limit", "budget", "alloc", "class", "prior"))
+        power_col = (
+            next((c for c in cols if c in {"power", "power_mw", "power_w", "output_power", "output_power_mw",
+                                           "output_power_w", "consumed_power", "power_consumed"}), None)
+            or col("consum", "actual", "used", exclude=("max", "limit", "budget", "alloc"))
+            or col("power", exclude=("max", "limit", "budget", "alloc", "class", "prior", "high", "current", "voltage"))
+        )  # fmt: skip
         max_col = col("max", "limit", "alloc", "budget")
         admin_col = col("admin", "enable", exclude=("status",)) or (cols and next((c for c in cols if c == "mode"), None))
-        status_col = col("status", "state", "oper", "detect", exclude=("admin",))
+        status_col = next((c for c in cols if c in {"status", "port_status", "state", "detection_status"}), None) or col(
+            "status", "state", "oper", "detect", exclude=("admin", "fault")
+        )
         class_col = col("class")
         prio_col = col("prior")
         used = {port_col, power_col, max_col, admin_col, status_col, class_col, prio_col}
@@ -1432,6 +1434,15 @@ def parse_show_poe(text: str) -> tuple[PoeSummary, dict[str, PoePort]]:
             entry.extra = {k: v for k, v in row.items() if k not in used and v}
             ports[port] = entry
     return summary, ports
+
+
+def poe_port_count(version: VersionInfo) -> int | None:
+    """'Aerohive SR2208P: 8 GE POE+ ports, ...' -> 8."""
+    for key in ("machine_type", "system_description"):
+        match = re.search(r"(\d+)\s*(?:GE|FE|x)?\s*PoE\+?\s*ports", version.raw.get(key, ""), re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return None
 
 
 def parse_poe_port_detail(text: str, port: str) -> PoePort | None:

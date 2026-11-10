@@ -555,3 +555,22 @@ def test_poe_port_detail() -> None:
     assert (entry.admin, entry.status, entry.power_w, entry.poe_class) == ("Enable", "Delivering Power", 6.5, "4")
     assert entry.enabled is True and entry.delivering is True
     assert p.parse_poe_port_detail("", "1/0/1") is None
+
+
+def test_sr2208p_poe_port_info() -> None:
+    text = load_fixture("sr2208p_show_poe_port_info_1_0_1.txt")
+    table = p.parse_tables(text)[0]
+    assert table.columns == [
+        "intf", "high_power", "max_power_mw", "class", "power_mw",
+        "output_current_ma", "output_voltage_v", "temperature_c", "status", "fault_status",
+    ]  # fmt: skip
+    _, ports = p.parse_show_poe(text)
+    entry = ports["1/0/1"]
+    assert entry.power_w == 0.0
+    assert entry.max_power_w == 30.0
+    assert entry.status == "Searching"
+    assert entry.poe_class == "Unknown"
+    assert entry.extra["temperature_c"] == "48"
+    assert entry.extra["fault_status"] == "No Error"
+    assert entry.enabled is True and entry.delivering is False
+    assert p.poe_port_count(p.parse_show_version(load_fixture("sr2208p_show_version.txt"))) == 8

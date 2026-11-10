@@ -222,6 +222,7 @@ commands. Verified against an SR2208P on software 1.0.1.28:
 | IP / netmask / gateway | `show network` |
 | Port link, speed, duplex, admin state | `show port all` |
 | PoE budget / consumed / remaining | `show poe` |
+| PoE per port: power, max power, class, status, fault, voltage, current, temperature | `show poe port info 1/0/N` (PoE ports 1/0/1–1/0/8 only) |
 | Clients per port | `show mac-addr-table` |
 | Per-port octet/packet/error counters → throughput | `show interface ethernet 1/0/N` (ports that are up) |
 | Uptime / boot time, port & PoE admin state | `show running-config` (header + `interface` blocks) |
@@ -240,7 +241,9 @@ re-runs the command.
 | `Port 1/0/N LLDP neighbor` | system name (or chassis ID). Attributes: management IP, port ID, capabilities |
 | PoE power used / budget / remaining | device level |
 | IP address, firmware, serial number, reboot | `reload`, confirmations answered |
-| `Port 1/0/N PoE` switch, `PoE power`, `PoE status`, `PoE power cycle` button | only if a per-port PoE command works (see assumptions) |
+| `Port 1/0/N PoE power` (W), `PoE status` (Searching / Delivering…), `PoE fault status` | per PoE port |
+| `Port 1/0/N PoE voltage`, `current`, `temperature`, `class`, `max power` | per PoE port, disabled by default |
+| `Port 1/0/N PoE` switch, `PoE power cycle` button | PoE on/off (see assumption 19) |
 | `Port 1/0/N enabled` switch | **disabled by default**: shutting down the port Home Assistant reaches the switch through locks you out |
 | RX / TX throughput per port | from `Total Packets Received/Transmitted (Octets)`. Counters (bytes, packets, errors, discards) are disabled by default; the other ~60 statistics lines are not turned into entities |
 
@@ -381,11 +384,9 @@ These commands and formats couldn't be checked against real hardware. Please tes
 17. **`show hw-info`** reports `Serial number:` and `Hardware revision:`.
     Any of the commands in 13–17 that the firmware rejects are skipped quietly.
 
-18. **SR switch per-port PoE status:** `show poe port all` is rejected on 1.0.1.28. The
-    integration tries `show poe port info all`, `show poe port info`,
-    `show poe port configuration all` and `show poe port status all`, then falls back to
-    `show poe port 1/0/N` / `show poe port info 1/0/N` one port at a time. **Needed:** the
-    output of `show poe port ?`.
+18. **SR switch per-port PoE status:** verified (`show poe port info 1/0/N`). One command per
+    PoE port per poll; the integration first tries `show poe port info all` in case one
+    command can cover them all.
 19. **SR switch PoE on/off** uses `configure` → `interface 1/0/N` → `poe` / `no poe` → `exit` → `exit`.
 20. **SR switch port on/off** uses the same block with `shutdown` / `no shutdown`.
 21. **SR switch save** is `write memory`, answering `y` to the confirmation.
@@ -401,9 +402,8 @@ These commands and formats couldn't be checked against real hardware. Please tes
     `80:95:62` and `B8:7C:F2` from your devices.
 
 Please also send me `run_show_command` output for `show interface eth0`, `show interface wifi0.1`,
-`show interface mgt0`, `show cpu`, `show memory` and `show hw-info`. From the SR2208P, please send
-`show poe port ?`, then whichever form it suggests for one port (e.g. `show poe port 1/0/1`
-or `show poe port info 1/0/1`).
+`show interface mgt0`, `show cpu`, `show memory` and `show hw-info`. From the SR2208P, the read-only side is now fully based on real output. Still unverified:
+the config-mode PoE/port commands (assumptions 19–21).
 
 ## Development
 

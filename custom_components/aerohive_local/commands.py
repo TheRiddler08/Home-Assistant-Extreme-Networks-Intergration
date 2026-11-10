@@ -210,7 +210,8 @@ SW_POE_PORT_COMMANDS = (
     "show poe port status all",
 )
 # Fallback: one port at a time.
-SW_POE_PORT_SINGLE = ("show poe port {port}", "show poe port info {port}")
+# Verified on SR2208P 1.0.1.28: "show poe port info 1/0/1" (one-row table).
+SW_POE_PORT_SINGLE = ("show poe port info {port}", "show poe port {port}")
 SW_MAC_TABLE = "show mac-addr-table"
 SW_LLDP = "show lldp remote-device all"
 SW_LLDP_DETAIL = "show lldp remote-device detail {port}"
