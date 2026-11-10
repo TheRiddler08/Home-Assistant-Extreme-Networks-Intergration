@@ -462,6 +462,24 @@ Please also send me `run_show_command` output for `show interface eth0`, `show i
 `show interface mgt0`, `show cpu`, `show memory` and `show hw-info`. The SR2208P support is now based on real output and commands. The only unverified detail
 is the exact wording of the `write memory` confirmation (any y/n prompt is answered `y`).
 
+## Releases
+
+HACS installs GitHub releases. To publish one:
+
+1. Bump `version` in `custom_components/aerohive_local/manifest.json` (e.g. `0.6.1`) and commit.
+2. Tag the commit and push the tag:
+
+   ```bash
+   git tag v0.6.1
+   ```
+   ```bash
+   git push origin v0.6.1
+   ```
+
+The **Release** workflow checks that the tag matches the manifest version and publishes the
+release (with auto-generated notes). Home Assistant then shows the update in
+**Settings → Updates**.
+
 ## Development
 
 ```bash
