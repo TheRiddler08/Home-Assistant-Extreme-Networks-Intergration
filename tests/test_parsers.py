@@ -574,3 +574,32 @@ def test_sr2208p_poe_port_info() -> None:
     assert entry.extra["fault_status"] == "No Error"
     assert entry.enabled is True and entry.delivering is False
     assert p.poe_port_count(p.parse_show_version(load_fixture("sr2208p_show_version.txt"))) == 8
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("AP460C", "AP460C"),
+        ("REACT-Guest-", "REACT-Guest-Network"),  # cut short by the table column
+        ("REACT-Guest...", "REACT-Guest-Network"),
+        ("REACT-Staf~", "REACT-Staff-5G"),
+        ("REACT", "REACT"),  # ambiguous prefix and no exact match: kept as-is
+        ("ap460c", "AP460C"),
+        (None, None),
+    ],
+)
+def test_resolve_ssid_name(value: str | None, expected: str | None) -> None:
+    names = ["AP460C", "REACT-Guest-Network", "REACT-Staff-5G"]
+    assert p.resolve_ssid_name(value, names) == expected
+
+
+def test_running_config_ssid_bindings() -> None:
+    cfg = (
+        "interface wifi0 ssid AP460C\n"
+        'interface wifi1 ssid "Guest Wifi"\n'
+        "interface wifi1 ssid AP460C\n"
+        "interface wifi1 ssid Old shutdown\n"
+        "no interface wifi0 ssid Gone\n"
+    )
+    summary = p.parse_running_config_summary(cfg)
+    assert summary.ssid_bindings == {"wifi0": {"AP460C"}, "wifi1": {"Guest Wifi", "AP460C"}}

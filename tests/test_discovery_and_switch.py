@@ -784,3 +784,121 @@ async def test_migration_removes_old_ssid_manager_entities(hass: HomeAssistant) 
     await hass.async_block_till_done()
     assert old.minor_version == 3
     assert all(registry.async_get(e.entity_id) is None for e in leftovers)
+
+
+# --------------------------------------------------------------------------
+# AP / broadcasting detection robustness
+# --------------------------------------------------------------------------
+
+LONG = "REACT-Guest-Network"
+
+
+def _long_ssid_responses(client: FakeClient) -> None:
+    """An SSID whose name the 'show interface' table cuts to 'REACT-Gues'."""
+    client.responses["show ssid"] = load_fixture("ap460c_show_ssid.txt") + (
+        f"2   {LONG:<33}2346    2346    1           30          None\n"
+    )
+    client.responses["show interface"] = load_fixture("ap460c_show_interface.txt") + (
+        "Wifi1.2     bcf3:107c:06b5 access         U      36(20MHz)     -  radio_axa0        hive0           REACT-Gues\n"
+    )
+
+
+async def test_truncated_ssid_name_is_matched(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    _long_ssid_responses(_client())
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    data = entry.runtime_data.data
+    assert data.ssid_on_radio(LONG, "wifi1") and not data.ssid_on_radio(LONG, "wifi0")
+    assert data.ssid_broadcasting(LONG)
+    assert hass.states.get(_id(hass, "switch", f"{MAC}_ssid_wifi1_{LONG}")).state == "on"
+    assert hass.states.get(_id(hass, "binary_sensor", f"{MAC}_ssid_broadcasting_{LONG}")).state == "on"
+
+
+async def test_auto_channel_still_broadcasting(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    client = _client()
+    client.responses["show interface"] = load_fixture("ap460c_show_interface.txt").replace(
+        "  36(20MHz)", "Auto(20MHz)"
+    )
+    await entry.runtime_data.async_refresh()
+    data = entry.runtime_data.data
+    assert data.interfaces["wifi1"].channel is None
+    assert data.ssid_broadcasting("AP460C")
+    assert "wifi1" in data.radio_names()
+
+
+async def test_ap_with_all_radios_down_is_still_an_ap(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    client = _client()
+    down = "\n".join(
+        line.replace("6(20MHz)", "Down(20MHz)").replace("36(20MHz)", "Down(20MHz)")
+        for line in load_fixture("ap460c_show_interface.txt").splitlines()
+        if not line.startswith("Wifi0.1") and not line.startswith("Wifi1.1")
+    )
+    client.responses["show interface"] = down
+    client.responses["show station"] = ""
+    await entry.runtime_data.async_refresh()
+    data = entry.runtime_data.data
+    assert data.is_wireless
+    assert data.radio_names() == ["wifi0", "wifi1", "wifi2"]
+    assert not data.ssid_broadcasting("AP460C")
+    await hass.async_block_till_done()
+    overview = next(e for e in hass.config_entries.async_entries(DOMAIN) if e.data.get("entry_type") == "overview")
+    await overview.runtime_data.async_refresh()
+    assert len(overview.runtime_data.data.aps) == 1
+
+
+async def test_glitched_show_interface_is_retried(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    client = _client()
+    coordinator = entry.runtime_data
+    good = client.responses["show interface"]
+    replies = iter(["Name  MAC addr\n----- --------\n", good])
+    original_run = FakeClient.run
+
+    async def flaky(self, command: str, **kwargs: Any) -> str:
+        if command == "show interface":
+            self.commands.append(command)
+            return next(replies, good)
+        return await original_run(self, command, **kwargs)
+
+    with patch.object(FakeClient, "run", flaky):
+        await coordinator.async_refresh()
+    assert coordinator.last_update_success
+    assert coordinator.data.ssid_broadcasting("AP460C")
+
+    # Still broken after the retry: the poll fails, the last good data stays.
+    client.responses["show interface"] = "Mgt0        bcf3:107c:0680    -           U\n"
+    await coordinator.async_refresh()
+    assert not coordinator.last_update_success
+    assert coordinator.data.radio_names() == ["wifi0", "wifi1"]
+
+
+async def test_one_bad_show_ssid_reply_does_not_disable_it(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    client = _client()
+    coordinator = entry.runtime_data
+    good = client.responses["show ssid"]
+    client.responses["show ssid"] = "% garbled"
+    await coordinator.async_refresh()
+    # Bound SSIDs exist but the list was unusable: last good list kept.
+    assert "AP460C" in coordinator.data.ssids
+    client.responses["show ssid"] = good
+    await coordinator.async_refresh()
+    assert "show ssid" not in coordinator._unsupported  # noqa: SLF001
+    assert "AP460C" in coordinator.data.ssids
+
+
+async def test_show_ssid_unsupported_after_two_polls_then_reprobed(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    from custom_components.aerohive_local import coordinator as coord_mod
+
+    client = _client()
+    coordinator = entry.runtime_data
+    good = client.responses["show ssid"]
+    client.responses["show ssid"] = "% Unknown command"
+    await coordinator.async_refresh()
+    assert "show ssid" not in coordinator._unsupported  # noqa: SLF001
+    await coordinator.async_refresh()
+    assert "show ssid" in coordinator._unsupported  # noqa: SLF001
+    # Re-probed after the retry window.
+    client.responses["show ssid"] = good
+    with patch.object(coord_mod, "UNSUPPORTED_RETRY_SECONDS", 0):
+        await coordinator.async_refresh()
+    assert "show ssid" not in coordinator._unsupported  # noqa: SLF001
+    assert "AP460C" in coordinator.data.ssids

@@ -64,7 +64,7 @@ class DeviceView:
 
     @property
     def is_ap(self) -> bool:
-        return bool(self.data.radio_names())
+        return self.data.is_wireless
 
     @property
     def is_switch(self) -> bool:

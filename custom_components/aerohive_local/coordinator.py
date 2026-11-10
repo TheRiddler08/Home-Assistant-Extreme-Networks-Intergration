@@ -75,6 +75,7 @@ from .parsers import (
     parse_show_version,
     parse_ssid_security_objects,
     poe_port_count,
+    resolve_ssid_name,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ _LOGGER = logging.getLogger(__name__)
 type AerohiveConfigEntry = ConfigEntry[AerohiveCoordinator]
 
 UPLINK_MAC_THRESHOLD = 16
+UNSUPPORTED_RETRY_SECONDS = 1800
 POE_MAX_PORTS = 24  # per-port PoE probing stops at this port number
 
 
@@ -208,6 +210,50 @@ class AerohiveData:
         return bool(radios) and all(self.ssid_on_radio(ssid, r) for r in radios)
 
     @property
+    def is_wireless(self) -> bool:
+        """An AP / branch router with Wi-Fi, even if every radio is down right now."""
+        if self.is_switch:
+            return False
+        return (
+            any(i.is_radio for i in self.interfaces.values())
+            or bool(self.ssids)
+            or bool(self.stations)
+            or (self.version.platform or "").upper().startswith("AP")
+        )
+
+    def _sub_ssid(self, iface: Interface) -> str | None:
+        """SSID of a sub-interface, matched to its full 'show ssid' name."""
+        return resolve_ssid_name(iface.ssid, self.ssids) if iface.ssid else None
+
+    def ssid_bindings(self) -> dict[str, set[str]]:
+        """radio -> SSIDs bound to it.
+
+        Sources: the 'show interface' sub-interfaces (names matched to
+        'show ssid'), plus 'interface wifiN ssid X' lines from the running
+        config when it has been read (covers radios that are down and long
+        names the table cut short).
+        """
+        bindings: dict[str, set[str]] = {}
+        for iface in self.interfaces.values():
+            if iface.parent and iface.ssid:
+                bindings.setdefault(iface.parent, set()).add(self._sub_ssid(iface) or iface.ssid)
+        if self.config is not None:
+            for radio, names in self.config.ssid_bindings.items():
+                if radio in self.interfaces:
+                    bindings.setdefault(radio, set()).update(
+                        resolve_ssid_name(n, self.ssids) or n for n in names
+                    )
+        return bindings
+
+    def radio_up(self, radio: str) -> bool:
+        """Radio is operational: not reported down. A non-numeric channel
+        (Auto, DFS scan...) still counts as up."""
+        iface = self.interfaces.get(radio)
+        if iface is None or iface.is_up is False:
+            return False
+        return (iface.channel_raw or "").lower() != "down"
+
+    @property
     def mac(self) -> str | None:
         mgt = self.interfaces.get("mgt0")
         return (mgt.mac if mgt else None) or self.version.mac
@@ -221,30 +267,33 @@ class AerohiveData:
         return self.details.get("mgt0")
 
     def radio_names(self) -> list[str]:
-        """Radios worth exposing: up with a channel, or carrying an SSID."""
-        with_ssid = {i.parent for i in self.interfaces.values() if i.parent and i.ssid}
-        result = []
-        for name, iface in sorted(self.interfaces.items()):
-            if not iface.is_radio:
-                continue
-            if name in with_ssid or iface.channel is not None:
-                result.append(name)
-        return result
+        """Radios worth exposing: up with a channel, or carrying an SSID.
+
+        If none qualifies (e.g. every radio is down) all radios are returned,
+        so an AP is never mistaken for a device without Wi-Fi.
+        """
+        bound = {r for r, names in self.ssid_bindings().items() if names}
+        radios = sorted(n for n, i in self.interfaces.items() if i.is_radio)
+        active = [r for r in radios if r in bound or self.interfaces[r].channel is not None]
+        return active or radios
 
     def ssid_on_radio(self, ssid: str, radio: str) -> bool:
-        return any(i.parent == radio and i.ssid == ssid for i in self.interfaces.values())
+        return ssid in self.ssid_bindings().get(radio, set())
 
     def ssids_on_radio(self, radio: str) -> list[str]:
-        return sorted({i.ssid for i in self.interfaces.values() if i.parent == radio and i.ssid})
+        return sorted(self.ssid_bindings().get(radio, set()))
 
     def ssid_subinterfaces(self, ssid: str) -> list[Interface]:
-        return [i for i in self.interfaces.values() if i.parent and i.ssid == ssid]
+        return [i for i in self.interfaces.values() if i.parent and i.ssid and self._sub_ssid(i) == ssid]
 
     def ssid_broadcasting(self, ssid: str) -> bool:
-        """True if the SSID is bound to at least one radio that is up and on a channel."""
-        for sub in self.ssid_subinterfaces(ssid):
-            radio = self.interfaces.get(sub.parent or "")
-            if sub.is_up is False or radio is None or radio.is_up is False or radio.channel is None:
+        """Bound to at least one radio that is up, and its sub-interface (if listed) isn't down."""
+        subs = {i.parent: i for i in self.ssid_subinterfaces(ssid)}
+        for radio, names in self.ssid_bindings().items():
+            if ssid not in names or not self.radio_up(radio):
+                continue
+            sub = subs.get(radio)
+            if sub is not None and sub.is_up is False:
                 continue
             return True
         return False
@@ -254,9 +303,9 @@ class AerohiveData:
 
     def station_ssid(self, station: Station) -> str | None:
         if station.ssid:
-            return station.ssid
+            return resolve_ssid_name(station.ssid, self.ssids)
         iface = self.interfaces.get(station.interface or "")
-        return iface.ssid if iface else None
+        return self._sub_ssid(iface) if iface else None
 
     def clients_on_ssid(self, ssid: str) -> int:
         return sum(1 for s in self.stations.values() if self.station_ssid(s) == ssid)
@@ -298,6 +347,10 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self.detailed_stats: bool = entry.options.get(CONF_DETAILED_STATS, DEFAULT_DETAILED_STATS)
         self.enable_all_entities: bool = entry.options.get(CONF_ENABLE_ALL, DEFAULT_ENABLE_ALL)
         self._unsupported: set[str] = set()
+        self._unsupported_at: dict[str, float] = {}
+        self._rejections: dict[str, int] = {}
+        self._rejected_in_poll: dict[str, int] = {}
+        self._poll_count = 0
         self._slow_at: float | None = None
         self._boot_params: BootParams | None = None
         self._hardware: HardwareInfo | None = None
@@ -322,14 +375,29 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
     # ------------------------------------------------------------------ #
 
     async def _optional(self, command: str) -> str | None:
-        """Run a command the firmware may not support; remember failures."""
+        """Run a command the firmware may not support.
+
+        A command is only treated as unsupported after it was rejected on two
+        consecutive polls (one garbled reply must not disable it), and it is
+        tried again every UNSUPPORTED_RETRY_SECONDS in case that was wrong.
+        """
         if command in self._unsupported:
-            return None
+            if time.monotonic() - self._unsupported_at.get(command, 0) < UNSUPPORTED_RETRY_SECONDS:
+                return None
+            self._unsupported.discard(command)
         output = await self.client.run(command)
         if is_unsupported_command(output):
-            _LOGGER.debug("%s: '%s' not supported: %s", self.client.host, command, output[:200])
-            self._unsupported.add(command)
+            # Count at most one rejection per poll (an in-poll retry is not "consecutive").
+            if self._rejected_in_poll.get(command) != self._poll_count:
+                self._rejected_in_poll[command] = self._poll_count
+                self._rejections[command] = self._rejections.get(command, 0) + 1
+            _LOGGER.debug("%s: '%s' rejected (%d): %s", self.client.host, command,
+                          self._rejections[command], output[:200])  # fmt: skip
+            if self._rejections[command] >= 2:
+                self._unsupported.add(command)
+                self._unsupported_at[command] = time.monotonic()
             return None
+        self._rejections.pop(command, None)
         return output
 
     async def _first_supported(self, group: str, candidates: tuple[str, ...]) -> str | None:
@@ -390,14 +458,14 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return Throughput(kbps(detail.rx_bytes, prev[1]), kbps(detail.tx_bytes, prev[2]))
 
     async def _fetch(self) -> AerohiveData:
+        self._poll_count += 1
         data = AerohiveData()
         version_out = await self.client.run("show version")
         if self.client.dialect == commands.DIALECT_SWITCH:
             return await self._fetch_switch(data, version_out)
         data.version = parse_show_version(version_out)
-        data.interfaces = parse_show_interface(await self.client.run("show interface"))
-        ssid_out = await self._optional("show ssid")
-        data.ssids = parse_show_ssid(ssid_out) if ssid_out else {}
+        data.interfaces = await self._read_interfaces()
+        data.ssids = await self._read_ssids(data)
         if data.radio_names():
             station_out = await self._optional("show station")
             data.stations = parse_show_station(station_out) if station_out else {}
@@ -463,6 +531,43 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             if self._boot_time is None or abs((boot - self._boot_time).total_seconds()) > 120:
                 self._boot_time = boot.replace(microsecond=0)
         data.boot_time = self._boot_time
+
+    async def _read_interfaces(self) -> dict[str, Interface]:
+        """'show interface', retried once if the reply looks incomplete.
+
+        A reply without mgt0, or without the radios the previous poll had, is
+        a glitch (cut-off output): publishing it would make the AP look like
+        it has no Wi-Fi. If the retry is no better, the poll fails and the
+        last good data is kept.
+        """
+        previous = self.data.interfaces if self.data else {}
+        had_radios = any(i.is_radio for i in previous.values())
+        interfaces: dict[str, Interface] = {}
+        for attempt in (1, 2):
+            interfaces = parse_show_interface(await self.client.run("show interface"))
+            has_radios = any(i.is_radio for i in interfaces.values())
+            if interfaces and "mgt0" in interfaces and (has_radios or not had_radios):
+                return interfaces
+            _LOGGER.debug("%s: incomplete 'show interface' reply (attempt %d)", self.client.host, attempt)
+        if not interfaces:
+            raise AerohiveConnectionError("'show interface' returned no interfaces")
+        if had_radios:
+            raise AerohiveConnectionError("'show interface' reply is missing the radios")
+        return interfaces
+
+    async def _read_ssids(self, data: AerohiveData) -> dict[str, Ssid]:
+        """'show ssid', retried once if SSIDs are bound but none were parsed."""
+        bound = any(i.parent and i.ssid for i in data.interfaces.values())
+        ssids: dict[str, Ssid] = {}
+        for _attempt in (1, 2):
+            out = await self._optional("show ssid")
+            ssids = parse_show_ssid(out) if out else {}
+            if ssids or not bound:
+                return ssids
+        if self.data is not None and self.data.ssids:
+            _LOGGER.debug("%s: 'show ssid' gave nothing usable, keeping the last list", self.client.host)
+            return dict(self.data.ssids)
+        return ssids
 
     async def _fetch_switch(self, data: AerohiveData, version_out: str) -> AerohiveData:
         """Poll an SR-series switch (FASTPATH-style CLI)."""

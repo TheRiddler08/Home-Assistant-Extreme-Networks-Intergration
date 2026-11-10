@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -1630,6 +1631,7 @@ class RunningConfigSummary:
     pse_shutdown_ports: set[str] = field(default_factory=set)
     shutdown_ports: set[str] = field(default_factory=set)
     uptime_seconds: int | None = None  # SR switch: '!System Up Time "0 days 1 hrs 35 mins"'
+    ssid_bindings: dict[str, set[str]] = field(default_factory=dict)  # radio -> SSIDs ("interface wifi0 ssid X")
 
     def ssid_security(self, ssid: str) -> str | None:
         obj = self.ssid_security_objects.get(ssid, ssid)
@@ -1637,6 +1639,7 @@ class RunningConfigSummary:
 
 
 _ARG = r'(?:"([^"]+)"|(\S+))'
+_BIND_RE = re.compile(rf"^\s*interface\s+(wifi\d+)\s+ssid\s+{_ARG}(\s+\S.*)?$", re.IGNORECASE)
 _HIDE_RE = re.compile(rf"^\s*ssid\s+{_ARG}\s+hide-ssid\b", re.IGNORECASE)
 _SUITE_RE = re.compile(rf"^\s*security-object\s+{_ARG}\s+security\s+protocol-suite\s+(\S+)", re.IGNORECASE)
 _PSE_OFF_RE = re.compile(r"^\s*interface\s+(eth\S+)\s+pse\s+shutdown\b", re.IGNORECASE)
@@ -1665,6 +1668,10 @@ def parse_running_config_summary(config: str) -> RunningConfigSummary:
             elif stripped in {"no poe", "poe disable", "no poe enable"}:
                 summary.pse_shutdown_ports.add(block_port)
             continue
+        if m := _BIND_RE.match(line):
+            if not re.search(r"\bshutdown\b", m.group(4) or "", re.IGNORECASE):
+                summary.ssid_bindings.setdefault(m.group(1).lower(), set()).add(m.group(2) or m.group(3))
+            continue
         if m := _HIDE_RE.match(line):
             summary.hidden_ssids.add(m.group(1) or m.group(2))
         elif m := _SUITE_RE.match(line):
@@ -1679,6 +1686,27 @@ def parse_running_config_summary(config: str) -> RunningConfigSummary:
 # --------------------------------------------------------------------------
 # Misc
 # --------------------------------------------------------------------------
+
+
+def resolve_ssid_name(value: str | None, names: Iterable[str]) -> str | None:
+    """Match an SSID shown in a narrow table column to its full name.
+
+    'show interface' can cut long SSID names short (sometimes with '...',
+    '~' or '+'). Exact matches win; otherwise a unique prefix match is used.
+    """
+    if not value:
+        return None
+    names = list(names)
+    if value in names:
+        return value
+    stem = re.sub(r"(\.\.\.|…|~|\+|\*)$", "", value).rstrip()
+    if not stem:
+        return value
+    matches = [n for n in names if n.startswith(stem)]
+    if len(matches) == 1:
+        return matches[0]
+    lowered = [n for n in names if n.lower() == value.lower()]
+    return lowered[0] if len(lowered) == 1 else value
 
 
 def radio_band(radio_profile: str | None, channel: int | None) -> str | None:
