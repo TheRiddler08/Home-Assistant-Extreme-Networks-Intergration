@@ -453,3 +453,15 @@ def test_system_parsers_never_raise(garbage: str) -> None:
     p.parse_show_memory(garbage)
     p.parse_show_hw_info(garbage)
     p.parse_show_interface_detail(garbage, "eth0")
+
+
+def test_switch_prompt_and_more() -> None:
+    m = p.PROMPT_RE.search("foo\n(AH-Switch) #")
+    assert p.prompt_host(m) == "AH-Switch" and m.group("mode") == "#"
+    m = p.PROMPT_RE.search("(AH-Switch) >")
+    assert p.prompt_host(m) == "AH-Switch" and m.group("mode") == ">"
+    assert p.prompt_host(p.PROMPT_RE.search("x\nAH-7c0680#")) == "AH-7c0680"
+    assert p.clean_output("a\r\n--More-- or (q)uit\r        \rb\r\n").split("\n")[:2] == ["a", "b"]
+    assert p.MORE_TAIL_RE.search("line\n--More-- or (q)uit")
+    out = "show ssid\nNo.\n(AH-Switch) #"
+    assert p.strip_echo_and_prompt(out, "show ssid") == "No."

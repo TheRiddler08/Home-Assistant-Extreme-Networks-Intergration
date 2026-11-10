@@ -76,6 +76,8 @@ def _make_handler(device: FakeDevice):
                     paging = False
                 else:
                     process.stdout.write("            ^-- unknown keyword or invalid input\r\n")
+            elif cmd == "terminal length 0":
+                process.stdout.write("            ^-- unknown keyword or invalid input\r\n")
             elif cmd == "show interface":
                 process.stdout.write(load_fixture("ap460c_show_interface.txt").replace("\n", "\r\n"))
             elif cmd == "show ssid":
@@ -237,3 +239,79 @@ async def test_concurrent_commands_are_serialised(server) -> None:
         assert device.sessions == 1
     finally:
         await client.close()
+
+
+# --------------------------------------------------------------------------
+# FASTPATH-style switch CLI (SR2208P): "(AH-Switch) >" / "(AH-Switch) #"
+# --------------------------------------------------------------------------
+
+
+def _make_switch_handler(received: list[str]):
+    async def handler(process: asyncssh.SSHServerProcess) -> None:
+        mode = ">"
+        paging = True
+
+        def prompt() -> None:
+            process.stdout.write(f"\r\n(AH-Switch) {mode}")
+
+        prompt()
+        while True:
+            line = await _read_line(process)
+            if line is None:
+                break
+            cmd = line.strip()
+            received.append(cmd)
+            if cmd == "enable":
+                process.stdout.write("Password:")
+                pwd = await _read_line(process)
+                received.append("enable-password-ok" if pwd == PASSWORD else "enable-password-bad")
+                if pwd == PASSWORD:
+                    mode = "#"
+            elif cmd == "console page 0":
+                process.stdout.write("                             ^\r\n% Invalid input detected at '^' marker.\r\n")
+            elif cmd == "terminal length 0" and mode == "#":
+                paging = False
+            elif cmd == "show interface mgt0":
+                process.stdout.write("                             ^\r\nAn invalid interface has been used for this command.\r\n")
+            elif cmd == "show long":
+                for i in range(1, 41):
+                    process.stdout.write(f"line {i}\r\n")
+                    if paging and i % 20 == 0 and i < 40:
+                        process.stdout.write("--More-- or (q)uit")
+                        if not await process.stdin.read(1):
+                            return
+                        process.stdout.write("\r                  \r")
+            elif cmd:
+                process.stdout.write(f"ok {cmd}\r\n")
+            prompt()
+        process.exit(0)
+
+    return handler
+
+
+async def test_switch_cli_prompt_enable_and_paging(tmp_path) -> None:
+    received: list[str] = []
+    key = asyncssh.generate_private_key("ssh-rsa", 2048)
+    srv = await asyncssh.create_server(
+        _Server, "127.0.0.1", 0, server_host_keys=[key],
+        process_factory=_make_switch_handler(received), line_editor=False,
+    )  # fmt: skip
+    port = srv.sockets[0].getsockname()[1]
+    client = _client(port)
+    try:
+        out = await client.run("show long")
+        assert client.hostname == "AH-Switch"
+        assert client.prompt_mode == "#"
+        assert "enable-password-ok" in received
+        assert received.index("terminal length 0") > received.index("console page 0")
+        assert client.paging_disabled is True
+        assert [x for x in out.split("\n") if x.strip()] == [f"line {i}" for i in range(1, 41)]
+        bad = await client.run("show interface mgt0")
+        from custom_components.aerohive_local.parsers import find_cli_error, is_unsupported_command
+
+        assert is_unsupported_command(bad)
+        assert find_cli_error(bad) == "An invalid interface has been used for this command."
+    finally:
+        await client.close()
+        srv.close()
+        await srv.wait_closed()

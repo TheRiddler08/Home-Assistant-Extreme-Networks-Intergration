@@ -212,6 +212,11 @@ minutes, and right after any change made from Home Assistant.
 
 ## Switches (SR2208P and other SR-series)
 
+> **Note:** the SR2208P runs a FASTPATH-style switch CLI (prompt `(AH-Switch) #`), not HiveOS.
+> The integration can log in to it: it handles the `(name) #` / `(name) >` prompt,
+> `enable`, `terminal length 0` and `--More-- or (q)uit`. The switch-specific commands
+> below were written for HiveOS syntax and are being adapted from real output.
+
 Switches are detected automatically: the platform starts with `SR`, or ports are named
 `eth1/1`. They get:
 

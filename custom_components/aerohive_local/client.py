@@ -10,18 +10,20 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 import logging
+import re
 import time
 from typing import Any
 
 import asyncssh
 
-from .commands import DISABLE_PAGING, redact
+from .commands import DISABLE_PAGING_COMMANDS, redact
 from .parsers import (
     CONFIRM_TAIL_RE,
     MORE_TAIL_RE,
     PROMPT_RE,
     clean_output,
     find_cli_error,
+    prompt_host,
     strip_echo_and_prompt,
 )
 
@@ -118,6 +120,7 @@ class AerohiveClient:
         self._proc: asyncssh.SSHClientProcess | None = None
         self._last_command = 0.0
         self.hostname: str | None = None
+        self.prompt_mode: str | None = None
         self.paging_disabled = False
 
     @property
@@ -183,19 +186,39 @@ class AerohiveClient:
             raise
         match = PROMPT_RE.search(clean_output(banner).rstrip(" \t"))
         if match:
-            self.hostname = match.group("host")
-        _LOGGER.debug("Connected to %s (prompt %s#)", self._host, self.hostname)
+            self.hostname = prompt_host(match)
+            self.prompt_mode = match.group("mode")
+        _LOGGER.debug("Connected to %s (prompt %s%s)", self._host, self.hostname, self.prompt_mode)
+
+        # Switch CLIs may start in user mode ("(AH-Switch) >"): enter privileged mode.
+        if self.prompt_mode == ">":
+            await self._enable()
 
         # Try to disable paging; fall back to answering --More-- prompts.
-        try:
-            out = await self._exec(DISABLE_PAGING, self._command_timeout)
-            self.paging_disabled = find_cli_error(out) is None
-        except AerohiveError:
-            if not self.connected:
-                raise
-            self.paging_disabled = False
+        self.paging_disabled = False
+        for command in DISABLE_PAGING_COMMANDS:
+            try:
+                out = await self._exec(command, self._command_timeout)
+            except AerohiveError:
+                if not self.connected:
+                    raise
+                continue
+            if find_cli_error(out) is None and "^" not in out:
+                self.paging_disabled = True
+                break
         if not self.paging_disabled:
             _LOGGER.debug("%s: could not disable paging, will answer --More--", self._host)
+
+    async def _enable(self) -> None:
+        """Send 'enable' (answering a password prompt with the login password)."""
+        _LOGGER.debug("%s: entering privileged mode", self._host)
+        self._write("enable\n")
+        raw = await self._read_until_prompt(self._command_timeout, password=self._password or "")
+        match = PROMPT_RE.search(clean_output(raw).rstrip(" \t"))
+        if match:
+            self.prompt_mode = match.group("mode")
+        if self.prompt_mode != "#":
+            _LOGGER.warning("%s: could not enter privileged (enable) mode; some commands may fail", self._host)
 
     async def _close(self) -> None:
         proc, conn = self._proc, self._conn
@@ -239,9 +262,11 @@ class AerohiveClient:
         match = PROMPT_RE.search(tail)
         if not match:
             return False
-        return self.hostname is None or match.group("host") == self.hostname
+        return self.hostname is None or prompt_host(match) == self.hostname
 
-    async def _read_until_prompt(self, timeout: float, *, confirm: bool = False) -> str:
+    async def _read_until_prompt(
+        self, timeout: float, *, confirm: bool = False, password: str | None = None
+    ) -> str:
         """Read until the CLI prompt, answering pager and y/n prompts."""
         assert self._proc is not None
         loop = asyncio.get_running_loop()
@@ -268,6 +293,11 @@ class AerohiveClient:
             if more:
                 buf = buf[: more.start()]
                 self._write(" ")
+                continue
+
+            if password is not None and re.search(r"password:\s*$", buf[confirm_from:], re.IGNORECASE):
+                self._write(password + "\n")
+                confirm_from = len(buf)
                 continue
 
             if confirm:

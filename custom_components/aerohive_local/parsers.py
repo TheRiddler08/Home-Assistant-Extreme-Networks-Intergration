@@ -19,15 +19,28 @@ from typing import Any
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][A-Za-z0-9]")
 # "--More--", "-- More --", " --More-- " optionally followed by the carriage
 # return / space sequence many CLIs use to wipe the pager marker.
-MORE_RE = re.compile(r"[ \t]*-+[ \t]*More[ \t]*-+[ \t]*(?:\r[ \t]*)*", re.IGNORECASE)
-MORE_TAIL_RE = re.compile(r"-+[ \t]*More[ \t]*-+[ \t]*$", re.IGNORECASE)
+# Also matches the FASTPATH-style "--More-- or (q)uit" used by SR-series switches.
+MORE_RE = re.compile(
+    r"[ \t]*-+[ \t]*More[ \t]*-+(?:[ \t]*or[ \t]*\(q\)uit)?[ \t]*(?:\r[ \t]*)*", re.IGNORECASE
+)
+MORE_TAIL_RE = re.compile(r"-+[ \t]*More[ \t]*-+(?:[ \t]*or[ \t]*\(q\)uit)?[ \t]*$", re.IGNORECASE)
 CONFIRM_TAIL_RE = re.compile(
     r"(\((?:y/n|yes/no)\)|\[(?:y/n|yes/no)\]|<(?:y/n|yes/no)>|\b(?:y/n|yes/no)\b)"
     r"[^\n]{0,20}[:?]?\s*$",
     re.IGNORECASE,
 )
-# Generic HiveOS prompt: "AH-7c0680#". Anchored at the end of the buffer.
-PROMPT_RE = re.compile(r"(?:^|\n)(?P<host>[A-Za-z0-9][A-Za-z0-9_\-\.]*)#[ \t]*$")
+# CLI prompt, anchored at the end of the buffer:
+#   HiveOS / IQ Engine APs and routers: "AH-7c0680#"
+#   SR-series switches (FASTPATH-style): "(AH-Switch) #" or "(AH-Switch) >"
+PROMPT_RE = re.compile(
+    r"(?:^|\n)[ \t]*(?:\((?P<phost>[^()\n]{1,64})\)[ \t]*|(?P<host>[A-Za-z0-9][A-Za-z0-9_\-\.]*))"
+    r"(?P<mode>[#>])[ \t]*$"
+)
+
+
+def prompt_host(match: re.Match[str]) -> str:
+    """Hostname from a PROMPT_RE match (either prompt style)."""
+    return match.group("host") or match.group("phost")
 
 NONE_VALUES = {"", "-", "--", "n/a", "na", "none"}
 
@@ -96,7 +109,8 @@ def find_cli_error(output: str) -> str | None:
 
 
 _UNSUPPORTED_RE = re.compile(
-    r"unknown keyword|invalid input|incomplete command|ambiguous command|^\s*ERROR\b|^\s*%",
+    r"unknown keyword|invalid input|invalid interface|invalid command|incomplete command|"
+    r"ambiguous command|^\s*ERROR\b|^\s*%",
     re.IGNORECASE,
 )
 

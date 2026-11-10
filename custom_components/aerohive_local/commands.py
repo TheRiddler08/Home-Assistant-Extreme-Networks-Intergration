@@ -21,6 +21,8 @@ _SECRET_ARG_RE = re.compile(r"(?i)\b(ascii-key|hex-key|password|passphrase)\s+(\
 SAVE_CONFIG = "save config"
 REBOOT = "reboot"
 DISABLE_PAGING = "console page 0"
+# Tried in order until one is accepted: HiveOS, then FASTPATH-style switch CLI.
+DISABLE_PAGING_COMMANDS = ("console page 0", "terminal length 0")
 
 # Assumption (unverified): HiveOS / IQ Engine de-authenticates a client with
 # "clear auth station mac <mac>". The fallback form is tried if the device
