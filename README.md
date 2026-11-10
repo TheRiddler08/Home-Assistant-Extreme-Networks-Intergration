@@ -464,21 +464,13 @@ is the exact wording of the `write memory` confirmation (any y/n prompt is answe
 
 ## Releases
 
-HACS installs GitHub releases. To publish one:
+HACS installs GitHub releases, so Home Assistant shows updates in **Settings → Updates**.
 
-1. Bump `version` in `custom_components/aerohive_local/manifest.json` (e.g. `0.6.1`) and commit.
-2. Tag the commit and push the tag:
-
-   ```bash
-   git tag v0.6.1
-   ```
-   ```bash
-   git push origin v0.6.1
-   ```
-
-The **Release** workflow checks that the tag matches the manifest version and publishes the
-release (with auto-generated notes). Home Assistant then shows the update in
-**Settings → Updates**.
+To publish a release, bump `version` in `custom_components/aerohive_local/manifest.json`
+(e.g. `0.6.1`) and push to the default branch. The **Release** workflow publishes `v0.6.1`
+with auto-generated notes, if that release doesn't exist yet. Pushing a matching tag
+(`git tag v0.6.1`, then `git push origin v0.6.1`) or running the workflow by hand
+(Actions → Release → Run workflow) works too.
 
 ## Development
 
