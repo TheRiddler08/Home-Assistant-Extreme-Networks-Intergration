@@ -37,10 +37,9 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .const import CONF_ENTRY_TYPE, DOMAIN, ENTRY_TYPE_OVERVIEW, MANUFACTURER
-from .coordinator import AerohiveCoordinator, AerohiveData, SsidDraft
+from .coordinator import AerohiveCoordinator, AerohiveData
 from .entity import async_add_dynamic_entities
 from .parsers import radio_band
-from .ssid_manager import manager_buttons, manager_selects, manager_texts
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -125,7 +124,6 @@ class OverviewCoordinator(DataUpdateCoordinator[OverviewData]):
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         super().__init__(hass, _LOGGER, config_entry=entry, name=f"{DOMAIN} overview", update_interval=OVERVIEW_INTERVAL)
-        self.ssid_draft = SsidDraft()
         self.expect_removal = False
         self._polled = False
 
@@ -162,9 +160,6 @@ class OverviewCoordinator(DataUpdateCoordinator[OverviewData]):
             entry_type=DeviceEntryType.SERVICE,
         )
 
-    def ssid_names(self) -> list[str]:
-        return self.data.ssid_names() if self.data else []
-
     async def _fan_out(self, targets: list[DeviceView], action: str, call: Callable[[AerohiveCoordinator], Any]) -> None:
         """Run an action on several devices; report every failure at the end."""
         if not targets:
@@ -179,11 +174,35 @@ class OverviewCoordinator(DataUpdateCoordinator[OverviewData]):
         if failures:
             raise HomeAssistantError(f"Could not {action} on: " + "; ".join(failures))
 
-    async def async_create_ssid(self, ssid: str, password: str | None, radios: list[str] | None) -> None:
-        targets = [ap for ap in self.data.aps if ssid not in ap.data.ssids]
+    async def async_create_ssid(
+        self,
+        ssid: str,
+        password: str | None,
+        radios: list[str] | None,
+        hidden: bool = False,
+        access_points: list[str] | None = None,
+    ) -> None:
+        """Create the SSID on the chosen APs (default: every online AP that lacks it)."""
+        targets = [
+            ap for ap in self.data.aps
+            if ssid not in ap.data.ssids and (access_points is None or ap.title in access_points)
+        ]  # fmt: skip
         if not targets:
-            raise HomeAssistantError(f"SSID {ssid} already exists on every online access point")
-        await self._fan_out(targets, f"create SSID {ssid}", lambda c: c.async_create_ssid(ssid, password, radios))
+            raise HomeAssistantError(f"SSID {ssid} already exists on the selected access points")
+        await self._fan_out(
+            targets, f"create SSID {ssid}", lambda c: c.async_create_ssid(ssid, password, radios, hidden)
+        )
+
+    async def async_update_ssid(
+        self, ssid: str, *, password: str | None = None, enabled: bool | None = None, hidden: bool | None = None
+    ) -> None:
+        """Change an SSID on every online AP that has it (enabled: all radios on/off)."""
+
+        async def one(c: AerohiveCoordinator) -> None:
+            radios = None if enabled is None else (c.data.radio_names() if enabled else [])
+            await c.async_update_ssid(ssid, password=password, radios=radios, hidden=hidden)
+
+        await self._fan_out(self.data.aps_with_ssid(ssid), f"update SSID {ssid}", one)
 
     async def async_delete_ssid(self, ssid: str) -> None:
         self.expect_removal = True
@@ -450,8 +469,6 @@ def _coordinator(entry: ConfigEntry) -> OverviewCoordinator:
 
 async def async_setup_platform_entities(platform: str, hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     coordinator = _coordinator(entry)
-    info = coordinator.device_info
-    base = OVERVIEW_UNIQUE_ID
     if platform == "sensor":
 
         def sensors(o: OverviewData) -> Iterable[tuple[str, Callable[[], Entity]]]:
@@ -469,11 +486,6 @@ async def async_setup_platform_entities(platform: str, hass: HomeAssistant, entr
             (f"ssid_all_{s}", lambda s=s: OverviewSsidSwitch(coordinator, s)) for s in o.known_ssid_names()
         ))  # fmt: skip
     elif platform == "text":
-        add(manager_texts(coordinator, base, info, " (all APs)"))
         _dynamic(coordinator, entry, add, lambda o: (
             (f"psk_{s}", lambda s=s: OverviewSsidKeyText(coordinator, s)) for s in o.known_ssid_names()
         ))  # fmt: skip
-    elif platform == "button":
-        add(manager_buttons(coordinator, base, info, " (all APs)"))
-    elif platform == "select":
-        add(manager_selects(coordinator, base, info, " (all APs)"))

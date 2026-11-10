@@ -13,6 +13,7 @@ from homeassistant.components import network
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
@@ -20,13 +21,14 @@ from homeassistant.helpers.selector import (
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
+    SelectSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
 )
 from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
 
-from . import async_create_client
+from . import async_create_client, commands
 from .client import AerohiveAuthError, AerohiveError
 from .commands import DIALECT_SWITCH
 from .const import (
@@ -48,6 +50,7 @@ from .const import (
     MIN_SCAN_INTERVAL,
 )
 from .discovery import ScanResult, async_scan, narrow_network, scan_targets
+from .entity import radio_label
 from .parsers import normalize_mac, parse_show_interface, parse_show_version
 
 _LOGGER = logging.getLogger(__name__)
@@ -100,7 +103,7 @@ async def _probe(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
 
 class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
-    MINOR_VERSION = 2
+    MINOR_VERSION = 3
 
     async def _validate(self, data: dict[str, Any], errors: dict[str, str]) -> dict[str, Any] | None:
         try:
@@ -284,11 +287,6 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured()
         return self.async_create_entry(title="Aerohive Network", data={CONF_ENTRY_TYPE: ENTRY_TYPE_OVERVIEW})
 
-    @classmethod
-    @callback
-    def async_supports_options_flow(cls, config_entry) -> bool:  # type: ignore[no-untyped-def]
-        return config_entry.data.get(CONF_ENTRY_TYPE) != ENTRY_TYPE_OVERVIEW
-
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
         return await self.async_step_reauth_confirm()
 
@@ -318,10 +316,264 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
         return AerohiveOptionsFlow()
 
 
+WIFI_ADD = "__add__"
+WIFI_DONE = "__done__"
+_PASSWORD_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
+
+
 class AerohiveOptionsFlow(OptionsFlow):
-    """Scan interval and opt-in client tracking."""
+    """Settings, plus the Wi-Fi manager (list / add / edit / delete SSIDs)."""
+
+    def __init__(self) -> None:
+        self._ssid: str | None = None
+        self._message = ""
+
+    # ---------------------------------------------------------------- #
+    # Helpers
+    # ---------------------------------------------------------------- #
+
+    @property
+    def _is_overview(self) -> bool:
+        return self.config_entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_OVERVIEW
+
+    @property
+    def _target(self) -> Any:
+        return getattr(self.config_entry, "runtime_data", None)
+
+    def _ssid_names(self) -> list[str]:
+        target = self._target
+        if target is None or target.data is None:
+            return []
+        return target.data.ssid_names() if self._is_overview else sorted(target.data.ssids)
+
+    def _ssid_label(self, ssid: str) -> str:
+        data = self._target.data
+        if self._is_overview:
+            aps = data.aps_with_ssid(ssid)
+            on = [ap for ap in aps if ap.data.ssid_broadcasting(ssid)]
+            clients = sum(ap.data.clients_on_ssid(ssid) for ap in aps)
+            hidden = any(ap.data.ssid_hidden(ssid) for ap in aps)
+            state = f"broadcasting on {len(on)} of {len(aps)} APs" if on else f"off on all {len(aps)} APs"
+        else:
+            radios = [r for r in data.radio_names() if data.ssid_on_radio(ssid, r)]
+            bands = [radio_label(data, r) for r in radios]
+            clients = data.clients_on_ssid(ssid)
+            hidden = bool(data.ssid_hidden(ssid))
+            state = f"on {', '.join(bands)}" if bands else "not broadcasting"
+        parts = [state, f"{clients} client{'s' if clients != 1 else ''}"]
+        if hidden:
+            parts.append("hidden")
+        return f"{ssid} — {' · '.join(parts)}"
+
+    def _radio_options(self) -> list[SelectOptionDict]:
+        data = self._target.data
+        return [SelectOptionDict(value=r, label=radio_label(data, r)) for r in data.radio_names()]
+
+    def _device_error(self, err: Exception, errors: dict[str, str], placeholders: dict[str, str]) -> None:
+        errors["base"] = "device_error"
+        placeholders["error"] = str(err)
+
+    # ---------------------------------------------------------------- #
+    # Entry point
+    # ---------------------------------------------------------------- #
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if self._is_overview:
+            return await self.async_step_wifi()
+        target = self._target
+        if target is not None and target.data is not None and target.data.radio_names():
+            return self.async_show_menu(step_id="init", menu_options=["wifi", "settings"])
+        return await self.async_step_settings()
+
+    # ---------------------------------------------------------------- #
+    # Wi-Fi manager
+    # ---------------------------------------------------------------- #
+
+    async def async_step_wifi(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        target = self._target
+        if target is None or target.data is None:
+            return self.async_abort(reason="device_unavailable")
+        if user_input is not None:
+            choice = user_input["network"]
+            if choice == WIFI_DONE:
+                return self.async_create_entry(data=dict(self.config_entry.options))
+            self._message = ""
+            if choice == WIFI_ADD:
+                return await self.async_step_wifi_add()
+            self._ssid = choice
+            return await self.async_step_wifi_edit()
+
+        options = [SelectOptionDict(value=s, label=self._ssid_label(s)) for s in self._ssid_names()]
+        options.append(SelectOptionDict(value=WIFI_ADD, label="➕ Add a new Wi-Fi network"))
+        options.append(SelectOptionDict(value=WIFI_DONE, label="✔ Done"))
+        schema = vol.Schema(
+            {
+                vol.Required("network"): SelectSelector(
+                    SelectSelectorConfig(options=options, mode=SelectSelectorMode.LIST)
+                )
+            }
+        )
+        return self.async_show_form(
+            step_id="wifi",
+            data_schema=schema,
+            description_placeholders={"message": self._message, "count": str(len(self._ssid_names()))},
+        )
+
+    async def async_step_wifi_edit(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        target, ssid = self._target, self._ssid
+        if target is None or target.data is None or ssid not in self._ssid_names():
+            self._message = f"{ssid} no longer exists."
+            return await self.async_step_wifi()
+        data = target.data
+        errors: dict[str, str] = {}
+        placeholders: dict[str, str] = {"ssid": ssid, "message": ""}
+
+        if user_input is not None:
+            if user_input.get("delete"):
+                return await self.async_step_wifi_delete()
+            password = user_input.get(CONF_PASSWORD) or None
+            if password:
+                try:
+                    commands.validate_psk(password)
+                except commands.InvalidArgument:
+                    errors[CONF_PASSWORD] = "invalid_password"
+            if not errors:
+                try:
+                    if self._is_overview:
+                        await target.async_update_ssid(
+                            ssid, password=password, enabled=user_input.get("enabled"), hidden=user_input.get("hidden")
+                        )
+                        changed = True
+                    else:
+                        max_clients = user_input.get("max_clients")
+                        changed = await target.async_update_ssid(
+                            ssid,
+                            password=password,
+                            radios=list(user_input.get("radios", [])),
+                            hidden=user_input.get("hidden"),
+                            max_clients=int(max_clients) if max_clients is not None else None,
+                        )
+                except HomeAssistantError as err:
+                    self._device_error(err, errors, placeholders)
+                else:
+                    self._message = f"✔ Saved changes to {ssid}." if changed else f"No changes made to {ssid}."
+                    return await self.async_step_wifi()
+
+        fields: dict[Any, Any] = {vol.Optional(CONF_PASSWORD): _PASSWORD_SELECTOR}
+        if self._is_overview:
+            aps = data.aps_with_ssid(ssid)
+            fields[vol.Required("enabled", default=all(ap.data.ssid_enabled(ssid) for ap in aps))] = bool
+            if any(ap.data.config is not None for ap in aps):
+                fields[vol.Required("hidden", default=any(ap.data.ssid_hidden(ssid) for ap in aps))] = bool
+            placeholders["message"] = "Access points with this network: " + ", ".join(ap.title for ap in aps)
+        else:
+            bound = [r for r in data.radio_names() if data.ssid_on_radio(ssid, r)]
+            fields[vol.Optional("radios", default=bound)] = SelectSelector(
+                SelectSelectorConfig(options=self._radio_options(), multiple=True, mode=SelectSelectorMode.LIST)
+            )
+            if data.config is not None:
+                fields[vol.Required("hidden", default=bool(data.ssid_hidden(ssid)))] = bool
+            current_max = data.ssids[ssid].max_client
+            if current_max is not None:
+                fields[vol.Required("max_clients", default=current_max)] = NumberSelector(
+                    NumberSelectorConfig(min=1, max=255, step=1, mode=NumberSelectorMode.BOX)
+                )
+            security = data.config.ssid_security(ssid) if data.config else None
+            if security:
+                placeholders["message"] = f"Security: {security}"
+        fields[vol.Optional("delete", default=False)] = bool
+        return self.async_show_form(
+            step_id="wifi_edit", data_schema=vol.Schema(fields), errors=errors, description_placeholders=placeholders
+        )
+
+    async def async_step_wifi_delete(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        ssid = self._ssid
+        errors: dict[str, str] = {}
+        placeholders: dict[str, str] = {"ssid": ssid or ""}
+        if user_input is not None:
+            if not user_input.get("confirm"):
+                return await self.async_step_wifi_edit()
+            try:
+                await self._target.async_delete_ssid(ssid)
+            except HomeAssistantError as err:
+                self._device_error(err, errors, placeholders)
+            else:
+                self._message = f"✔ Deleted {ssid}."
+                self._ssid = None
+                return await self.async_step_wifi()
+        return self.async_show_form(
+            step_id="wifi_delete",
+            data_schema=vol.Schema({vol.Required("confirm", default=False): bool}),
+            errors=errors,
+            description_placeholders=placeholders,
+        )
+
+    async def async_step_wifi_add(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        target = self._target
+        if target is None or target.data is None:
+            return self.async_abort(reason="device_unavailable")
+        data = target.data
+        errors: dict[str, str] = {}
+        placeholders: dict[str, str] = {"message": ""}
+        if user_input is not None:
+            name = (user_input.get("name") or "").strip()
+            password = user_input.get(CONF_PASSWORD) or None
+            try:
+                commands.validate_ssid_name(name)
+            except commands.InvalidArgument:
+                errors["name"] = "invalid_ssid_name"
+            if name in self._ssid_names():
+                errors["name"] = "ssid_exists"
+            if password:
+                try:
+                    commands.validate_psk(password)
+                except commands.InvalidArgument:
+                    errors[CONF_PASSWORD] = "invalid_password"
+            if not errors:
+                try:
+                    if self._is_overview:
+                        await target.async_create_ssid(
+                            name, password, None, bool(user_input.get("hidden")),
+                            access_points=list(user_input.get("access_points") or []) or None,
+                        )  # fmt: skip
+                    else:
+                        await target.async_create_ssid(
+                            name, password, list(user_input.get("radios", [])), bool(user_input.get("hidden"))
+                        )
+                except HomeAssistantError as err:
+                    self._device_error(err, errors, placeholders)
+                else:
+                    self._message = f"✔ Created {name}" + ("" if password else " (open network, no password)") + "."
+                    return await self.async_step_wifi()
+
+        defaults = user_input or {}
+        fields: dict[Any, Any] = {
+            vol.Required("name", default=defaults.get("name", "")): str,
+            vol.Optional(CONF_PASSWORD): _PASSWORD_SELECTOR,
+        }
+        if self._is_overview:
+            titles = [ap.title for ap in data.aps]
+            fields[vol.Optional("access_points", default=defaults.get("access_points", titles))] = SelectSelector(
+                SelectSelectorConfig(
+                    options=[SelectOptionDict(value=t, label=t) for t in titles], multiple=True,
+                    mode=SelectSelectorMode.LIST,
+                )
+            )  # fmt: skip
+        else:
+            fields[vol.Optional("radios", default=defaults.get("radios", data.radio_names()))] = SelectSelector(
+                SelectSelectorConfig(options=self._radio_options(), multiple=True, mode=SelectSelectorMode.LIST)
+            )
+        fields[vol.Optional("hidden", default=defaults.get("hidden", False))] = bool
+        return self.async_show_form(
+            step_id="wifi_add", data_schema=vol.Schema(fields), errors=errors, description_placeholders=placeholders
+        )
+
+    # ---------------------------------------------------------------- #
+    # Settings (scan interval, tracked clients, entity options)
+    # ---------------------------------------------------------------- #
+
+    async def async_step_settings(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Scan interval, client tracking and entity options."""
         errors: dict[str, str] = {}
         current_tracked: list[str] = list(self.config_entry.options.get(CONF_TRACKED_CLIENTS, []))
 
@@ -383,4 +635,4 @@ class AerohiveOptionsFlow(OptionsFlow):
                 ): bool,
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
+        return self.async_show_form(step_id="settings", data_schema=schema, errors=errors)

@@ -13,7 +13,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .coordinator import AerohiveConfigEntry, AerohiveCoordinator, AerohiveData
 from .entity import AerohiveEntity, async_add_dynamic_entities
 from .overview import async_setup_platform_entities, is_overview
-from .ssid_manager import manager_texts
 
 PARALLEL_UPDATES = 1
 
@@ -26,14 +25,9 @@ async def async_setup_entry(
         return
     coordinator = entry.runtime_data
 
-    base = entry.unique_id or entry.entry_id
-
     def factory(data: AerohiveData) -> Iterable[tuple[str, Callable[[], Entity]]]:
         for ssid in data.ssids:
             yield f"psk_{ssid}", lambda ssid=ssid: AerohiveSsidKeyText(coordinator, ssid)
-        if data.radio_names():
-            for entity in manager_texts(coordinator, base, coordinator.device_info):
-                yield entity.unique_id, lambda entity=entity: entity
 
     async_add_dynamic_entities(coordinator, entry, async_add_entities, factory)
 

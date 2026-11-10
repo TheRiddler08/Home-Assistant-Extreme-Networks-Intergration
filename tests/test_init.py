@@ -122,6 +122,14 @@ async def entry(hass: HomeAssistant) -> MockConfigEntry:
     return entry
 
 
+async def _open_settings(hass: HomeAssistant, entry: MockConfigEntry) -> dict[str, Any]:
+    """Open the options dialog and go to 'Integration settings' (skips the menu if any)."""
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    if result["type"] is FlowResultType.MENU:
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "settings"})
+    return result
+
+
 def _client() -> FakeClient:
     return FakeClient.instances[-1]
 
@@ -261,7 +269,7 @@ async def test_throughput(hass: HomeAssistant, entry: MockConfigEntry) -> None:
 
 
 async def test_detailed_stats_off_reduces_commands(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await _open_settings(hass, entry)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_SCAN_INTERVAL: 60, "detailed_stats": False, "raw_sensors": False}
     )
@@ -453,7 +461,7 @@ async def test_run_show_command_service(hass: HomeAssistant, entry: MockConfigEn
 
 
 async def test_options_flow_and_tracker(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await _open_settings(hass, entry)
     assert result["type"] is FlowResultType.FORM
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
@@ -476,7 +484,7 @@ async def test_options_flow_and_tracker(hass: HomeAssistant, entry: MockConfigEn
 
 
 async def test_options_flow_rejects_bad_mac(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await _open_settings(hass, entry)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_SCAN_INTERVAL: 60, CONF_TRACKED_CLIENTS: ["not-a-mac"]}
     )
@@ -510,7 +518,7 @@ async def test_migration_enables_wifi_key_and_port_switches(hass: HomeAssistant)
     )
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 2
+    assert entry.minor_version == 3
     assert registry.async_get(psk.entity_id).disabled_by is None
     assert registry.async_get(raw.entity_id).disabled_by is er.RegistryEntryDisabler.INTEGRATION
     assert registry.async_get(mine.entity_id).disabled_by is er.RegistryEntryDisabler.USER

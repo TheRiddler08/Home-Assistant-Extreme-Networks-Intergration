@@ -194,27 +194,41 @@ out of the recorder, so it doesn't grow your database.
 
 ## Managing Wi-Fi networks (SSIDs)
 
-Everything below runs `save config` afterwards, so changes survive a reboot. You can do it
-all from the device page or a dashboard; you don't need the Actions page.
+### The Wi-Fi manager
 
-**See existing SSIDs:** each AP's `SSIDs broadcasting` sensor (attributes `configured`,
-`broadcasting`, `not_broadcasting`), and the overview's `SSIDs` sensor (one row per SSID: which
-APs have it, where it's broadcasting, clients, hidden, security).
+**Settings → Devices & services → Aerohive / Extreme Networks → (your AP) → Configure →
+Manage Wi-Fi networks.** Or open it on the **Aerohive Network** entry to manage all APs at once.
+
+1. **List:** every network with its status, e.g.
+   `AP460C — on wifi0 (2.4 GHz), wifi1 (5 GHz) · 3 clients · hidden`.
+2. **Pick a network** to open one form with:
+   - **New password**: leave empty to keep the current one
+   - **Broadcast on**: tick the radios. Untick all to stop broadcasting without deleting.
+     On the overview, this is **Broadcast on all access points**.
+   - **Hide network name**
+   - **Max clients**
+   - **Delete this network** (asks for confirmation)
+
+   Everything in the form is applied together with **one** `save config`. If the device
+   rejects something, its message is shown in the form.
+3. **➕ Add a new Wi-Fi network:** name, password (empty = open network), radios (or, on
+   the overview, which access points), hidden.
+4. **✔ Done** closes the dialog.
+
+The current password can't be shown, because the device stores keys encrypted. Typed
+passwords are never kept in Home Assistant (no entity state, recorder or log).
+
+### Entities (dashboards and automations)
 
 | What | On one AP | On all APs (Aerohive Network device) |
 | --- | --- | --- |
-| Change the Wi-Fi password | text `<SSID> Wi-Fi key`: type the new key, press Enter | text `<SSID> Wi-Fi key (all APs)` |
+| Change the Wi-Fi password | text `<SSID> Wi-Fi key` | text `<SSID> Wi-Fi key (all APs)` |
 | Turn an SSID on/off | switches `<SSID> on wifiN (band)` / `<SSID> on all radios` | switch `<SSID> on all APs` |
-| Hide / unhide the SSID name | switch `<SSID> hidden` | – |
-| Create a new SSID | type into `New SSID name` + `New SSID password` (leave empty for open), press `Create SSID` | the same three entities with "(all APs)" |
-| Delete an SSID | pick it in `SSID to delete`, press `Delete selected SSID` | the same with "(all APs)" |
+| Hide / unhide | switch `<SSID> hidden` | – |
 | Max clients | number `<SSID> max clients` | – |
-| Security type | sensor `<SSID> security` | in the `SSIDs` sensor attributes |
+| Status | `SSIDs broadcasting`, `<SSID> broadcasting`, `<SSID> clients`, `<SSID> security` | `SSIDs` (table attribute), `<SSID> clients (all APs)` |
 
-Passwords are write-only: the device stores keys encrypted, and the integration never keeps a
-typed key in an entity's state, the recorder or the logs. That's why the password boxes always
-look empty. The actions `create_ssid`, `delete_ssid` and `set_ssid_password` do the same for
-automations.
+The actions `create_ssid`, `delete_ssid` and `set_ssid_password` do the same for automations.
 
 **Deleted SSIDs disappear:** when an SSID is gone from the AP, its entities (switches, Wi-Fi
 key, max clients, sensors, overview controls) are removed from Home Assistant, rather than
@@ -242,7 +256,7 @@ Created automatically once you add a device. It combines every AP and switch:
 | SSIDs, SSIDs broadcasting | attribute `ssids` (see above) |
 | Wireless RX / TX / total throughput, Wired RX / TX throughput | sums over all APs / switches |
 | Wired clients, Switch ports up, PoE power used / budget | from all switches |
-| SSID controls (all APs) | see the table above |
+| SSID controls (all APs) | see the table above; the Wi-Fi manager is under this entry's **Configure** |
 
 It sends no commands of its own. It aggregates what the devices already polled every 15 s,
 and fans control actions out to each AP (a failure on one AP is reported, the others still

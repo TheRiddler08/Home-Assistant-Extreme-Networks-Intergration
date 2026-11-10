@@ -87,7 +87,14 @@
   "options": {
     "step": {
       "init": {
-        "title": "Aerohive options",
+        "title": "Configure",
+        "menu_options": {
+          "wifi": "Manage Wi-Fi networks",
+          "settings": "Integration settings"
+        }
+      },
+      "settings": {
+        "title": "Integration settings",
         "data": {
           "scan_interval": "Scan interval",
           "tracked_clients": "Clients to track",
@@ -101,10 +108,62 @@
           "raw_sensors": "One sensor (disabled by default) for every other field the CLI reports, so you can enable anything you need.",
           "enable_all_entities": "Turn on every entity, including the diagnostic ones that are disabled by default (counters, raw fields, port switches)."
         }
+      },
+      "wifi": {
+        "title": "Wi-Fi networks",
+        "description": "{message}\n\nPick a network to change its password, where it broadcasts, or to delete it. Or add a new one.",
+        "data": {
+          "network": "Network"
+        }
+      },
+      "wifi_edit": {
+        "title": "Edit {ssid}",
+        "description": "{message}\n\nLeave the password empty to keep the current one. Changes are applied together and saved on the device.",
+        "data": {
+          "password": "New password (optional)",
+          "radios": "Broadcast on",
+          "hidden": "Hide network name",
+          "max_clients": "Max clients",
+          "enabled": "Broadcast on all access points",
+          "delete": "Delete this network"
+        },
+        "data_description": {
+          "password": "8-63 characters. The current password can't be shown: the device stores it encrypted.",
+          "radios": "Untick every radio to stop broadcasting without deleting the network."
+        }
+      },
+      "wifi_add": {
+        "title": "Add a Wi-Fi network",
+        "description": "{message}",
+        "data": {
+          "name": "Network name (SSID)",
+          "password": "Password",
+          "radios": "Broadcast on",
+          "access_points": "Access points",
+          "hidden": "Hide network name"
+        },
+        "data_description": {
+          "password": "WPA2-PSK, 8-63 characters. Leave empty for an open network.",
+          "access_points": "Create it on these access points."
+        }
+      },
+      "wifi_delete": {
+        "title": "Delete {ssid}?",
+        "description": "This removes the network from the device and saves the configuration. Clients connected to it will be disconnected.",
+        "data": {
+          "confirm": "Yes, delete {ssid}"
+        }
       }
     },
     "error": {
-      "invalid_mac": "One of the entries is not a valid MAC address."
+      "invalid_mac": "One of the entries is not a valid MAC address.",
+      "device_error": "The device rejected the change: {error}",
+      "invalid_password": "The password must be 8-63 printable characters, without double quotes.",
+      "invalid_ssid_name": "The name must be 1-32 printable characters, without double quotes.",
+      "ssid_exists": "A network with this name already exists."
+    },
+    "abort": {
+      "device_unavailable": "The device isn't reachable right now. Try again in a minute."
     }
   },
   "entity": {

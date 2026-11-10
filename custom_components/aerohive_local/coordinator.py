@@ -86,19 +86,6 @@ POE_MAX_PORTS = 24  # per-port PoE probing stops at this port number
 
 
 @dataclass
-class SsidDraft:
-    """Values typed into the 'new SSID' / 'SSID to delete' entities (in memory only)."""
-
-    name: str = ""
-    password: str = ""
-    delete: str | None = None
-
-    def clear(self) -> None:
-        self.name = ""
-        self.password = ""
-
-
-@dataclass
 class Throughput:
     """Traffic rate of one interface, derived from byte counters (kbit/s)."""
 
@@ -316,7 +303,6 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._hardware: HardwareInfo | None = None
         self._mgt: InterfaceDetail | None = None
         self._boot_time: datetime | None = None
-        self.ssid_draft = SsidDraft()
         # Set by a delete made from Home Assistant: remove stale entities on the next poll.
         self.expect_removal = False
         self._polled = False
@@ -730,19 +716,57 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
     async def async_set_ssid_hidden(self, ssid: str, hidden: bool) -> None:
         await self._apply([self._validated(commands.ssid_hide, ssid, hidden)])
 
-    async def async_create_ssid(self, ssid: str, password: str | None, radios: list[str] | None) -> None:
+    async def async_create_ssid(
+        self, ssid: str, password: str | None, radios: list[str] | None, hidden: bool = False
+    ) -> None:
+        """Create an SSID. radios=None: all active radios; []: create without broadcasting."""
         if ssid in self.data.ssids:
             raise HomeAssistantError(f"SSID {ssid} already exists")
         available = self.data.radio_names()
         if not available:
             raise HomeAssistantError(f"{self.client.host} has no Wi-Fi radios")
-        targets = radios or available
+        targets = available if radios is None else radios
         unknown = [r for r in targets if r not in available]
         if unknown:
             raise HomeAssistantError(f"Unknown radio(s) {', '.join(unknown)}; available: {', '.join(available)}")
         cmds = self._validated(commands.create_ssid, ssid, targets, password or None)
-        _LOGGER.info("%s: creating SSID %s on %s", self.client.host, ssid, ", ".join(targets))
+        if hidden:
+            cmds.append(self._validated(commands.ssid_hide, ssid, True))
+        _LOGGER.info("%s: creating SSID %s on %s", self.client.host, ssid, ", ".join(targets) or "no radio")
         await self._apply(cmds, secret=password or None)
+
+    async def async_update_ssid(
+        self,
+        ssid: str,
+        *,
+        password: str | None = None,
+        radios: list[str] | None = None,
+        hidden: bool | None = None,
+        max_clients: int | None = None,
+    ) -> bool:
+        """Apply several changes to one SSID with a single save. Returns False if nothing changed."""
+        data = self.data
+        if ssid not in data.ssids:
+            raise HomeAssistantError(f"SSID {ssid} does not exist")
+        cmds: list[str] = []
+        if radios is not None:
+            for radio in data.radio_names():
+                want, have = radio in radios, data.ssid_on_radio(ssid, radio)
+                if want != have:
+                    cmds.append(self._validated(commands.ssid_bind, radio, ssid, want))
+        if hidden is not None and hidden != bool(data.ssid_hidden(ssid)):
+            cmds.append(self._validated(commands.ssid_hide, ssid, hidden))
+        if max_clients is not None and max_clients != data.ssids[ssid].max_client:
+            cmds.append(self._validated(commands.ssid_max_client, ssid, int(max_clients)))
+        if password:
+            self._validated(commands.validate_psk, password)
+            obj = await self.async_get_security_object(ssid)
+            cmds.append(self._validated(commands.ssid_psk, obj, password))
+        if not cmds:
+            return False
+        _LOGGER.info("%s: updating SSID %s (%d change(s))", self.client.host, ssid, len(cmds))
+        await self._apply(cmds, secret=password or None)
+        return True
 
     async def async_delete_ssid(self, ssid: str) -> None:
         if ssid not in self.data.ssids:

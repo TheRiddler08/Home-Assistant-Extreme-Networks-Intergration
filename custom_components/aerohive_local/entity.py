@@ -15,7 +15,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONTROL_DEBOUNCE_SECONDS
-from .coordinator import AerohiveConfigEntry, AerohiveCoordinator, AerohiveData
+from .coordinator import AerohiveCoordinator, AerohiveData
 
 
 class AerohiveEntity(CoordinatorEntity[AerohiveCoordinator]):

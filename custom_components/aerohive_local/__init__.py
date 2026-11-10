@@ -66,7 +66,6 @@ PLATFORMS: list[Platform] = [
     Platform.BUTTON,
     Platform.DEVICE_TRACKER,
     Platform.NUMBER,
-    Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
     Platform.TEXT,
@@ -210,8 +209,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 OVERVIEW_PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
-    Platform.BUTTON,
-    Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
     Platform.TEXT,
@@ -275,18 +272,30 @@ def _enable_integration_disabled_entities(hass: HomeAssistant, entry: AerohiveCo
 _NOW_ENABLED_PREFIXES = ("psk_", "port_")
 
 
+# Entities of the old on-screen SSID manager (replaced by the Wi-Fi manager in
+# the integration's Configure dialog in 1.3).
+_REMOVED_KEYS = ("new_ssid_name", "new_ssid_password", "create_ssid", "delete_ssid", "ssid_delete_target")
+
+
 async def async_migrate_entry(hass: HomeAssistant, entry: AerohiveConfigEntry) -> bool:
-    """1.1 -> 1.2: enable the Wi-Fi key text and port switches created disabled before."""
+    """1.1 -> 1.2: enable the Wi-Fi key text and port switches created disabled before.
+    1.2 -> 1.3: remove the old SSID manager entities.
+    """
+    registry = er.async_get(hass)
+    base = "overview" if is_overview(entry) else (entry.unique_id or entry.entry_id)
+    entries = er.async_entries_for_config_entry(registry, entry.entry_id)
     if entry.version == 1 and entry.minor_version < 2 and not is_overview(entry):
-        registry = er.async_get(hass)
-        base = entry.unique_id or entry.entry_id
-        for reg_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
+        for reg_entry in entries:
             key = (reg_entry.unique_id or "").removeprefix(f"{base}_")
             if reg_entry.disabled_by is er.RegistryEntryDisabler.INTEGRATION and key.startswith(
                 _NOW_ENABLED_PREFIXES
             ):
                 registry.async_update_entity(reg_entry.entity_id, disabled_by=None)
-        hass.config_entries.async_update_entry(entry, minor_version=2)
+    if entry.version == 1 and entry.minor_version < 3:
+        for reg_entry in entries:
+            if (reg_entry.unique_id or "").removeprefix(f"{base}_") in _REMOVED_KEYS:
+                registry.async_remove(reg_entry.entity_id)
+        hass.config_entries.async_update_entry(entry, minor_version=3)
     return True
 
 

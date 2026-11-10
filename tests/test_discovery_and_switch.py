@@ -29,7 +29,7 @@ from custom_components.aerohive_local.const import (  # noqa: E402
 )
 from custom_components.aerohive_local.discovery import ScanResult  # noqa: E402
 
-from .test_init import MAC, USER_INPUT, FakeClient, _client, _entity_id, entry, fake_client  # noqa: E402, F401
+from .test_init import MAC, USER_INPUT, FakeClient, _client, _entity_id, _open_settings, entry, fake_client  # noqa: E402, F401
 
 CREDS = {k: v for k, v in USER_INPUT.items() if k != CONF_HOST}
 SWITCH_MAC = "e0:1c:41:00:10:00"
@@ -192,7 +192,7 @@ async def test_enable_all_entities_option(hass: HomeAssistant, entry: MockConfig
     registry = er.async_get(hass)
     raw = _entity_id(hass, "sensor", "raw_if_wifi0_mtu")
     assert registry.async_get(raw).disabled_by is er.RegistryEntryDisabler.INTEGRATION
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await _open_settings(hass, entry)
     await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_SCAN_INTERVAL: 60, "enable_all_entities": True}
     )
@@ -440,38 +440,6 @@ def _id(hass: HomeAssistant, platform: str, unique_id: str) -> str:
     return entity_id
 
 
-async def test_ap_create_and_delete_ssid_from_entities(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    client = _client()
-    client.commands.clear()
-    await hass.services.async_call("text", "set_value", {"entity_id": _id(hass, "text", f"{MAC}_new_ssid_name"), "value": "Guest"}, blocking=True)
-    pw = _id(hass, "text", f"{MAC}_new_ssid_password")
-    await hass.services.async_call("text", "set_value", {"entity_id": pw, "value": "guest-pass-1"}, blocking=True)
-    assert hass.states.get(pw).state == "unknown"  # never shown
-    assert hass.states.get(pw).attributes["password_entered"] is True
-    await hass.services.async_call("button", "press", {"entity_id": _id(hass, "button", f"{MAC}_create_ssid")}, blocking=True)
-    assert [c for c in client.commands if not c.startswith("show")][:6] == [
-        "security-object Guest",
-        "security-object Guest security protocol-suite wpa2-aes-psk ascii-key guest-pass-1",
-        "ssid Guest",
-        "ssid Guest security-object Guest",
-        "interface wifi0 ssid Guest",
-        "interface wifi1 ssid Guest",
-    ]
-    # Draft cleared after creating.
-    assert hass.states.get(_id(hass, "text", f"{MAC}_new_ssid_name")).state == ""
-
-    select = _id(hass, "select", f"{MAC}_ssid_delete_target")
-    assert hass.states.get(select).attributes["options"] == ["—", "AP460C"]
-    delete = _id(hass, "button", f"{MAC}_delete_ssid")
-    with pytest.raises(HomeAssistantError, match="Pick the SSID"):
-        await hass.services.async_call("button", "press", {"entity_id": delete}, blocking=True)
-    await hass.services.async_call("select", "select_option", {"entity_id": select, "option": "AP460C"}, blocking=True)
-    client.commands.clear()
-    await hass.services.async_call("button", "press", {"entity_id": delete}, blocking=True)
-    assert "no ssid AP460C" in client.commands
-    assert hass.states.get(select).state == "—"
-
-
 async def test_overview_combines_ap_and_switch(
     hass: HomeAssistant, entry: MockConfigEntry, switch_entry: MockConfigEntry
 ) -> None:
@@ -516,16 +484,6 @@ async def test_overview_combines_ap_and_switch(
     )
     assert "no interface wifi0 ssid AP460C" in ap_client.commands
     assert "no interface wifi1 ssid AP460C" in ap_client.commands
-
-    # Create an SSID on all APs from the overview.
-    await hass.services.async_call(
-        "text", "set_value", {"entity_id": _id(hass, "text", "overview_new_ssid_name"), "value": "Staff"}, blocking=True
-    )
-    ap_client.commands.clear()
-    await hass.services.async_call(
-        "button", "press", {"entity_id": _id(hass, "button", "overview_create_ssid")}, blocking=True
-    )
-    assert "ssid Staff" in ap_client.commands and "security-object Staff" in ap_client.commands
 
     # The switch never received any Wi-Fi command.
     sw_client = next(c for c in FakeClient.instances if c.dialect == "switch")
@@ -637,7 +595,7 @@ async def test_leftovers_from_previous_runs_are_removed(hass: HomeAssistant) -> 
 
 
 async def test_untracked_client_entities_are_removed(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await _open_settings(hass, entry)
     await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_SCAN_INTERVAL: 60, CONF_TRACKED_CLIENTS: ["e8:b1:fc:5a:1b:2c"]}
     )
@@ -645,7 +603,7 @@ async def test_untracked_client_entities_are_removed(hass: HomeAssistant, entry:
     registry = er.async_get(hass)
     assert registry.async_get_entity_id("device_tracker", DOMAIN, f"{MAC}_tracker_e8:b1:fc:5a:1b:2c")
     assert registry.async_get_entity_id("sensor", DOMAIN, f"{MAC}_client_e8:b1:fc:5a:1b:2c_signal")
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await _open_settings(hass, entry)
     await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_SCAN_INTERVAL: 60, CONF_TRACKED_CLIENTS: []}
     )
@@ -671,3 +629,158 @@ async def test_overview_keeps_ssid_entities_while_ap_offline(hass: HomeAssistant
     await overview.runtime_data.async_refresh()
     await hass.async_block_till_done()
     assert hass.states.get(switch_id).state == "on"
+
+
+# --------------------------------------------------------------------------
+# Wi-Fi manager (Configure dialog)
+# --------------------------------------------------------------------------
+
+
+async def _open_wifi(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
+    result = await hass.config_entries.options.async_init(entry_id)
+    if result["type"] is FlowResultType.MENU:
+        assert result["menu_options"] == ["wifi", "settings"]
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "wifi"})
+    assert result["type"] is FlowResultType.FORM and result["step_id"] == "wifi"
+    return result
+
+
+def _network_options(result: dict[str, Any]) -> dict[str, str]:
+    selector = result["data_schema"].schema["network"]
+    return {o["value"]: o["label"] for o in selector.config["options"]}
+
+
+async def test_wifi_manager_lists_and_edits(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    result = await _open_wifi(hass, entry.entry_id)
+    labels = _network_options(result)
+    assert labels["AP460C"] == "AP460C — on wifi0 (2.4 GHz), wifi1 (5 GHz) · 3 clients"
+    assert "__add__" in labels and "__done__" in labels
+
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"network": "AP460C"})
+    assert result["step_id"] == "wifi_edit"
+    assert result["description_placeholders"]["ssid"] == "AP460C"
+
+    client = _client()
+    client.commands.clear()
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"password": "brand-new-key", "radios": ["wifi1"], "hidden": True, "max_clients": 30, "delete": False},
+    )
+    assert result["step_id"] == "wifi"
+    assert "Saved changes to AP460C" in result["description_placeholders"]["message"]
+    config_cmds = [c for c in client.commands if not c.startswith("show")]
+    assert config_cmds == [
+        "no interface wifi0 ssid AP460C",
+        "ssid AP460C hide-ssid",
+        "ssid AP460C max-client 30",
+        "security-object sec-ap460c security protocol-suite wpa2-aes-psk ascii-key brand-new-key",
+        "save config",  # one save for all changes
+    ]
+
+    # Nothing changed -> nothing sent.
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"network": "AP460C"})
+    client.commands.clear()
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"radios": ["wifi0", "wifi1"], "hidden": False, "max_clients": 50, "delete": False}
+    )
+    assert "No changes" in result["description_placeholders"]["message"]
+    assert [c for c in client.commands if not c.startswith("show")] == []
+
+    # Bad password is rejected in the form.
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"network": "AP460C"})
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"password": "short", "radios": ["wifi0", "wifi1"], "delete": False}
+    )
+    assert result["step_id"] == "wifi_edit" and result["errors"] == {"password": "invalid_password"}
+
+    # Device error is shown in the form.
+    client.responses["no interface wifi1 ssid AP460C"] = "ERROR: radio busy"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"radios": ["wifi0"], "delete": False}
+    )
+    assert result["errors"] == {"base": "device_error"}
+    assert "radio busy" in result["description_placeholders"]["error"]
+
+
+async def test_wifi_manager_add_and_delete(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    client = _client()
+    result = await _open_wifi(hass, entry.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"network": "__add__"})
+    assert result["step_id"] == "wifi_add"
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"name": "AP460C", "radios": []})
+    assert result["errors"] == {"name": "ssid_exists"}
+    client.commands.clear()
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"name": "Guest", "password": "guest-pass-1", "radios": ["wifi1"], "hidden": True}
+    )
+    assert result["step_id"] == "wifi"
+    assert [c for c in client.commands if not c.startswith("show")] == [
+        "security-object Guest",
+        "security-object Guest security protocol-suite wpa2-aes-psk ascii-key guest-pass-1",
+        "ssid Guest",
+        "ssid Guest security-object Guest",
+        "interface wifi1 ssid Guest",
+        "ssid Guest hide-ssid",
+        "save config",
+    ]
+
+    # Delete needs confirmation.
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"network": "AP460C"})
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"delete": True})
+    assert result["step_id"] == "wifi_delete"
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"confirm": False})
+    assert result["step_id"] == "wifi_edit"
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"delete": True})
+    client.commands.clear()
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"confirm": True})
+    assert result["step_id"] == "wifi"
+    assert "Deleted AP460C" in result["description_placeholders"]["message"]
+    assert "no ssid AP460C" in client.commands
+
+    # Done closes the dialog without changing options (no reload).
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"network": "__done__"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+async def test_wifi_manager_overview(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    await hass.async_block_till_done()
+    overview = next(e for e in hass.config_entries.async_entries(DOMAIN) if e.data.get("entry_type") == "overview")
+    await overview.runtime_data.async_refresh()
+    result = await _open_wifi(hass, overview.entry_id)  # no menu: straight to the list
+    assert _network_options(result)["AP460C"] == "AP460C — broadcasting on 1 of 1 APs · 3 clients"
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"network": "AP460C"})
+    client = _client()
+    client.commands.clear()
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"password": "everywhere-key", "enabled": False, "hidden": False, "delete": False}
+    )
+    assert result["step_id"] == "wifi"
+    assert [c for c in client.commands if not c.startswith("show")] == [
+        "no interface wifi0 ssid AP460C",
+        "no interface wifi1 ssid AP460C",
+        "security-object sec-ap460c security protocol-suite wpa2-aes-psk ascii-key everywhere-key",
+        "save config",
+    ]
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"network": "__add__"})
+    assert result["step_id"] == "wifi_add"
+    client.commands.clear()
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"name": "Staff", "access_points": ["AH-7c0680"], "hidden": False}
+    )
+    assert "Created Staff (open network" in result["description_placeholders"]["message"]
+    assert "ssid Staff" in client.commands
+
+
+async def test_migration_removes_old_ssid_manager_entities(hass: HomeAssistant) -> None:
+    old = MockConfigEntry(domain=DOMAIN, unique_id=MAC, data=USER_INPUT, title="AH-7c0680", minor_version=2)
+    old.add_to_hass(hass)
+    registry = er.async_get(hass)
+    leftovers = [
+        registry.async_get_or_create("text", DOMAIN, f"{MAC}_new_ssid_name", config_entry=old),
+        registry.async_get_or_create("button", DOMAIN, f"{MAC}_create_ssid", config_entry=old),
+        registry.async_get_or_create("select", DOMAIN, f"{MAC}_ssid_delete_target", config_entry=old),
+    ]
+    assert await hass.config_entries.async_setup(old.entry_id)
+    await hass.async_block_till_done()
+    assert old.minor_version == 3
+    assert all(registry.async_get(e.entity_id) is None for e in leftovers)
