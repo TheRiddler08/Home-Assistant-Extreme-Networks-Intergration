@@ -11,7 +11,7 @@ from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import AerohiveConfigEntry, AerohiveCoordinator, AerohiveData
-from .entity import AerohiveEntity, async_add_dynamic_entities
+from .entity import AerohiveEntity, async_add_dynamic_entities, port_label
 
 PARALLEL_UPDATES = 1
 
@@ -50,7 +50,7 @@ class AerohivePoeCycleButton(AerohiveEntity, ButtonEntity):
     def __init__(self, coordinator: AerohiveCoordinator, port: str) -> None:
         super().__init__(coordinator, f"poe_cycle_{port}")
         self._port = port
-        self._attr_name = f"{port.capitalize()} PoE power cycle"
+        self._attr_name = f"{port_label(port)} PoE power cycle"
 
     @property
     def available(self) -> bool:

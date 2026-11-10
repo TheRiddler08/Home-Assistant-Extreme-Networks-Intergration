@@ -33,6 +33,8 @@ AEROHIVE_OUIS: frozenset[str] = frozenset(
         "001977",  # Aerohive Networks
         "08ea44",  # Aerohive Networks
         "4018b1",  # Aerohive Networks
+        "809562",  # Extreme Networks (Aerohive APs)
+        "b87cf2",  # Aerohive / Extreme (SR2208P switch)
         "885bdd",  # Aerohive Networks
         "9c5d12",  # Aerohive Networks
         "bcf310",  # Aerohive / Extreme (AP460C)

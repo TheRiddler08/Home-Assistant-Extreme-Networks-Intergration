@@ -1,0 +1,21 @@
+
+LLDP Remote Device Detail
+
+Local Interface: 1/0/2
+
+
+Remote Identifier: 8
+Chassis ID Subtype: MAC Address
+Chassis ID: 80:95:62:11:22:00
+Port ID Subtype: Interface Name
+Port ID: mgt0
+System Name: AH-112200
+System Description:
+Port Description: mgt0
+System Capabilities Supported: bridge, WLAN access point
+System Capabilities Enabled: bridge
+Management Address:
+    Type: IPv4
+    Address: 192.168.9.73
+Time to Live: 87 seconds
+

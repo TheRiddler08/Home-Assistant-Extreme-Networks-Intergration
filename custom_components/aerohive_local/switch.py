@@ -12,7 +12,7 @@ from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import AerohiveConfigEntry, AerohiveCoordinator, AerohiveData
-from .entity import AerohiveEntity, DebouncedSetter, async_add_dynamic_entities, radio_label
+from .entity import AerohiveEntity, DebouncedSetter, async_add_dynamic_entities, port_label, radio_label
 
 PARALLEL_UPDATES = 1
 
@@ -173,7 +173,7 @@ class AerohivePortSwitch(_DebouncedSwitch):
     def __init__(self, coordinator: AerohiveCoordinator, port: str) -> None:
         super().__init__(coordinator, f"port_{port}")
         self._port = port
-        self._attr_name = f"{port.capitalize()} enabled"
+        self._attr_name = f"{port_label(port)} enabled"
 
     @property
     def available(self) -> bool:
@@ -195,7 +195,7 @@ class AerohivePoeSwitch(_DebouncedSwitch):
     def __init__(self, coordinator: AerohiveCoordinator, port: str) -> None:
         super().__init__(coordinator, f"poe_{port}")
         self._port = port
-        self._attr_name = f"{port.capitalize()} PoE"
+        self._attr_name = f"{port_label(port)} PoE"
 
     @property
     def available(self) -> bool:

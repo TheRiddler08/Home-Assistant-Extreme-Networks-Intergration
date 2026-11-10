@@ -96,5 +96,10 @@ def radio_label(data: AerohiveData, radio: str) -> str:
     return f"{radio} ({band})" if band else radio
 
 
+def port_label(name: str) -> str:
+    """'1/0/1' -> 'Port 1/0/1', 'eth0' -> 'Eth0'."""
+    return f"Port {name}" if name[:1].isdigit() else name.capitalize()
+
+
 def extra_attrs(**kwargs: Any) -> dict[str, Any]:
     return {k: v for k, v in kwargs.items() if v is not None}

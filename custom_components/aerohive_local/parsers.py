@@ -31,9 +31,11 @@ CONFIRM_TAIL_RE = re.compile(
 )
 # CLI prompt, anchored at the end of the buffer:
 #   HiveOS / IQ Engine APs and routers: "AH-7c0680#"
-#   SR-series switches (FASTPATH-style): "(AH-Switch) #" or "(AH-Switch) >"
+#   SR-series switches (FASTPATH-style): "(AH-Switch) #", "(AH-Switch) >",
+#   and in config mode "(AH-Switch) (Config)#" / "(AH-Switch) (Interface 1/0/1)#"
 PROMPT_RE = re.compile(
-    r"(?:^|\n)[ \t]*(?:\((?P<phost>[^()\n]{1,64})\)[ \t]*|(?P<host>[A-Za-z0-9][A-Za-z0-9_\-\.]*))"
+    r"(?:^|\n)[ \t]*(?:\((?P<phost>[^()\n]{1,64})\)(?:[ \t]*\((?P<submode>[^()\n]{1,64})\))?[ \t]*"
+    r"|(?P<host>[A-Za-z0-9][A-Za-z0-9_\-\.]*))"
     r"(?P<mode>[#>])[ \t]*$"
 )
 
@@ -93,6 +95,7 @@ _ERROR_PATTERNS = [
     re.compile(r"^.*\b[Uu]nknown keyword\b.*$", re.MULTILINE),
     re.compile(r"^.*\bInvalid\b.*$", re.MULTILINE | re.IGNORECASE),
     re.compile(r"^.*\bIncomplete command\b.*$", re.MULTILINE | re.IGNORECASE),
+    re.compile(r"^.*\bCommand not found\b.*$", re.MULTILINE | re.IGNORECASE),
     re.compile(r"^.*\bAmbiguous command\b.*$", re.MULTILINE | re.IGNORECASE),
 ]
 
@@ -109,7 +112,7 @@ def find_cli_error(output: str) -> str | None:
 
 
 _UNSUPPORTED_RE = re.compile(
-    r"unknown keyword|invalid input|invalid interface|invalid command|incomplete command|"
+    r"unknown keyword|invalid input|invalid interface|invalid command|incomplete command|command not found|"
     r"ambiguous command|^\s*ERROR\b|^\s*%",
     re.IGNORECASE,
 )
@@ -281,20 +284,39 @@ def parse_tables(text: str, header_re: re.Pattern[str] | None = None) -> list[Ta
             and lines[idx - 1].strip()
             and not SEPARATOR_RE.match(lines[idx - 1])
         ):
-            header = lines[idx - 1]
             spans = [_Span(m.start(), m.end()) for m in re.finditer(r"-+", line)]
+            # Two-line headers ("Admin" above "Mode"): merge per column.
+            header_lines = [lines[idx - 1]]
+            above = lines[idx - 2] if idx > 1 else ""
+            if (
+                above.strip()
+                and not SEPARATOR_RE.match(above)
+                and not re.search(r"[=:;]", above)
+                and len(above.split()) <= len(spans)
+            ):
+                header_lines.insert(0, lines[idx - 2])
+            if len(header_lines) == 2:
+                top = _split_by_spans(header_lines[0], spans)
+                bottom = _split_by_spans(header_lines[1], spans)
+                header = None
+                merged = [f"{t} {b}".strip() for t, b in zip(top, bottom, strict=True)]
+            else:
+                header = lines[idx - 1]
+                merged = None
         elif header_re is not None and header_re.search(line):
             nxt = lines[idx + 1] if idx + 1 < len(lines) else ""
             if SEPARATOR_RE.match(nxt):
                 idx += 1  # handled by separator branch next iteration
                 continue
             header = line
+            merged = None
             spans = _header_spans(line)
-        if spans is None or header is None:
+        if spans is None:
             idx += 1
             continue
 
-        columns = [normalize_key(c) or f"col{i}" for i, c in enumerate(_split_by_spans(header, spans))]
+        cells_hdr = merged if merged is not None else _split_by_spans(header or "", spans)
+        columns = [normalize_key(c) or f"col{i}" for i, c in enumerate(cells_hdr)]
         # De-duplicate column names.
         seen: dict[str, int] = {}
         for i, col in enumerate(columns):
@@ -338,11 +360,21 @@ def parse_table(text: str, header_re: re.Pattern[str] | None = None) -> list[dic
 _KV_RE = re.compile(r"^\s*(?P<key>[^:=;]*[A-Za-z][^:=;]*?)\s*(?P<sep>[:=])\s*(?P<value>.*?)\s*;?\s*$")
 
 
+# FASTPATH-style "Key.............. value" (switch CLI).
+_DOTTED_RE = re.compile(r"^\s*(?P<key>[A-Za-z][^.:=]*?)\s*\.{3,}(?:\s+(?P<value>.*?))?\s*$")
+
+
 def parse_key_values(text: str) -> dict[str, str]:
-    """Parse 'Key: value' and 'Key=value; Key2=value2;' style output."""
+    """Parse 'Key: value', 'Key=value; Key2=value2;' and 'Key...... value' output."""
     result: dict[str, str] = {}
     for line in clean_output(text).split("\n"):
         if not line.strip() or SEPARATOR_RE.match(line):
+            continue
+        dotted = _DOTTED_RE.match(line)
+        if dotted:
+            key = normalize_key(dotted.group("key"))
+            if key and key not in result:
+                result[key] = dotted.group("value") or ""
             continue
         # Split ';'-separated chunks only when the line looks like k=v pairs.
         chunks = [c for c in line.split(";")] if "=" in line else [line]
@@ -397,7 +429,7 @@ def parse_uptime(value: str | None) -> int | None:
 
 @dataclass
 class VersionInfo:
-    """Parsed 'show version'."""
+    """Parsed 'show version' (HiveOS / IQ Engine, or SR-series switch CLI)."""
 
     version: str | None = None  # e.g. "IQ Engine 10.5r3 build-278650"
     firmware: str | None = None  # e.g. "10.5r3"
@@ -407,6 +439,7 @@ class VersionInfo:
     bootloader: str | None = None
     uptime_seconds: int | None = None
     serial: str | None = None
+    mac: str | None = None  # "Burned In MAC Address" on switches
     raw: dict[str, str] = field(default_factory=dict)
 
 
@@ -414,6 +447,8 @@ def parse_show_version(text: str) -> VersionInfo:
     kv = parse_key_values(text)
     info = VersionInfo(raw=kv)
     info.version = kv.get("version") or kv.get("software_version") or kv.get("sw_version")
+    if info.version and kv.get("operating_system") and info.version == kv.get("software_version"):
+        info.os_name = None
     if info.version:
         fw = re.search(r"(\d+(?:\.\d+)+r\d+[a-z0-9]*)", info.version, re.IGNORECASE)
         if fw:
@@ -426,16 +461,23 @@ def parse_show_version(text: str) -> VersionInfo:
         build = re.search(r"build[\s\-]*(\d+)", info.version, re.IGNORECASE)
         if build:
             info.build = build.group(1)
-    for key in ("platform", "hardware_platform", "model", "product_name"):
+    if info.version is None and kv.get("software_version"):
+        info.version = kv["software_version"]
+    for key in ("platform", "hardware_platform", "machine_model", "model", "product_name"):
         if kv.get(key):
-            info.platform = kv[key].split()[0] if key == "platform" else kv[key]
+            value = kv[key].split()[0] if key == "platform" else kv[key]
+            # "Aerohive SR2208P" -> "SR2208P"
+            info.platform = re.sub(r"^(Aerohive|Extreme(\s+Networks)?)\s+", "", value, flags=re.IGNORECASE)
             break
     for key, value in kv.items():
         if key.startswith("bootloader") and info.bootloader is None:
             info.bootloader = value
         elif "serial" in key and info.serial is None:
             info.serial = value
-    info.uptime_seconds = parse_uptime(kv.get("uptime") or kv.get("system_uptime"))
+    info.uptime_seconds = parse_uptime(
+        kv.get("uptime") or kv.get("system_uptime") or kv.get("system_up_time") or kv.get("up_time")
+    )
+    info.mac = normalize_mac(kv.get("burned_in_mac_address") or kv.get("base_mac_address"))
     return info
 
 
@@ -443,7 +485,10 @@ def parse_show_version(text: str) -> VersionInfo:
 # show interface
 # --------------------------------------------------------------------------
 
-_IFACE_NAME_RE = re.compile(r"^(mgt|eth|wifi|red|agg|tunnel|usbnet|vlan|lte|br)\S*$", re.IGNORECASE)
+_IFACE_NAME_RE = re.compile(
+    r"^((mgt|eth|wifi|red|agg|tunnel|usbnet|vlan|lte|br)\S*|\d+/\d+/\d+)$", re.IGNORECASE
+)
+_USP_RE = re.compile(r"^(\d+)/(\d+)/(\d+)$")  # unit/slot/port (SR-series switch CLI)
 _CHAN_RE = re.compile(r"^(?P<chan>[^()\s]+)?\s*(?:\((?P<width>[^)]*)\))?$")
 _RADIO_RE = re.compile(r"^wifi\d+$")
 
@@ -470,7 +515,10 @@ class Interface:
 
     @property
     def is_port(self) -> bool:
-        """Physical Ethernet port (eth0, eth1/1...)."""
+        """Physical Ethernet port (eth0, eth1/1, or 1/0/1 on SR switches; unit 0 = LAG/CPU)."""
+        usp = _USP_RE.match(self.name)
+        if usp:
+            return usp.group(1) != "0"
         return self.name.startswith("eth") and "." not in self.name
 
     @property
@@ -833,8 +881,14 @@ _DETAIL_FIELDS: dict[str, list[str]] = {
     "mode": [r"^mode$"],
     "phy_mode": [r"^phymode$", r"^phy_mode$", r"^radio_mode$"],
     # traffic counters
-    "rx_bytes": [r"^rx_bytes$", r"^rx_octets$", r"^received_bytes$", r"^rx_.*bytes$"],
-    "tx_bytes": [r"^tx_bytes$", r"^tx_octets$", r"^transmitted_bytes$", r"^tx_.*bytes$"],
+    "rx_bytes": [
+        r"^rx_bytes$", r"^rx_octets$", r"^received_bytes$", r"^rx_.*bytes$",
+        r"^total_packets_received_octets$", r"^octets_received$", r"received_octets", r"^in_octets$",
+    ],
+    "tx_bytes": [
+        r"^tx_bytes$", r"^tx_octets$", r"^transmitted_bytes$", r"^tx_.*bytes$",
+        r"^total_packets_transmitted_octets$", r"^octets_transmitted$", r"transmitted_octets", r"^out_octets$",
+    ],
     "rx_packets": [r"^rx_packets$", r"^rx_pkts$", r"^rx_frames$", r"^rx_data_frames$"],
     "tx_packets": [r"^tx_packets$", r"^tx_pkts$", r"^tx_frames$", r"^tx_data_frames$"],
     "rx_errors": [r"^rx_errors$", r"^rx_errs?$", r"^rx_error"],
@@ -1195,11 +1249,60 @@ def parse_ssid_security_objects(config: str) -> dict[str, str]:
 
 
 # --------------------------------------------------------------------------
+# SR-series switch CLI: show port all
+# --------------------------------------------------------------------------
+
+_PORT_ALL_HEADER_RE = re.compile(r"^\s*Intf\s+", re.IGNORECASE)
+
+
+def parse_show_port_all(text: str) -> dict[str, Interface]:
+    """'show port all' -> Interface per port (name '1/0/1').
+
+    Columns: Intf, Type, Admin Mode, Physical Mode, Physical Status
+    ("1000 Full"), Link Status (Up/Down), Link Trap, LACP Mode, Actor Timeout.
+    """
+    result: dict[str, Interface] = {}
+    for table in parse_tables(text, _PORT_ALL_HEADER_RE):
+        if "intf" not in table.columns:
+            continue
+        for cells in table.rows:
+            name = (cells.get("intf") or "").strip().lower()
+            usp = _USP_RE.match(name)
+            if not usp or usp.group(1) == "0":
+                continue  # unit 0 = port-channels (LAG) / CPU, not physical ports
+            iface = Interface(name=name)
+            iface.state = _none_if_empty(cells.get("link_status"))
+            iface.admin_state = _none_if_empty(cells.get("admin_mode"))
+            iface.mode = _none_if_empty(cells.get("physical_mode"))
+            status = _none_if_empty(cells.get("physical_status"))
+            if status:
+                parts = status.split()
+                iface.speed = parts[0] if parts and parts[0][0].isdigit() else None
+                iface.duplex = parts[1] if len(parts) > 1 else None
+            known = {"intf", "link_status", "admin_mode", "physical_mode", "physical_status"}
+            iface.extra = {k: v for k, v in cells.items() if k not in known and v}
+            result[name] = iface
+    return result
+
+
+def parse_show_network(text: str) -> InterfaceDetail:
+    """'show network' (management interface) -> InterfaceDetail named 'mgt0'."""
+    detail = parse_show_interface_detail(text, "mgt0")
+    kv = detail.raw
+    if detail.operational_state is None and kv.get("interface_status"):
+        detail.operational_state = kv["interface_status"]
+    return detail
+
+
+# --------------------------------------------------------------------------
 # Switch: PoE (show pse / show poe)
 # --------------------------------------------------------------------------
 
 PORT_RE = re.compile(r"^(?:eth|ge|gi|port|xe|te)?\s*\d+(?:/\d+){0,2}$", re.IGNORECASE)
-_PORT_TOKEN_RE = re.compile(r"\b(eth\d+(?:/\d+){0,2}|agg\d+|wifi\d+(?:\.\d+)?|mgt\d+|red\d+)\b", re.IGNORECASE)
+_PORT_TOKEN_RE = re.compile(
+    r"(?<![\w/:])(eth\d+(?:/\d+){0,2}|agg\d+|wifi\d+(?:\.\d+)?|mgt\d+|red\d+|\d+/\d+/\d+)(?![\w/:])",
+    re.IGNORECASE,
+)
 
 
 def normalize_port(value: str | None) -> str | None:
@@ -1208,7 +1311,7 @@ def normalize_port(value: str | None) -> str | None:
     if value is None:
         return None
     value = value.strip().lower().replace(" ", "")
-    if re.match(r"^(eth|agg|wifi|mgt|red)\d", value):
+    if re.match(r"^(eth|agg|wifi|mgt|red)\d", value) or _USP_RE.match(value):
         return value
     match = re.match(r"^(?:ge|gi|port|xe|te)?(\d+(?:/\d+){0,2})$", value)
     return f"eth{match.group(1)}" if match else None
@@ -1270,8 +1373,12 @@ def parse_show_poe(text: str) -> tuple[PoeSummary, dict[str, PoePort]]:
     # Summary lines are the key/value lines outside the table.
     kv = {}
     for line in cleaned.split("\n"):
-        if re.match(r"^\s*[A-Za-z][^:=]*[:=]", line) and not _PORT_TOKEN_RE.match(line.strip()):
-            kv.update(parse_key_values(line))
+        stripped = line.strip()
+        if _PORT_TOKEN_RE.match(stripped):
+            continue
+        if re.match(r"^[A-Za-z][^:=]*[:=]", stripped) or _DOTTED_RE.match(line):
+            for key, value in parse_key_values(line).items():
+                kv.setdefault(key, value)
     summary.raw = kv
     for key, value in kv.items():
         if summary.used_w is None and any(w in key for w in ("consum", "used", "usage")):
@@ -1367,6 +1474,14 @@ def parse_mac_address_table(text: str) -> list[FdbEntry]:
     return entries
 
 
+_AH_HOSTNAME_RE = re.compile(r"^ah-[0-9a-f]{6}", re.IGNORECASE)
+
+
+def is_aerohive_hostname(hostname: str | None) -> bool:
+    """Default HiveOS hostname 'AH-xxxxxx' (last 6 MAC digits)."""
+    return bool(hostname and _AH_HOSTNAME_RE.match(hostname))
+
+
 # --------------------------------------------------------------------------
 # LLDP neighbours
 # --------------------------------------------------------------------------
@@ -1379,13 +1494,27 @@ class LldpNeighbor:
     chassis_id: str | None = None
     port_id: str | None = None
     port_description: str | None = None
+    system_description: str | None = None
     management_address: str | None = None
     capabilities: str | None = None
+    capabilities_enabled: str | None = None
     raw: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def is_access_point(self) -> bool:
+        caps = f"{self.capabilities or ''} {self.capabilities_enabled or ''}".lower()
+        return "wlan" in caps or is_aerohive_hostname(self.system_name)
+
+    @property
+    def is_network_device(self) -> bool:
+        """A switch/router (uplink), not an end device or AP."""
+        caps = f"{self.capabilities or ''}".lower()
+        return not self.is_access_point and ("bridge" in caps or "router" in caps)
 
 
 def _lldp_from_dict(d: dict[str, str]) -> LldpNeighbor | None:
     def pick(*words: str, exclude: tuple[str, ...] = ()) -> str | None:
+        exclude = (*exclude, "subtype")
         for key, value in d.items():
             if any(w in key for w in words) and not any(x in key for x in exclude):
                 val = _none_if_empty(value)
@@ -1399,30 +1528,43 @@ def _lldp_from_dict(d: dict[str, str]) -> LldpNeighbor | None:
     local = normalize_port(local) if local else None
     if local is None:
         return None
-    return LldpNeighbor(
+    neighbor = LldpNeighbor(
         local_port=local,
-        system_name=pick("system_name", "sys_name", "device_id", "neighbor", "system"),
+        system_name=pick("system_name", "sys_name", "device_id", "neighbor"),
         chassis_id=pick("chassis"),
         port_id=pick("port_id", "remote_port", "neighbor_port", "port_identifier", exclude=("local",)),
         port_description=pick("port_desc", "port_description"),
-        management_address=pick("management", "mgmt", "address", "ip"),
-        capabilities=pick("capabilit", "cap"),
+        system_description=pick("system_description", "system_desc"),
+        management_address=next(
+            (v for v in (pick("management"), pick("mgmt"), d.get("address"), pick("ip_addr")) if v and _valid_ip(v)),
+            None,
+        ),
+        capabilities=pick("capabilities_supported", "capabilit", exclude=("enabled",)) or pick("capabilit"),
+        capabilities_enabled=pick("capabilities_enabled"),
         raw=d,
     )
+    if not (neighbor.chassis_id or neighbor.system_name or neighbor.port_id):
+        return None  # empty row (port without neighbour)
+    return neighbor
 
 
 def parse_lldp_neighbors(text: str) -> dict[str, LldpNeighbor]:
     result: dict[str, LldpNeighbor] = {}
     cleaned = clean_output(text)
-    for table in parse_tables(cleaned, re.compile(r"^\s*Local\s", re.IGNORECASE)):
+    for table in parse_tables(cleaned, re.compile(r"^\s*Local\s+\S", re.IGNORECASE)):
         for row in table.rows:
             neighbor = _lldp_from_dict(row)
             if neighbor is not None:
                 result[neighbor.local_port] = neighbor
     if result:
         return result
-    # Block format: "Key: value" lines, neighbours separated by blank lines.
-    for block in re.split(r"\n\s*\n", cleaned):
+    # Block format: "Key: value" lines. Split on "Local Interface:" headers
+    # when present (SR switch detail output), otherwise on blank lines.
+    if re.search(r"^\s*Local\s+(Interface|Port)\s*:", cleaned, re.IGNORECASE | re.MULTILINE):
+        blocks = re.split(r"(?=^\s*Local\s+(?:Interface|Port)\s*:)", cleaned, flags=re.IGNORECASE | re.MULTILINE)
+    else:
+        blocks = re.split(r"\n\s*\n", cleaned)
+    for block in blocks:
         neighbor = _lldp_from_dict(parse_key_values(block))
         if neighbor is not None:
             result.setdefault(neighbor.local_port, neighbor)
@@ -1452,12 +1594,26 @@ _HIDE_RE = re.compile(rf"^\s*ssid\s+{_ARG}\s+hide-ssid\b", re.IGNORECASE)
 _SUITE_RE = re.compile(rf"^\s*security-object\s+{_ARG}\s+security\s+protocol-suite\s+(\S+)", re.IGNORECASE)
 _PSE_OFF_RE = re.compile(r"^\s*interface\s+(eth\S+)\s+pse\s+shutdown\b", re.IGNORECASE)
 _PORT_OFF_RE = re.compile(r"^\s*interface\s+(eth\S+)\s+shutdown\s*$", re.IGNORECASE)
+_BLOCK_IF_RE = re.compile(r"^\s*interface\s+(\d+/\d+/\d+)\s*$", re.IGNORECASE)
 
 
 def parse_running_config_summary(config: str) -> RunningConfigSummary:
     """Extract SSID/security/port state. Never returns key material."""
     summary = RunningConfigSummary(ssid_security_objects=parse_ssid_security_objects(config))
+    block_port: str | None = None  # SR switch: "interface 1/0/4" ... "exit"
     for line in clean_output(config).split("\n"):
+        stripped = line.strip().lower()
+        if m := _BLOCK_IF_RE.match(line):
+            block_port = m.group(1).lower()
+            continue
+        if block_port is not None:
+            if stripped == "exit":
+                block_port = None
+            elif stripped == "shutdown":
+                summary.shutdown_ports.add(block_port)
+            elif stripped in {"no poe", "poe disable", "no poe enable"}:
+                summary.pse_shutdown_ports.add(block_port)
+            continue
         if m := _HIDE_RE.match(line):
             summary.hidden_ssids.add(m.group(1) or m.group(2))
         elif m := _SUITE_RE.match(line):

@@ -246,14 +246,21 @@ async def test_concurrent_commands_are_serialised(server) -> None:
 # --------------------------------------------------------------------------
 
 
-def _make_switch_handler(received: list[str]):
+def _make_switch_handler(received: list[str], login: bool = False):
     async def handler(process: asyncssh.SSHServerProcess) -> None:
         mode = ">"
         paging = True
+        submode = ""
 
         def prompt() -> None:
-            process.stdout.write(f"\r\n(AH-Switch) {mode}")
+            process.stdout.write(f"\r\n(AH-Switch) {submode}{mode}")
 
+        if login:  # SR switches may ask for credentials again inside the shell
+            process.stdout.write("\r\nUser:")
+            user = await _read_line(process)
+            process.stdout.write("Password:")
+            pwd = await _read_line(process)
+            received.append(f"login:{user}:{'ok' if pwd == PASSWORD else 'bad'}")
         prompt()
         while True:
             line = await _read_line(process)
@@ -271,8 +278,27 @@ def _make_switch_handler(received: list[str]):
                 process.stdout.write("                             ^\r\n% Invalid input detected at '^' marker.\r\n")
             elif cmd == "terminal length 0" and mode == "#":
                 paging = False
+            elif cmd == "configure" and mode == "#":
+                submode = "(Config)"
+            elif cmd.startswith("interface ") and submode == "(Config)":
+                submode = f"(Interface {cmd.split()[1]})"
+            elif cmd == "exit" and submode.startswith("(Interface"):
+                submode = "(Config)"
+            elif cmd == "exit" and submode:
+                submode = ""
+            elif cmd == "exit" and mode == "#":
+                mode = ">"
+            elif cmd in {"shutdown", "no shutdown", "poe", "no poe"} and submode.startswith("(Interface"):
+                pass
+            elif cmd == "write memory":
+                process.stdout.write("\r\nThis operation may take a few minutes.\r\nAre you sure you want to save? (y/n) ")
+                answer = await _read_line(process)
+                received.append(f"save:{answer}")
+                process.stdout.write("\r\nConfiguration Saved!\r\n")
             elif cmd == "show interface mgt0":
                 process.stdout.write("                             ^\r\nAn invalid interface has been used for this command.\r\n")
+            elif submode:
+                process.stdout.write("          ^\r\n% Invalid input detected at '^' marker.\r\n")
             elif cmd == "show long":
                 for i in range(1, 41):
                     process.stdout.write(f"line {i}\r\n")
@@ -311,6 +337,36 @@ async def test_switch_cli_prompt_enable_and_paging(tmp_path) -> None:
 
         assert is_unsupported_command(bad)
         assert find_cli_error(bad) == "An invalid interface has been used for this command."
+    finally:
+        await client.close()
+        srv.close()
+        await srv.wait_closed()
+
+
+async def test_switch_cli_login_prompt_config_mode_and_save() -> None:
+    received: list[str] = []
+    key = asyncssh.generate_private_key("ssh-rsa", 2048)
+    srv = await asyncssh.create_server(
+        _Server, "127.0.0.1", 0, server_host_keys=[key],
+        process_factory=_make_switch_handler(received, login=True), line_editor=False,
+    )  # fmt: skip
+    port = srv.sockets[0].getsockname()[1]
+    client = _client(port)
+    try:
+        await client.run("show version")
+        assert received[0] == f"login:{USER}:ok"
+        assert client.dialect == "switch"
+        await client.run_sequence(["configure", "interface 1/0/3", "no poe", "exit", "exit"])
+        assert client.prompt_submode is None and client.prompt_mode == "#"
+        await client.run("write memory", confirm=True)
+        assert "save:y" in received
+        # A failing block leaves config mode before raising.
+        from custom_components.aerohive_local.client import AerohiveCommandError
+
+        with pytest.raises(AerohiveCommandError):
+            await client.run_sequence(["configure", "bogus-command", "exit"])
+        assert client.prompt_submode is None and client.prompt_mode == "#"
+        assert (await client.run("show x")) == "ok show x"
     finally:
         await client.close()
         srv.close()

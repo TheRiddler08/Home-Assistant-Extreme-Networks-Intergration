@@ -1,0 +1,12 @@
+
+Switch: 1
+
+System Description............................. Aerohive SR2208P: 8 GE POE+ ports, 2 GE dual media ports, 1.0.1.28, Linux 3.6.5
+Machine Type................................... Aerohive SR2208P: 8 GE POE+ ports, 2 GE dual media ports
+Machine Model.................................. Aerohive SR2208P
+Serial Number.................................. 22081600000000
+Burned In MAC Address.......................... B8:7C:F2:00:00:94
+Software Version............................... 1.0.1.28
+Operating System............................... Linux 3.6.5
+Additional Packages............................ Aerohive Switch Software Package
+

@@ -44,6 +44,12 @@
     },
     {
       "macaddress": "F09CE9*"
+    },
+    {
+      "macaddress": "809562*"
+    },
+    {
+      "macaddress": "B87CF2*"
     }
   ],
   "documentation": "https://github.com/theriddler08/home-assistant-extreme-networks-intergration",
@@ -57,5 +63,5 @@
   "requirements": [
     "asyncssh==2.21.0"
   ],
-  "version": "0.3.0"
+  "version": "0.4.0"
 }

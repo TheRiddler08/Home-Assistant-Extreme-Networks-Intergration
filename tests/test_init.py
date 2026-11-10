@@ -75,6 +75,7 @@ class FakeClient:
         self.commands: list[str] = []
         self.responses = _responses()
         self.fail_with: Exception | None = None
+        self.dialect = "hiveos"
         FakeClient.instances.append(self)
 
     async def run(self, command: str, **kwargs: Any) -> str:
@@ -82,6 +83,18 @@ class FakeClient:
             raise self.fail_with
         self.commands.append(command)
         return self.responses.get(command, "")
+
+    async def run_sequence(self, commands: list[str]) -> list[str]:
+        from custom_components.aerohive_local.client import AerohiveCommandError
+        from custom_components.aerohive_local.parsers import find_cli_error
+
+        outputs = []
+        for command in commands:
+            out = await self.run(command)
+            outputs.append(out)
+            if error := find_cli_error(out):
+                raise AerohiveCommandError(command, error)
+        return outputs
 
     async def reboot(self, command: str = "reboot") -> None:
         self.commands.append(command)

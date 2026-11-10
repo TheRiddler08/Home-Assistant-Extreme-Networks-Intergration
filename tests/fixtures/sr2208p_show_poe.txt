@@ -1,0 +1,13 @@
+
+Unit......................................... 1
+
+Firmware Version............................... 1.4.2.1
+PSE Main Operational Status.................... ON
+Total Power Available.......................... 130.0 Watts
+Threshold Power................................ 117.0 Watts
+Total Power Consumed........................... 15.3 Watts
+System Usage Threshold......................... 90
+Power Management Mode.......................... Dynamic
+Port Auto Reset Mode........................... Disable
+Traps.......................................... Enable
+

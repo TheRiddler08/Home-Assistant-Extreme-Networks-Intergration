@@ -465,3 +465,71 @@ def test_switch_prompt_and_more() -> None:
     assert p.MORE_TAIL_RE.search("line\n--More-- or (q)uit")
     out = "show ssid\nNo.\n(AH-Switch) #"
     assert p.strip_echo_and_prompt(out, "show ssid") == "No."
+
+
+# --------------------------------------------------------------------------
+# SR2208P (real output, anonymised)
+# --------------------------------------------------------------------------
+
+
+def test_sr2208p_version() -> None:
+    v = p.parse_show_version(load_fixture("sr2208p_show_version.txt"))
+    assert v.version == "1.0.1.28"
+    assert v.firmware == "1.0.1.28"
+    assert v.platform == "SR2208P"
+    assert v.serial == "22081600000000"
+    assert v.mac == "b8:7c:f2:00:00:94"
+
+
+def test_sr2208p_port_all() -> None:
+    ports = p.parse_show_port_all(load_fixture("sr2208p_show_port_all.txt"))
+    assert list(ports) == [f"1/0/{i}" for i in range(1, 11)]  # LAG 0/3/x skipped
+    assert ports["1/0/1"].is_up and ports["1/0/1"].speed == "1000" and ports["1/0/1"].duplex == "Full"
+    assert ports["1/0/3"].is_up is False and ports["1/0/3"].speed is None
+    assert ports["1/0/4"].speed == "100"
+    assert ports["1/0/1"].admin_state == "Enable"
+    assert all(i.is_port for i in ports.values())
+
+
+def test_sr2208p_network_and_poe() -> None:
+    net = p.parse_show_network(load_fixture("sr2208p_show_network.txt"))
+    assert (net.ip_address, net.netmask, net.gateway) == ("192.168.9.64", "255.255.254.0", "192.168.8.1")
+    summary, ports = p.parse_show_poe(load_fixture("sr2208p_show_poe.txt"))
+    assert (summary.budget_w, summary.used_w, summary.remaining_w) == (130.0, 15.3, 114.7)
+    assert ports == {}
+
+
+def test_sr2208p_mac_table() -> None:
+    entries = p.parse_mac_address_table(load_fixture("sr2208p_show_mac_addr_table.txt"))
+    assert len(entries) == 30  # management entry (0/5/1) skipped
+    assert {e.port for e in entries} == {"1/0/1", "1/0/2", "1/0/4", "1/0/5", "1/0/6", "1/0/7", "1/0/8", "1/0/9"}
+    cam = next(e for e in entries if e.mac == "b8:a4:4f:00:d3:de")
+    assert (cam.port, cam.vlan, cam.entry_type) == ("1/0/4", 1, "learned")
+
+
+def test_sr2208p_lldp() -> None:
+    summary = p.parse_lldp_neighbors(load_fixture("sr2208p_show_lldp_remote_device_all.txt"))
+    assert set(summary) == {"1/0/1", "1/0/2", "1/0/4", "1/0/9", "1/0/10"}
+    assert summary["1/0/2"].system_name == "AH-112200"
+    assert summary["1/0/1"].chassis_id == "PC-9" and summary["1/0/1"].system_name is None
+    assert summary["1/0/9"].port_id == "14"
+    detail = p.parse_lldp_neighbors(load_fixture("sr2208p_show_lldp_remote_device_detail_1_0_2.txt"))["1/0/2"]
+    assert detail.management_address == "192.168.9.73"
+    assert detail.port_id == "mgt0"
+    assert detail.capabilities == "bridge, WLAN access point"
+    assert detail.is_access_point and not detail.is_network_device
+
+
+def test_switch_running_config_blocks() -> None:
+    cfg = "interface 1/0/3\nno poe\nexit\ninterface 1/0/5\nshutdown\nexit\ninterface 1/0/6\nexit\n"
+    summary = p.parse_running_config_summary(cfg)
+    assert summary.pse_shutdown_ports == {"1/0/3"}
+    assert summary.shutdown_ports == {"1/0/5"}
+
+
+def test_config_mode_prompt() -> None:
+    m = p.PROMPT_RE.search("x\n(AH-Switch) (Config)#")
+    assert p.prompt_host(m) == "AH-Switch" and m.group("submode") == "Config"
+    m = p.PROMPT_RE.search("(AH-Switch) (Interface 1/0/1)#")
+    assert m.group("submode") == "Interface 1/0/1"
+    assert p.find_cli_error("Command not found / Incomplete command. Use ? to list commands.")

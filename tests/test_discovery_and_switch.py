@@ -202,44 +202,66 @@ async def test_enable_all_entities_option(hass: HomeAssistant, entry: MockConfig
 
 
 # --------------------------------------------------------------------------
-# SR2208P switch
+# SR2208P switch (real output from an SR2208P, software 1.0.1.28, anonymised)
 # --------------------------------------------------------------------------
+
+SWITCH_MAC = "b8:7c:f2:00:00:94"
 
 
 def _switch_responses() -> dict[str, str]:
+    detail = "show lldp remote-device detail 1/0/2"
     return {
-        "show version": load_fixture("synthetic_sr2208p_show_version.txt"),
-        "show interface": load_fixture("synthetic_sr2208p_show_interface.txt"),
-        "show ssid": "            ^-- unknown keyword or invalid input",
-        "show station": "            ^-- unknown keyword or invalid input",
-        "show pse": load_fixture("synthetic_sr2208p_show_pse.txt"),
-        "show mac-address-table": load_fixture("synthetic_sr2208p_show_mac_table.txt"),
-        "show lldp neighbor": load_fixture("synthetic_sr2208p_show_lldp.txt"),
-        "show interface eth1/1": "Speed=1000Mbps; Duplex=full-duplex;\nRx bytes=1000; Tx bytes=2000;",
-        "show running-config": "interface eth1/4 pse shutdown\n",
-        "show cpu": "CPU total utilization: 12.0%",
+        "show version": load_fixture("sr2208p_show_version.txt"),
+        "show port all": load_fixture("sr2208p_show_port_all.txt"),
+        "show network": load_fixture("sr2208p_show_network.txt"),
+        "show poe": load_fixture("sr2208p_show_poe.txt"),
+        "show mac-addr-table": load_fixture("sr2208p_show_mac_addr_table.txt"),
+        "show lldp remote-device all": load_fixture("sr2208p_show_lldp_remote_device_all.txt"),
+        detail: load_fixture("sr2208p_show_lldp_remote_device_detail_1_0_2.txt"),
+        # Per-port PoE (format not captured yet): synthetic table in switch naming.
+        "show poe port all": (
+            "Intf      Admin    Status        Power(W)  Class\n"
+            "--------- -------- ------------- --------- -----\n"
+            "1/0/1     Enable   Delivering    6.50      4\n"
+            "1/0/2     Enable   Delivering    8.80      4\n"
+            "1/0/3     Disable  Disabled      0.00      -\n"
+        ),
+        "show running-config": "interface 1/0/3\nno poe\nexit\ninterface 1/0/5\nshutdown\nexit\n",
     }
+
+
+UNSUPPORTED = "                   ^\n% Invalid input detected at '^' marker."
 
 
 @pytest.fixture
 async def switch_entry(hass: HomeAssistant) -> MockConfigEntry:
     original = FakeClient.__init__
+    original_run = FakeClient.run
 
     def init(self, *args: Any, **kwargs: Any) -> None:
         original(self, *args, **kwargs)
-        self.hostname = "AH-001000"
+        self.hostname = "AH-Switch"
+        self.dialect = "switch"
         self.responses = _switch_responses()
 
-    with patch.object(FakeClient, "__init__", init):
+    async def run(self, command: str, **kwargs: Any) -> str:
+        out = await original_run(self, command, **kwargs)
+        if command.startswith("show") and command not in self.responses:
+            return UNSUPPORTED
+        return out
+
+    with patch.object(FakeClient, "__init__", init), patch.object(FakeClient, "run", run):
         entry = MockConfigEntry(
             domain=DOMAIN, unique_id=SWITCH_MAC,
-            data={**USER_INPUT, CONF_HOST: "192.168.1.30"}, title="AH-001000",
-            options={CONF_TRACKED_CLIENTS: ["a4:c3:f0:aa:00:02"]},
+            data={**USER_INPUT, CONF_HOST: "192.168.9.64"}, title="AH-Switch",
+            options={CONF_TRACKED_CLIENTS: ["b8:a4:4f:00:d3:de", "00:15:5d:00:00:01"]},
         )  # fmt: skip
         entry.add_to_hass(hass)
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
-    return entry
+        with patch("custom_components.aerohive_local.coordinator.discovery_flow.async_create_flow") as flows:
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+        entry.discovery_calls = flows.call_args_list  # type: ignore[attr-defined]
+        yield entry
 
 
 def _sw(hass: HomeAssistant, platform: str, key: str) -> str:
@@ -251,46 +273,111 @@ def _sw(hass: HomeAssistant, platform: str, key: str) -> str:
 async def test_switch_entities(hass: HomeAssistant, switch_entry: MockConfigEntry) -> None:
     device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, SWITCH_MAC)})
     assert device.model == "SR2208P"
+    assert device.sw_version == "1.0.1.28"
+    assert device.serial_number == "22081600000000"
+    assert device.configuration_url == "https://192.168.9.64"
     st = hass.states.get
-    assert st(_sw(hass, "binary_sensor", "iface_eth1/1")).state == "on"
-    assert st(_sw(hass, "binary_sensor", "iface_eth1/3")).state == "off"
-    assert st(_sw(hass, "sensor", "iface_eth1/1_link_speed")).state == "1000"
-    assert st(_sw(hass, "sensor", "iface_eth1/2_link_speed")).state == "100"
-    assert st(_sw(hass, "sensor", "iface_eth1/1_poe_power")).state == "6.5"
-    assert st(_sw(hass, "sensor", "iface_eth1/1_poe_status")).state == "delivering"
-    assert st(_sw(hass, "sensor", "poe_power_used")).state == "13.2"
-    assert st(_sw(hass, "sensor", "poe_power_budget")).state == "125.0"
-    assert st(_sw(hass, "sensor", "poe_power_remaining")).state == "111.8"
-    assert st(_sw(hass, "sensor", "poe_ports_active")).state == "2"
-    assert st(_sw(hass, "sensor", "wired_clients")).state == "4"
-    assert st(_sw(hass, "sensor", "iface_eth1/1_wired_clients")).state == "2"
-    assert st(_sw(hass, "sensor", "iface_eth1/1_lldp_neighbor")).state == "AH-7c0680"
-    assert st(_sw(hass, "sensor", "cpu_usage")).state == "12.0"
-    assert st(_sw(hass, "switch", "poe_eth1/1")).state == "on"
-    assert st(_sw(hass, "switch", "poe_eth1/4")).state == "off"
-    assert _sw(hass, "button", "poe_cycle_eth1/1")
-    # Port enable switches exist but are disabled by default (lock-out risk).
-    port_switch = er.async_get(hass).async_get(_sw(hass, "switch", "port_eth1/1"))
-    assert port_switch.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+    assert st(_sw(hass, "binary_sensor", "iface_1/0/1")).state == "on"
+    assert st(_sw(hass, "binary_sensor", "iface_1/0/3")).state == "off"
+    assert er.async_get(hass).async_get_entity_id("binary_sensor", DOMAIN, f"{SWITCH_MAC}_iface_0/3/1") is None
+    assert st(_sw(hass, "sensor", "iface_1/0/1_link_speed")).state == "1000"
+    assert st(_sw(hass, "sensor", "iface_1/0/4_link_speed")).state == "100"
+    assert st(_sw(hass, "sensor", "iface_1/0/4_duplex")).state == "Full"
+    assert st(_sw(hass, "sensor", "ip_address")).state == "192.168.9.64"
+    assert st(_sw(hass, "sensor", "poe_power_used")).state == "15.3"
+    assert st(_sw(hass, "sensor", "poe_power_budget")).state == "130.0"
+    assert st(_sw(hass, "sensor", "poe_power_remaining")).state == "114.7"
+    assert st(_sw(hass, "sensor", "iface_1/0/2_poe_power")).state == "8.8"
+    assert st(_sw(hass, "switch", "poe_1/0/1")).state == "on"
+    assert st(_sw(hass, "switch", "poe_1/0/3")).state == "off"
+    # LLDP: summary + detail (management address of the neighbouring AP).
+    lldp = st(_sw(hass, "sensor", "iface_1/0/2_lldp_neighbor"))
+    assert lldp.state == "AH-112200"
+    assert lldp.attributes["management_address"] == "192.168.9.73"
+    assert st(_sw(hass, "sensor", "iface_1/0/1_lldp_neighbor")).state == "PC-9"
+    # MAC table: uplink 1/0/9 (21 MACs, LLDP neighbour core-switch) excluded from wired clients.
+    assert st(_sw(hass, "sensor", "iface_1/0/9_wired_clients")).state == "21"
+    assert st(_sw(hass, "sensor", "iface_1/0/7_wired_clients")).state == "3"
+    assert st(_sw(hass, "sensor", "wired_clients")).state == "9"
+    # Port 1/0/5 is shut down in the running config.
+    port5 = er.async_get(hass).async_get(_sw(hass, "switch", "port_1/0/5"))
+    assert port5.disabled_by is er.RegistryEntryDisabler.INTEGRATION
     # No Wi-Fi entities on a switch.
     ents = er.async_entries_for_config_entry(er.async_get(hass), switch_entry.entry_id)
     assert not [e for e in ents if "wifi" in e.unique_id or "ssid" in e.unique_id]
-    # Wired client tracked via the MAC address table.
-    tracker = st(_sw(hass, "device_tracker", "tracker_a4:c3:f0:aa:00:02"))
-    assert tracker.state == "home"
-    assert tracker.attributes["port"] == "eth1/2"
+    # Trackers: camera on an access port is home; a MAC behind the uplink is not.
+    cam = st(_sw(hass, "device_tracker", "tracker_b8:a4:4f:00:d3:de"))
+    assert cam.state == "home" and cam.attributes["port"] == "1/0/4"
+    assert st(_sw(hass, "device_tracker", "tracker_00:15:5d:00:00:01")).state == "not_home"
 
 
-async def test_switch_poe_control(hass: HomeAssistant, switch_entry: MockConfigEntry) -> None:
+async def test_switch_lldp_offers_unconfigured_ap(hass: HomeAssistant, switch_entry: MockConfigEntry) -> None:
+    calls = switch_entry.discovery_calls  # type: ignore[attr-defined]
+    assert len(calls) == 1
+    assert calls[0].kwargs["data"] == {CONF_HOST: "192.168.9.73", "mac": "80:95:62:11:22:00", "name": "AH-112200"}
+
+
+async def test_switch_poe_and_port_control(hass: HomeAssistant, switch_entry: MockConfigEntry) -> None:
     client = FakeClient.instances[-1]
     client.commands.clear()
-    await hass.services.async_call("switch", "turn_off", {"entity_id": _sw(hass, "switch", "poe_eth1/2")}, blocking=True)
-    assert client.commands[:2] == ["interface eth1/2 pse shutdown", "save config"]
+    await hass.services.async_call("switch", "turn_off", {"entity_id": _sw(hass, "switch", "poe_1/0/2")}, blocking=True)
+    assert client.commands[:6] == ["configure", "interface 1/0/2", "no poe", "exit", "exit", "write memory"]
 
     client.commands.clear()
     with patch("custom_components.aerohive_local.coordinator.asyncio.sleep", return_value=None):
         await hass.services.async_call(
-            "button", "press", {"entity_id": _sw(hass, "button", "poe_cycle_eth1/1")}, blocking=True
+            "button", "press", {"entity_id": _sw(hass, "button", "poe_cycle_1/0/1")}, blocking=True
         )
-    assert client.commands[:2] == ["interface eth1/1 pse shutdown", "no interface eth1/1 pse shutdown"]
-    assert "save config" not in client.commands
+    assert client.commands[:10] == [
+        "configure", "interface 1/0/1", "no poe", "exit", "exit",
+        "configure", "interface 1/0/1", "poe", "exit", "exit",
+    ]  # fmt: skip
+    assert "write memory" not in client.commands
+
+    client.commands.clear()
+    client.responses["interface 1/0/4"] = "An invalid interface has been used for this command."
+    registry = er.async_get(hass)
+    registry.async_update_entity(_sw(hass, "switch", "port_1/0/4"), disabled_by=None)
+    await hass.config_entries.async_reload(switch_entry.entry_id)
+    await hass.async_block_till_done()
+    client = FakeClient.instances[-1]
+    client.responses["interface 1/0/4"] = "An invalid interface has been used for this command."
+    client.commands.clear()
+    with pytest.raises(HomeAssistantError, match="invalid interface"):
+        await hass.services.async_call(
+            "switch", "turn_off", {"entity_id": _sw(hass, "switch", "port_1/0/4")}, blocking=True
+        )
+    assert "write memory" not in client.commands
+
+
+async def test_integration_discovery_from_lldp(hass: HomeAssistant) -> None:
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_INTEGRATION_DISCOVERY},
+        data={CONF_HOST: "192.168.9.73", "mac": "80:95:62:11:22:00", "name": "AH-112200"},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "discovery_confirm"
+    assert result["description_placeholders"]["name"] == "AH-112200"
+
+
+async def test_config_flow_switch_uses_burned_in_mac(hass: HomeAssistant) -> None:
+    original = FakeClient.__init__
+
+    def init(self, *args: Any, **kwargs: Any) -> None:
+        original(self, *args, **kwargs)
+        self.hostname = "AH-Switch"
+        self.dialect = "switch"
+        self.responses = _switch_responses()
+
+    with patch.object(FakeClient, "__init__", init):
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "manual"})
+        with patch("custom_components.aerohive_local.async_setup_entry", return_value=True):
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {**USER_INPUT, CONF_HOST: "192.168.9.64"}
+            )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "AH-Switch"
+    assert result["result"].unique_id == SWITCH_MAC
+    assert "show interface" not in FakeClient.instances[-1].commands

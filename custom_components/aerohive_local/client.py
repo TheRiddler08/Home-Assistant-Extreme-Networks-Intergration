@@ -16,7 +16,7 @@ from typing import Any
 
 import asyncssh
 
-from .commands import DISABLE_PAGING_COMMANDS, redact
+from .commands import DIALECT_HIVEOS, DIALECT_SWITCH, DISABLE_PAGING_COMMANDS, redact
 from .parsers import (
     CONFIRM_TAIL_RE,
     MORE_TAIL_RE,
@@ -121,6 +121,8 @@ class AerohiveClient:
         self._last_command = 0.0
         self.hostname: str | None = None
         self.prompt_mode: str | None = None
+        self.prompt_submode: str | None = None  # "Config", "Interface 1/0/1" (switch CLI)
+        self.dialect: str = DIALECT_HIVEOS
         self.paging_disabled = False
 
     @property
@@ -187,7 +189,8 @@ class AerohiveClient:
         match = PROMPT_RE.search(clean_output(banner).rstrip(" \t"))
         if match:
             self.hostname = prompt_host(match)
-            self.prompt_mode = match.group("mode")
+            self._note_prompt(match)
+            self.dialect = DIALECT_SWITCH if match.group("phost") else DIALECT_HIVEOS
         _LOGGER.debug("Connected to %s (prompt %s%s)", self._host, self.hostname, self.prompt_mode)
 
         # Switch CLIs may start in user mode ("(AH-Switch) >"): enter privileged mode.
@@ -209,14 +212,26 @@ class AerohiveClient:
         if not self.paging_disabled:
             _LOGGER.debug("%s: could not disable paging, will answer --More--", self._host)
 
+    def _note_prompt(self, match: re.Match[str]) -> None:
+        self.prompt_mode = match.group("mode")
+        self.prompt_submode = match.group("submode")
+
+    async def _ensure_privileged(self) -> None:
+        """Switch CLI: leave config modes and re-enter enable mode if needed."""
+        for _ in range(3):
+            if self.prompt_submode:
+                self._write("exit\n")
+                await self._read_until_prompt(self._command_timeout)
+                continue
+            if self.prompt_mode == ">":
+                await self._enable()
+            break
+
     async def _enable(self) -> None:
         """Send 'enable' (answering a password prompt with the login password)."""
         _LOGGER.debug("%s: entering privileged mode", self._host)
         self._write("enable\n")
-        raw = await self._read_until_prompt(self._command_timeout, password=self._password or "")
-        match = PROMPT_RE.search(clean_output(raw).rstrip(" \t"))
-        if match:
-            self.prompt_mode = match.group("mode")
+        await self._read_until_prompt(self._command_timeout, password=self._password or "")
         if self.prompt_mode != "#":
             _LOGGER.warning("%s: could not enter privileged (enable) mode; some commands may fail", self._host)
 
@@ -273,6 +288,7 @@ class AerohiveClient:
         deadline = loop.time() + timeout
         buf = ""
         confirm_from = 0
+        logins = 0
         while True:
             remaining = deadline - loop.time()
             if remaining <= 0:
@@ -295,9 +311,16 @@ class AerohiveClient:
                 self._write(" ")
                 continue
 
-            if password is not None and re.search(r"password:\s*$", buf[confirm_from:], re.IGNORECASE):
-                self._write(password + "\n")
+            tail = buf[confirm_from:]
+            if logins < 4 and re.search(r"(?:^|\n)\s*(?:user|username|login)\s*:\s*$", tail, re.IGNORECASE):
+                self._write(self._username + "\n")
                 confirm_from = len(buf)
+                logins += 1
+                continue
+            if logins < 4 and re.search(r"password\s*:\s*$", tail, re.IGNORECASE):
+                self._write((password if password is not None else (self._password or "")) + "\n")
+                confirm_from = len(buf)
+                logins += 1
                 continue
 
             if confirm:
@@ -309,6 +332,9 @@ class AerohiveClient:
                     continue
 
             if self._prompt_matches(clean_output(buf[-1000:])):
+                match = PROMPT_RE.search(clean_output(buf[-1000:]).rstrip(" \t"))
+                if match:
+                    self._note_prompt(match)
                 return buf
 
     async def _exec(self, command: str, timeout: float, *, confirm: bool = False) -> str:
@@ -330,6 +356,7 @@ class AerohiveClient:
         confirm: bool = False,
         retry: bool = True,
         check: bool = False,
+        keep_mode: bool = False,
     ) -> str:
         """Run one command and return its output (echo and prompt removed).
 
@@ -344,6 +371,8 @@ class AerohiveClient:
                 try:
                     if not self.connected:
                         await self._open()
+                    elif self.dialect == DIALECT_SWITCH and not keep_mode:
+                        await self._ensure_privileged()
                     _LOGGER.debug("%s: > %s", self._host, redact(command))
                     output = await self._exec(command, timeout, confirm=confirm)
                 except AerohiveAuthError:
@@ -367,12 +396,38 @@ class AerohiveClient:
     async def run_many(self, commands: Sequence[str], *, check: bool = False) -> list[str]:
         return [await self.run(cmd, check=check) for cmd in commands]
 
+    async def run_sequence(self, commands: Sequence[str]) -> list[str]:
+        """Run commands that depend on CLI mode (configure -> interface -> ...).
+
+        Mode is kept between them; on any error the session is returned to
+        privileged mode before the error is raised. No automatic retry, so a
+        half-applied block is never replayed.
+        """
+        outputs: list[str] = []
+        try:
+            for cmd in commands:
+                out = await self.run(cmd, keep_mode=True, retry=False)
+                outputs.append(out)
+                error = find_cli_error(out)
+                if error:
+                    raise AerohiveCommandError(cmd, error)
+        finally:
+            if self.connected and self.dialect == DIALECT_SWITCH:
+                async with self._lock:
+                    try:
+                        await self._ensure_privileged()
+                    except AerohiveError:
+                        await self._close()
+        return outputs
+
     async def reboot(self, command: str = "reboot") -> None:
         """Send reboot, confirm, and drop the session (device goes away)."""
         async with self._lock:
             await self._throttle()
             if not self.connected:
                 await self._open()
+            elif self.dialect == DIALECT_SWITCH:
+                await self._ensure_privileged()
             try:
                 _LOGGER.debug("%s: > %s", self._host, command)
                 output = await self._exec(command, 15, confirm=True)

@@ -9,7 +9,7 @@ Tested against output from:
 | --- | --- | --- |
 | Extreme Networks AP460C | IQ Engine 10.5r3 build-278650 | wifi0 2.4 GHz (`radio_axg0`), wifi1 5 GHz (`radio_axa0`), wifi2 unused |
 | Aerohive BR100 | HiveOS (circa 2014) | wifi0 2.4 GHz (`radio_ng0`), eth0 WAN, eth1–eth4 |
-| Aerohive SR2208P | HiveOS (switch) | 8× PoE ports + uplinks, `eth1/1`… (synthetic samples, please send real ones) |
+| Aerohive SR2208P | Switch software 1.0.1.28 (FASTPATH-style CLI) | 8× PoE+ ports 1/0/1–1/0/8, 2 dual-media uplinks 1/0/9–1/0/10 |
 
 > **Status:** the `show interface`, `show ssid` and `show version` parsers are built
 > from real AP460C output. The `show station`, `show interface wifiN` and `show boot-param`
@@ -212,28 +212,40 @@ minutes, and right after any change made from Home Assistant.
 
 ## Switches (SR2208P and other SR-series)
 
-> **Note:** the SR2208P runs a FASTPATH-style switch CLI (prompt `(AH-Switch) #`), not HiveOS.
-> The integration can log in to it: it handles the `(name) #` / `(name) >` prompt,
-> `enable`, `terminal length 0` and `--More-- or (q)uit`. The switch-specific commands
-> below were written for HiveOS syntax and are being adapted from real output.
+The SR2208P runs a FASTPATH-style switch CLI (prompt `(AH-Switch) #`, ports named `1/0/1`),
+not HiveOS. The integration detects this from the prompt and uses the switch's own
+commands. Verified against an SR2208P on software 1.0.1.28:
 
-Switches are detected automatically: the platform starts with `SR`, or ports are named
-`eth1/1`. They get:
+| Data | Command |
+| --- | --- |
+| Model, firmware, serial, MAC | `show version` |
+| IP / netmask / gateway | `show network` |
+| Port link, speed, duplex, admin state | `show port all` |
+| PoE budget / consumed / remaining | `show poe` |
+| Clients per port | `show mac-addr-table` |
+| LLDP neighbours + their IP and capabilities | `show lldp remote-device all` + `… detail <port>` (every 15 min) |
+
+On connect it answers a `User:` / `Password:` prompt if the switch asks again, runs `enable`
+if the session starts at `>`, and runs `terminal length 0`.
 
 | Entity | Notes |
 | --- | --- |
-| `Eth1/N link` binary sensor, link speed, duplex, RX/TX throughput | per port |
-| `Eth1/N PoE` switch | PoE on/off (`interface eth1/N pse shutdown`) |
-| `Eth1/N PoE power cycle` button | PoE off for 5 s then on, e.g. to reboot a hung AP or camera. Not saved; the end state is unchanged |
-| `Eth1/N PoE power` (W), `PoE status` (+ class, max power, disabled) | from `show pse` |
-| PoE power used / budget / remaining, PoE ports active | device level |
-| `Eth1/N clients` (attribute `clients`: MAC + VLAN) and `Wired clients` | from the MAC address table |
-| `Eth1/N LLDP neighbor` (attributes: chassis ID, port ID, management address…) | what's plugged in, refreshed every 15 min |
-| `Eth1/N enabled` switch | **disabled by default**: shutting down the port Home Assistant reaches the switch through locks you out |
-| Firmware, CPU, memory, uptime, IP, serial, reboot | same as the APs |
+| `Port 1/0/N link` binary sensor, link speed, duplex | per port (1/0/1–1/0/10; port-channels skipped) |
+| `Port 1/0/N clients` (attribute `clients`: MAC + VLAN) | from the MAC table |
+| `Wired clients` | MACs on access ports. **Uplink ports are excluded**: a port whose LLDP neighbour is a switch/router (e.g. 1/0/9 → your core switch), or one with ≥16 MACs |
+| `Port 1/0/N LLDP neighbor` | system name (or chassis ID). Attributes: management IP, port ID, capabilities |
+| PoE power used / budget / remaining | device level |
+| IP address, firmware, serial number, reboot | `reload`, confirmations answered |
+| `Port 1/0/N PoE` switch, `PoE power`, `PoE status`, `PoE power cycle` button | only if a per-port PoE command works (see assumptions) |
+| `Port 1/0/N enabled` switch | **disabled by default**: shutting down the port Home Assistant reaches the switch through locks you out |
+| RX / TX throughput per port | only if `show interface ethernet <port>` reports octet counters |
 
-The BR100's Ethernet ports also get the clients, LLDP and port switch entities, and PoE
-too if its firmware reports it.
+**Finds your APs for you:** when a configured switch or AP sees an Aerohive/Extreme device
+as an LLDP neighbour, with a management IP, that isn't set up yet, it shows up as
+**Discovered** in Settings → Devices & services, so you only need to enter the login.
+
+Device trackers work for wired clients too. A tracked MAC is "home" while it's learned on
+one of the switch's access ports.
 
 ## Services
 
@@ -365,27 +377,27 @@ These commands and formats couldn't be checked against real hardware. Please tes
 17. **`show hw-info`** reports `Serial number:` and `Hardware revision:`.
     Any of the commands in 13–17 that the firmware rejects are skipped quietly.
 
-18. **Switch port names** are `eth1/1` … `eth1/10` in `show interface`, with optional
-    `Speed`/`Duplex` columns.
-19. **PoE status** comes from `show pse` (then `show poe`, then `show interface pse`; the
-    first one accepted is used). The parser looks for a port column and power/status/admin/class
-    columns by name, plus "budget/consumption/remaining" summary lines.
-20. **PoE on/off** uses `interface <port> pse shutdown` / `no interface <port> pse shutdown`.
-21. **Port on/off** uses `interface <port> shutdown` / `no interface <port> shutdown`.
-22. **MAC address table** comes from `show mac-address-table` (then `… all`, then `show fdb`).
-    Any line with a MAC and a port is used.
-23. **LLDP** comes from `show lldp neighbor(s)`, as either a table or `Key: value` blocks.
-24. **Hidden SSID** uses `ssid <name> hide-ssid`.
-25. **Create/delete SSID** uses `security-object <n>`, `ssid <n>`,
-    `ssid <n> security-object <n>`, `interface wifiN ssid <n>`, and the `no …` forms to delete.
-26. **DHCP/scan MAC prefixes** are a best-effort list of Aerohive/Extreme OUIs
-    (`custom_components/aerohive_local/discovery.py`). Tell me your devices' first 6 MAC
-    digits if one isn't recognised.
+18. **SR switch per-port PoE status** is read with `show poe port all`, then `show poe port info all`,
+    then `show poe port configuration all`. Not captured yet.
+19. **SR switch PoE on/off** uses `configure` → `interface 1/0/N` → `poe` / `no poe` → `exit` → `exit`.
+20. **SR switch port on/off** uses the same block with `shutdown` / `no shutdown`.
+21. **SR switch save** is `write memory`, answering `y` to the confirmation.
+22. **SR switch counters** come from `show interface ethernet 1/0/N`, as
+    `Total Packets Received (Octets)` / `Total Packets Transmitted (Octets)`.
+23. **SR switch admin state** comes from the running config (`interface 1/0/N` / `shutdown` /
+    `no poe` blocks) and from `show port all`.
+24. **HiveOS-style switches** (older SR firmware with an `AH-xxxx#` prompt): `show pse`,
+    `show mac-address-table`, `interface ethN/N pse shutdown`. These are guesses.
+25. **Hidden SSID** uses `ssid <name> hide-ssid`.
+26. **Create/delete SSID** uses `security-object <n>`, `ssid <n>`, `ssid <n> security-object <n>`,
+    `interface wifiN ssid <n>`, and the `no …` forms to delete.
+27. **DHCP/scan MAC prefixes** are a best-effort list (`discovery.py`), now including
+    `80:95:62` and `B8:7C:F2` from your devices.
 
 Please also send me `run_show_command` output for `show interface eth0`, `show interface wifi0.1`,
-`show interface mgt0`, `show cpu`, `show memory` and `show hw-info`. From the SR2208P, send
-`show version`, `show interface`, `show interface eth1/1`, `show pse`,
-`show mac-address-table` and `show lldp neighbor`.
+`show interface mgt0`, `show cpu`, `show memory` and `show hw-info`. From the SR2208P, please send
+`show poe port all` (or whichever of `show poe ?` works), `show interface ethernet 1/0/1`,
+`show running-config` (only the `interface 1/0/…` blocks are needed) and `show switch`.
 
 ## Development
 

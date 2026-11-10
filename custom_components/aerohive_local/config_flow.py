@@ -28,6 +28,7 @@ from homeassistant.helpers.selector import (
 
 from . import async_create_client
 from .client import AerohiveAuthError, AerohiveError
+from .commands import DIALECT_SWITCH
 from .const import (
     CONF_DETAILED_STATS,
     CONF_ENABLE_ALL,
@@ -87,15 +88,14 @@ async def _probe(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     client = await async_create_client(hass, data)
     try:
         version = parse_show_version(await client.run("show version"))
-        interfaces = parse_show_interface(await client.run("show interface"))
+        mac = version.mac
+        if client.dialect != DIALECT_SWITCH:
+            interfaces = parse_show_interface(await client.run("show interface"))
+            mgt = interfaces.get("mgt0")
+            mac = (mgt.mac if mgt else None) or mac
     finally:
         await client.close()
-    mgt = interfaces.get("mgt0")
-    return {
-        "mac": mgt.mac if mgt else None,
-        "hostname": client.hostname,
-        "platform": version.platform,
-    }
+    return {"mac": mac, "hostname": client.hostname, "platform": version.platform}
 
 
 class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -244,6 +244,17 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
         self._discovered_host = host
         name = discovery_info.hostname or host
         self.context["title_placeholders"] = {"name": name, "host": host}
+        return await self.async_step_discovery_confirm()
+
+    async def async_step_integration_discovery(self, discovery_info: dict[str, Any]) -> ConfigFlowResult:
+        """A configured device saw this AP/switch as an LLDP neighbour."""
+        host = discovery_info[CONF_HOST]
+        mac = normalize_mac(discovery_info.get("mac"))
+        await self.async_set_unique_id(mac or host)
+        self._abort_if_unique_id_configured(updates={CONF_HOST: host})
+        self._async_abort_entries_match({CONF_HOST: host})
+        self._discovered_host = host
+        self.context["title_placeholders"] = {"name": discovery_info.get("name") or host, "host": host}
         return await self.async_step_discovery_confirm()
 
     async def async_step_discovery_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:

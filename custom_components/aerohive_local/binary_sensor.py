@@ -12,7 +12,7 @@ from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import AerohiveConfigEntry, AerohiveCoordinator, AerohiveData
-from .entity import AerohiveEntity, async_add_dynamic_entities, extra_attrs
+from .entity import AerohiveEntity, async_add_dynamic_entities, extra_attrs, port_label
 
 PARALLEL_UPDATES = 0
 
@@ -40,7 +40,7 @@ class AerohiveInterfaceBinarySensor(AerohiveEntity, BinarySensorEntity):
     def __init__(self, coordinator: AerohiveCoordinator, name: str) -> None:
         super().__init__(coordinator, f"iface_{name}")
         self._iface = name
-        self._attr_name = f"{name.capitalize()} link"
+        self._attr_name = f"{port_label(name)} link"
 
     @property
     def available(self) -> bool:

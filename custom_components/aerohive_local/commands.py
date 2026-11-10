@@ -185,3 +185,49 @@ def delete_ssid(ssid: str, bound_radios: list[str], security_object: str | None)
     if security_object and security_object == ssid:
         cmds.append(f"no security-object {quote(security_object, 'security object')}")
     return cmds
+
+
+# --------------------------------------------------------------------------
+# SR-series switch CLI (FASTPATH-style, prompt "(AH-Switch) #")
+# --------------------------------------------------------------------------
+# Verified against an SR2208P (software 1.0.1.28): show version, show network,
+# show port all, show poe, show mac-addr-table, show lldp remote-device ...
+# Assumptions (unverified): per-port PoE status commands, config-mode
+# commands below and "write memory".
+
+DIALECT_HIVEOS = "hiveos"
+DIALECT_SWITCH = "switch"
+
+SW_SHOW_VERSION = "show version"
+SW_SHOW_NETWORK = "show network"
+SW_SHOW_PORTS = "show port all"
+SW_SHOW_POE = "show poe"
+SW_POE_PORT_COMMANDS = ("show poe port all", "show poe port info all", "show poe port configuration all")
+SW_MAC_TABLE = "show mac-addr-table"
+SW_LLDP = "show lldp remote-device all"
+SW_LLDP_DETAIL = "show lldp remote-device detail {port}"
+SW_PORT_DETAIL = "show interface ethernet {port}"
+SW_SAVE = "write memory"
+SW_REBOOT = "reload"
+
+_USP_CMD_RE = re.compile(r"^[1-9]\d*/\d+/\d+$")
+
+
+def validate_switch_port(port: str) -> str:
+    port = (port or "").strip()
+    if not _USP_CMD_RE.match(port):
+        raise InvalidArgument(f"Invalid switch port: {port!r} (expected unit/slot/port, e.g. 1/0/3)")
+    return port
+
+
+def switch_interface_block(port: str, lines: list[str]) -> list[str]:
+    """Enter config mode for one interface, run lines, and return to privileged mode."""
+    return ["configure", f"interface {validate_switch_port(port)}", *lines, "exit", "exit"]
+
+
+def switch_port_enable(port: str, enable: bool) -> list[str]:
+    return switch_interface_block(port, ["no shutdown" if enable else "shutdown"])
+
+
+def switch_poe(port: str, enable: bool) -> list[str]:
+    return switch_interface_block(port, ["poe" if enable else "no poe"])

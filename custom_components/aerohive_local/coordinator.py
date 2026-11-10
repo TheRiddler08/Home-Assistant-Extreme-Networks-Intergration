@@ -9,9 +9,11 @@ import logging
 import re
 import time
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY, ConfigEntry
+from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.helpers import discovery_flow
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -35,6 +37,7 @@ from .const import (
     MANUFACTURER,
     SLOW_REFRESH_SECONDS,
 )
+from .discovery import is_aerohive_mac
 from .parsers import (
     BootParams,
     FdbEntry,
@@ -50,12 +53,16 @@ from .parsers import (
     SystemStats,
     VersionInfo,
     find_cli_error,
+    is_aerohive_hostname,
     is_unsupported_command,
+    normalize_mac,
     parse_lldp_neighbors,
     parse_mac_address_table,
     parse_running_config_summary,
     parse_show_boot_param,
+    parse_show_network,
     parse_show_poe,
+    parse_show_port_all,
     parse_show_cpu,
     parse_show_hw_info,
     parse_show_interface,
@@ -70,6 +77,8 @@ from .parsers import (
 _LOGGER = logging.getLogger(__name__)
 
 type AerohiveConfigEntry = ConfigEntry[AerohiveCoordinator]
+
+UPLINK_MAC_THRESHOLD = 16
 
 
 @dataclass
@@ -141,8 +150,29 @@ class AerohiveData:
     def port_clients(self, port: str) -> list[FdbEntry]:
         return [e for e in self.fdb if e.port == port]
 
+    def uplink_ports(self) -> set[str]:
+        """Ports leading to other switches/routers (their MACs are not 'our' clients).
+
+        An LLDP neighbour that is a bridge/router (and not an AP) marks an
+        uplink; without LLDP, a port with many learned MACs is assumed to be one.
+        """
+        uplinks: set[str] = set()
+        counts: dict[str, int] = {}
+        for entry in self.fdb:
+            if entry.port:
+                counts[entry.port] = counts.get(entry.port, 0) + 1
+        for port, count in counts.items():
+            neighbor = self.lldp.get(port)
+            if neighbor is not None and neighbor.is_network_device:
+                uplinks.add(port)
+            elif count >= UPLINK_MAC_THRESHOLD and (neighbor is None or not neighbor.is_access_point):
+                uplinks.add(port)
+        return uplinks
+
     def wired_client_macs(self) -> set[str]:
-        return {e.mac for e in self.fdb}
+        """MACs learned on access ports (uplink ports excluded)."""
+        uplinks = self.uplink_ports()
+        return {e.mac for e in self.fdb if e.port not in uplinks}
 
     def port_enabled(self, port: str) -> bool | None:
         """Administrative state of a port, best effort."""
@@ -176,7 +206,7 @@ class AerohiveData:
     @property
     def mac(self) -> str | None:
         mgt = self.interfaces.get("mgt0")
-        return mgt.mac if mgt else None
+        return (mgt.mac if mgt else None) or self.version.mac
 
     @property
     def radios(self) -> dict[str, InterfaceDetail]:
@@ -234,7 +264,9 @@ class AerohiveData:
         return _sum_rates([self.throughput[r] for r in self.radio_names() if r in self.throughput])
 
     def wired_throughput(self) -> Throughput:
-        return _sum_rates([t for n, t in self.throughput.items() if n.startswith("eth") and "." not in n])
+        return _sum_rates(
+            [t for n, t in self.throughput.items() if n in self.interfaces and self.interfaces[n].is_port]
+        )
 
     def ssid_throughput(self, ssid: str) -> Throughput:
         return _sum_rates(
@@ -271,6 +303,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._config_dirty = True
         self._lldp: dict[str, LldpNeighbor] = {}
         self._chosen: dict[str, str] = {}
+        self._port_detail_ok: bool | None = None
+        self._announced: set[str] = set()
         # name -> (monotonic time, rx_bytes, tx_bytes) from the previous poll
         self._counters: dict[str, tuple[float, int | None, int | None]] = {}
 
@@ -313,7 +347,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         targets = list(data.radio_names())
         if self.detailed_stats:
             for name, iface in sorted(data.interfaces.items()):
-                if name.startswith("eth") and iface.parent is None and iface.is_up:
+                if iface.is_port and iface.is_up:
                     targets.append(name)
                 elif iface.parent in targets and iface.ssid and iface.is_up is not False:
                     targets.append(name)
@@ -339,7 +373,10 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
 
     async def _fetch(self) -> AerohiveData:
         data = AerohiveData()
-        data.version = parse_show_version(await self.client.run("show version"))
+        version_out = await self.client.run("show version")
+        if self.client.dialect == commands.DIALECT_SWITCH:
+            return await self._fetch_switch(data, version_out)
+        data.version = parse_show_version(version_out)
         data.interfaces = parse_show_interface(await self.client.run("show interface"))
         ssid_out = await self._optional("show ssid")
         data.ssids = parse_show_ssid(ssid_out) if ssid_out else {}
@@ -382,6 +419,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             self._config_dirty = True  # re-read on the next poll
             if out := await self._first_supported("lldp", commands.LLDP_COMMANDS):
                 self._lldp = parse_lldp_neighbors(out)
+                self._announce_neighbors()
             if out := await self._optional("show boot-param"):
                 self._boot_params = parse_show_boot_param(out)
             if out := await self._optional("show hw-info"):
@@ -404,6 +442,84 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 self._boot_time = boot.replace(microsecond=0)
         data.boot_time = self._boot_time
         return data
+
+    async def _fetch_switch(self, data: AerohiveData, version_out: str) -> AerohiveData:
+        """Poll an SR-series switch (FASTPATH-style CLI)."""
+        data.version = parse_show_version(version_out)
+        data.hostname = self.client.hostname
+        if out := await self._optional(commands.SW_SHOW_PORTS):
+            data.interfaces = parse_show_port_all(out)
+
+        if self.detailed_stats and self._port_detail_ok is not False:
+            for name, iface in data.interfaces.items():
+                if not (iface.is_port and iface.is_up):
+                    continue
+                out = await self.client.run(commands.SW_PORT_DETAIL.format(port=name))
+                if is_unsupported_command(out):
+                    self._port_detail_ok = False
+                    break
+                self._port_detail_ok = True
+                detail = parse_show_interface_detail(out, name)
+                data.details[name] = detail
+                rate = self._rate(name, detail, time.monotonic())
+                if rate is not None:
+                    data.throughput[name] = rate
+
+        if out := await self._optional(commands.SW_SHOW_POE):
+            summary, ports = parse_show_poe(out)
+            data.poe = summary if (summary.budget_w is not None or summary.used_w is not None) else None
+            data.poe_ports = ports
+        if not data.poe_ports and (out := await self._first_supported("poe_ports", commands.SW_POE_PORT_COMMANDS)):
+            data.poe_ports = parse_show_poe(out)[1]
+        if out := await self._optional(commands.SW_MAC_TABLE):
+            data.fdb = parse_mac_address_table(out)
+
+        now = time.monotonic()
+        if self._config_dirty:
+            self._config_dirty = False
+            if out := await self._optional("show running-config"):
+                self._config = parse_running_config_summary(out)
+        if self._slow_at is None or now - self._slow_at > SLOW_REFRESH_SECONDS:
+            self._slow_at = now
+            self._config_dirty = True
+            if out := await self._optional(commands.SW_SHOW_NETWORK):
+                self._mgt = parse_show_network(out)
+            if out := await self._optional(commands.SW_LLDP):
+                neighbors = parse_lldp_neighbors(out)
+                # The summary has no management address/capabilities: read the detail.
+                for port in list(neighbors):
+                    detail_out = await self._optional(commands.SW_LLDP_DETAIL.format(port=port))
+                    if detail_out and (detail := parse_lldp_neighbors(detail_out).get(port)):
+                        neighbors[port] = detail
+                self._lldp = neighbors
+                self._announce_neighbors()
+        if self._mgt is not None:
+            data.details["mgt0"] = self._mgt
+        data.config = self._config
+        data.lldp = self._lldp
+        return data
+
+    def _announce_neighbors(self) -> None:
+        """Offer unconfigured Aerohive/Extreme neighbours seen via LLDP for setup."""
+        configured = {
+            e.data.get(CONF_HOST) for e in self.hass.config_entries.async_entries(DOMAIN)
+        } | {e.unique_id for e in self.hass.config_entries.async_entries(DOMAIN)}
+        for neighbor in self._lldp.values():
+            host = neighbor.management_address
+            mac = normalize_mac(neighbor.chassis_id)
+            looks_aerohive = is_aerohive_hostname(neighbor.system_name) or is_aerohive_mac(mac)
+            if not host or not looks_aerohive or host in configured or mac in configured:
+                continue
+            if host in self._announced:
+                continue
+            self._announced.add(host)
+            _LOGGER.debug("%s: offering LLDP neighbour %s (%s) for setup", self.client.host, neighbor.system_name, host)
+            discovery_flow.async_create_flow(
+                self.hass,
+                DOMAIN,
+                context={"source": SOURCE_INTEGRATION_DISCOVERY},
+                data={CONF_HOST: host, "mac": mac, "name": neighbor.system_name or host},
+            )
 
     # ------------------------------------------------------------------ #
     # Device info
@@ -437,7 +553,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
     # Control
     # ------------------------------------------------------------------ #
 
-    async def _apply(self, cmds: list[str], *, secret: str | None = None) -> None:
+    async def _apply(self, cmds: list[str], *, secret: str | None = None, sequence: bool = False) -> None:
         """Run config commands, verify, save config and refresh."""
 
         def scrub(text: str) -> str:
@@ -445,6 +561,10 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             return text.replace(secret, "***") if secret else text
 
         try:
+            if sequence:
+                # Mode-dependent block (switch config mode); errors raise.
+                await self.client.run_sequence(cmds)
+                cmds = []
             for cmd in cmds:
                 output = await self.client.run(cmd)
                 error = find_cli_error(output)
@@ -467,8 +587,15 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._config_dirty = True
         await self.async_request_refresh()
 
+    @property
+    def is_switch_cli(self) -> bool:
+        return self.client.dialect == commands.DIALECT_SWITCH
+
     async def _save(self) -> None:
-        output = await self.client.run(commands.SAVE_CONFIG, timeout=90, retry=False)
+        if self.is_switch_cli:
+            output = await self.client.run(commands.SW_SAVE, timeout=90, retry=False, confirm=True)
+        else:
+            output = await self.client.run(commands.SAVE_CONFIG, timeout=90, retry=False)
         error = find_cli_error(output)
         if error:
             raise HomeAssistantError(f"{self.client.host}: 'save config' failed: {error}")
@@ -545,13 +672,32 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         await self._apply(cmds)
 
     async def async_set_port_enabled(self, port: str, enable: bool) -> None:
-        await self._apply([self._validated(commands.port_enable, port, enable)])
+        if self.is_switch_cli:
+            await self._apply(self._validated(commands.switch_port_enable, port, enable), sequence=True)
+        else:
+            await self._apply([self._validated(commands.port_enable, port, enable)])
 
     async def async_set_poe(self, port: str, enable: bool) -> None:
-        await self._apply([self._validated(commands.port_poe, port, enable)])
+        if self.is_switch_cli:
+            await self._apply(self._validated(commands.switch_poe, port, enable), sequence=True)
+        else:
+            await self._apply([self._validated(commands.port_poe, port, enable)])
 
     async def async_power_cycle_poe(self, port: str, off_seconds: float = 5) -> None:
         """Turn PoE off and on again (runtime only, nothing is saved)."""
+        if self.is_switch_cli:
+            off_block = self._validated(commands.switch_poe, port, False)
+            on_block = self._validated(commands.switch_poe, port, True)
+            try:
+                await self.client.run_sequence(off_block)
+                await asyncio.sleep(off_seconds)
+                await self.client.run_sequence(on_block)
+            except AerohiveCommandError as err:
+                raise HomeAssistantError(str(err)) from err
+            except AerohiveError as err:
+                raise HomeAssistantError(f"Error communicating with {self.client.host}: {err}") from err
+            await self.async_request_refresh()
+            return
         off = self._validated(commands.port_poe, port, False)
         on = self._validated(commands.port_poe, port, True)
         try:
@@ -584,7 +730,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
 
     async def async_reboot(self) -> None:
         try:
-            await self.client.reboot(commands.REBOOT)
+            await self.client.reboot(commands.SW_REBOOT if self.is_switch_cli else commands.REBOOT)
         except AerohiveCommandError as err:
             raise HomeAssistantError(str(err)) from err
         except AerohiveConnectionError as err:

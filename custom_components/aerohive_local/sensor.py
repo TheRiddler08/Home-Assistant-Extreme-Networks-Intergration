@@ -36,7 +36,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_RAW_SENSORS, CONF_TRACKED_CLIENTS, DEFAULT_RAW_SENSORS
 from .coordinator import AerohiveConfigEntry, AerohiveCoordinator, AerohiveData
-from .entity import AerohiveEntity, async_add_dynamic_entities, extra_attrs, radio_label
+from .entity import AerohiveEntity, async_add_dynamic_entities, extra_attrs, port_label, radio_label
 from .parsers import COUNTER_FIELDS, normalize_mac, parse_raw_value, parse_rate_mbps, radio_band
 
 PARALLEL_UPDATES = 0
@@ -103,7 +103,7 @@ def _has_wireless_rates(d: AerohiveData) -> bool:
 
 
 def _has_wired_rates(d: AerohiveData) -> bool:
-    return any(n.startswith("eth") for n in d.throughput)
+    return any(n in d.interfaces and d.interfaces[n].is_port for n in d.throughput)
 
 
 DEVICE_SENSORS: tuple[DeviceSensorDescription, ...] = (
@@ -584,7 +584,7 @@ def interface_label(data: AerohiveData, name: str) -> str:
         return radio_label(data, name)
     if iface is not None and iface.parent and iface.ssid:
         return f"{name} ({iface.ssid})"
-    return name.capitalize()
+    return port_label(name)
 
 
 class AerohiveInterfaceSensor(AerohiveEntity, SensorEntity):
