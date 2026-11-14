@@ -61,7 +61,7 @@
     "custom_components.aerohive_local"
   ],
   "requirements": [
-    "asyncssh==2.21.0"
+    "asyncssh>=2.21.0"
   ],
-  "version": "0.6.2"
+  "version": "0.6.3"
 }

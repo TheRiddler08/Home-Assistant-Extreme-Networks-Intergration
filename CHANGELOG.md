@@ -3,6 +3,13 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.6.3] - 2026-11-14
+
+### Fixed
+- Requirement relaxed to `asyncssh>=2.21.0`: Home Assistant now ships asyncssh 2.24.0, and the
+  exact 2.21.0 pin conflicted with it (hassfest error, possible install failure on new
+  Home Assistant versions).
+
 ## [0.6.2] - 2026-11-14
 
 ### Changed
@@ -82,6 +89,7 @@ GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 - Initial release: HiveOS / IQ Engine APs over SSH with legacy algorithms; sensors, SSID
   switches, max clients, Wi-Fi key, reboot, device trackers, debug `show` command action.
 
+[0.6.3]: https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/releases/tag/v0.6.3
 [0.6.2]: https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/releases/tag/v0.6.2
 [0.6.1]: https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/releases/tag/v0.6.1
 [0.6.0]: https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/releases/tag/v0.6.0
