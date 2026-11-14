@@ -5,7 +5,7 @@
     "dhcp"
   ],
   "codeowners": [
-    "@theriddler08"
+    "@TheRiddler08"
   ],
   "config_flow": true,
   "dependencies": [
@@ -52,10 +52,10 @@
       "macaddress": "B87CF2*"
     }
   ],
-  "documentation": "https://github.com/theriddler08/home-assistant-extreme-networks-intergration",
+  "documentation": "https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/tree/main/docs",
   "integration_type": "device",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/theriddler08/home-assistant-extreme-networks-intergration/issues",
+  "issue_tracker": "https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/issues",
   "loggers": [
     "asyncssh",
     "custom_components.aerohive_local"
@@ -63,5 +63,5 @@
   "requirements": [
     "asyncssh==2.21.0"
   ],
-  "version": "0.6.1"
+  "version": "0.6.2"
 }

@@ -1,0 +1,20 @@
+name: Feature request
+description: Suggest a new entity, control or improvement.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why is it useful?
+      description: How would you use it in Home Assistant (dashboard, automation…)?
+  - type: textarea
+    id: cli
+    attributes:
+      label: CLI command(s) that show or change it (if you know them)
+      render: text

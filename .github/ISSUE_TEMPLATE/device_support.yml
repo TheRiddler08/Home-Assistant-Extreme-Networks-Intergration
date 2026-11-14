@@ -1,0 +1,61 @@
+name: Device support request
+description: Report a model or firmware that's not yet supported, or only partly.
+labels: ["device support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Real device output is what makes support possible. Run each command with
+        **Developer tools → Actions → Aerohive Local: Run show command** (keys and passwords are
+        masked), then remove serial numbers and anything private. Replacing the last digits of
+        MAC addresses is fine.
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      placeholder: "AP230 / SR2224P / BR200"
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      placeholder: "IQ Engine 10.6r1 / 1.0.1.28"
+    validations:
+      required: true
+  - type: dropdown
+    id: state
+    attributes:
+      label: What works today?
+      options:
+        - Can't be added (connection or setup fails)
+        - Added, but data is missing or wrong
+        - Mostly works, a few things are wrong
+        - Everything works (please list it as tested!)
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: What's missing or wrong?
+  - type: textarea
+    id: version
+    attributes:
+      label: "`show version`"
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: interface
+    attributes:
+      label: "`show interface` (APs / routers) or `show port all` (switches)"
+      render: text
+  - type: textarea
+    id: more
+    attributes:
+      label: Other output
+      description: |
+        APs / routers: `show ssid`, `show station` (with a client connected), `show interface wifi0`,
+        `show interface wifi0.1`. Switches: `show poe`, `show poe port info 1/0/1`,
+        `show mac-addr-table`, `show lldp remote-device all`. If a command is rejected, paste the error.
+      render: text

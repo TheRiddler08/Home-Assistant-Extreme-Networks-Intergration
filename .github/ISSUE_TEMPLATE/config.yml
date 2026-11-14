@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/tree/main/docs
+    about: Installation, entities, the Wi-Fi manager, supported devices and troubleshooting.
+  - name: Report a security vulnerability
+    url: https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/security/advisories/new
+    about: Please report security problems privately.

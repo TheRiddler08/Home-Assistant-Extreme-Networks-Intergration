@@ -1,0 +1,64 @@
+name: Bug report
+description: Something doesn't work as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please **don't paste passwords, Wi-Fi keys or serial numbers**.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Integration version
+      placeholder: "0.6.1"
+    validations:
+      required: true
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      placeholder: "2026.11.1"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device model and firmware
+      description: From the device page in Home Assistant, or `show version`.
+      placeholder: "AP460C, IQ Engine 10.5r3"
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        **Settings → Devices & services → Aerohive / Extreme Networks →** ⋮ next to the device →
+        **Download diagnostics**, then drag the file here. It's redacted (no host, credentials or
+        client addresses).
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug log
+      description: |
+        Add this to `configuration.yaml`, restart, reproduce the problem, then copy the lines
+        from **Settings → System → Logs**:
+        ```yaml
+        logger:
+          logs:
+            custom_components.aerohive_local: debug
+        ```
+      render: text
+  - type: textarea
+    id: output
+    attributes:
+      label: Device output (optional)
+      description: Output of the related `show` command(s), from the **Run show command** action.
+      render: text
