@@ -1,0 +1,29 @@
+
+SysName:          X450e-48p
+SysLocation:
+SysContact:       support@extremenetworks.com, +1 888 257 3000
+System MAC:       00:04:96:AA:BB:01
+System Type:      X450e-48p
+
+SysHealth check:  Enabled (Normal)
+Recovery Mode:    All
+System Watchdog:  Enabled
+
+Current Time:     Sat Nov 14 16:00:00 2026
+Timezone:         [Auto DST Disabled] GMT Offset: 0 minutes, name is UTC.
+Boot Time:        Sat Nov 14 10:00:00 2026
+Boot Count:       42
+Next Reboot:      None scheduled
+System UpTime:    6 hours 0 minutes 12 seconds
+
+Current State:    OPERATIONAL
+Image Selected:   primary
+Image Booted:     primary
+Primary ver:      12.6.3.4
+Secondary ver:    12.5.4.5
+
+Config Selected:  primary.cfg
+Config Booted:    primary.cfg
+
+primary.cfg       Created by ExtremeXOS version 12.6.3.4
+                  1234567 bytes saved on Sat Nov 14 09:00:00 2026

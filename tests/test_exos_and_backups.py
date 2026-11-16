@@ -1,0 +1,454 @@
+"""ExtremeXOS (Summit X450e) support and power-loss protection (backups, change detection, restore)."""
+
+from __future__ import annotations
+
+from datetime import timedelta
+import os
+from typing import Any
+from unittest.mock import patch
+
+import pytest
+
+from .conftest import HAS_HA, load_fixture
+
+if not HAS_HA:
+    pytest.skip("Home Assistant test dependencies not installed", allow_module_level=True)
+
+from homeassistant.const import CONF_HOST  # noqa: E402
+from homeassistant.core import HomeAssistant  # noqa: E402
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError  # noqa: E402
+from homeassistant.helpers import (  # noqa: E402
+    device_registry as dr,
+    entity_registry as er,
+    issue_registry as ir,
+)
+from homeassistant.util import dt as dt_util  # noqa: E402
+from pytest_homeassistant_custom_component.common import MockConfigEntry  # noqa: E402
+
+from custom_components.aerohive_local import backup as backup_mod  # noqa: E402
+from custom_components.aerohive_local.const import CONF_TRACKED_CLIENTS, DOMAIN  # noqa: E402
+
+from .test_init import USER_INPUT, FakeClient, fake_client  # noqa: E402, F401
+
+EXOS_MAC = "00:04:96:aa:bb:01"
+EXOS_ERROR = "                   ^\n% Invalid input detected at '^' marker."
+
+
+def _exos_responses() -> dict[str, str]:
+    return {
+        "show version": "Switch      : 800153-00-09 0905G-00001 Rev 9.0 BootROM: 1.0.5.7    IMG: 12.6.3.4\n",
+        "show switch": load_fixture("synthetic_exos_show_switch.txt"),
+        "show ports no-refresh": load_fixture("synthetic_exos_show_ports.txt"),
+        "show ports statistics no-refresh": load_fixture("synthetic_exos_show_ports_statistics.txt"),
+        "show inline-power": load_fixture("synthetic_exos_show_inline_power.txt"),
+        "show inline-power info ports": load_fixture("synthetic_exos_show_inline_power_info.txt"),
+        "show fdb": load_fixture("synthetic_exos_show_fdb.txt"),
+        "show cpu-monitoring": load_fixture("synthetic_exos_show_cpu_monitoring.txt"),
+        "show memory": load_fixture("synthetic_exos_show_memory.txt"),
+        "show configuration": load_fixture("synthetic_exos_show_configuration.txt"),
+        "show lldp neighbors": load_fixture("synthetic_exos_show_lldp_neighbors.txt"),
+        "show lldp ports 2 neighbors detailed": load_fixture("synthetic_exos_show_lldp_port_2_detail.txt"),
+        "show lldp ports 49 neighbors detailed": load_fixture("synthetic_exos_show_lldp_port_49_detail.txt"),
+        "show temperature": load_fixture("synthetic_exos_show_temperature.txt"),
+        "show fans": load_fixture("synthetic_exos_show_fans.txt"),
+        "show power": load_fixture("synthetic_exos_show_power.txt"),
+    }
+
+
+@pytest.fixture
+async def exos_entry(hass: HomeAssistant):
+    original_init = FakeClient.__init__
+    original_run = FakeClient.run
+
+    def init(self, *args: Any, **kwargs: Any) -> None:
+        original_init(self, *args, **kwargs)
+        self.hostname = "X450e-48p"
+        self.dialect = "exos"
+        self.config_unsaved = False
+        self.responses = _exos_responses()
+
+    async def run(self, command: str, **kwargs: Any) -> str:
+        out = await original_run(self, command, **kwargs)
+        if command.startswith("show") and command not in self.responses:
+            return EXOS_ERROR
+        return out
+
+    with (
+        patch.object(FakeClient, "__init__", init),
+        patch.object(FakeClient, "run", run),
+        patch("custom_components.aerohive_local.coordinator.discovery_flow.async_create_flow") as flows,
+    ):
+        entry = MockConfigEntry(
+            domain=DOMAIN, unique_id=EXOS_MAC, title="X450e-48p", minor_version=3,
+            data={**USER_INPUT, CONF_HOST: "192.168.9.65"},
+            options={CONF_TRACKED_CLIENTS: ["b8:a4:4f:00:d3:de", "00:15:5d:00:00:01"]},
+        )  # fmt: skip
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        entry.discovery_calls = flows.call_args_list  # type: ignore[attr-defined]
+        yield entry
+
+
+def _x(hass: HomeAssistant, platform: str, key: str) -> str:
+    entity_id = er.async_get(hass).async_get_entity_id(platform, DOMAIN, f"{EXOS_MAC}_{key}")
+    assert entity_id, f"no {platform} entity {key}"
+    return entity_id
+
+
+def _client() -> FakeClient:
+    return FakeClient.instances[-1]
+
+
+def _config_cmds(client: FakeClient) -> list[str]:
+    return [c for c in client.commands if not c.startswith("show")]
+
+
+# --------------------------------------------------------------------------
+# ExtremeXOS switch
+# --------------------------------------------------------------------------
+
+
+async def test_exos_entities(hass: HomeAssistant, exos_entry: MockConfigEntry) -> None:
+    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, EXOS_MAC)})
+    assert device.model == "X450e-48p"
+    assert device.sw_version == "ExtremeXOS 12.6.3.4"
+    st = hass.states.get
+    assert st(_x(hass, "binary_sensor", "iface_1")).state == "on"
+    assert st(_x(hass, "binary_sensor", "iface_3")).state == "off"
+    assert st(_x(hass, "sensor", "iface_1_link_speed")).state == "1000"
+    assert st(_x(hass, "sensor", "iface_2_duplex")).state == "Full"
+    assert st(_x(hass, "switch", "port_5")).state == "off"  # "disable ports 5"
+    assert st(_x(hass, "switch", "port_1")).state == "on"
+    assert st(_x(hass, "sensor", "iface_4_poe_power")).state == "15.2"
+    assert st(_x(hass, "switch", "poe_3")).state == "off"
+    assert st(_x(hass, "switch", "poe_1")).state == "on"
+    assert st(_x(hass, "sensor", "poe_power_used")).state == "21.0"
+    assert st(_x(hass, "sensor", "poe_power_budget")).state == "370.0"
+    assert st(_x(hass, "sensor", "temperature")).state == "43.0"
+    assert st(_x(hass, "sensor", "fan_status")).state == "Operational"
+    assert st(_x(hass, "sensor", "power_supply_status")).state == "Powered On"
+    assert st(_x(hass, "sensor", "boot_count")).state == "42"
+    assert st(_x(hass, "sensor", "image_booted")).state == "primary"
+    assert st(_x(hass, "sensor", "config_booted")).state == "primary.cfg"
+    assert st(_x(hass, "sensor", "system_state")).state == "OPERATIONAL"
+    assert st(_x(hass, "sensor", "cpu_usage")).state == "2.0"
+    assert st(_x(hass, "binary_sensor", "boot_config_problem")).state == "off"
+    assert st(_x(hass, "binary_sensor", "unsaved_config")).state == "off"
+    assert st(_x(hass, "binary_sensor", "config_changed_after_reboot")).state == "off"
+    assert st(_x(hass, "sensor", "last_backup")).state not in ("unknown", "unavailable")
+    # Port 49 leads to the core switch (LLDP): its MACs aren't wired clients of this switch.
+    assert st(_x(hass, "sensor", "wired_clients")).state == "2"
+    assert st(_x(hass, "switch", "port_49")).attributes["uplink"] is True
+    assert st(_x(hass, "device_tracker", "tracker_b8:a4:4f:00:d3:de")).state == "home"
+    assert st(_x(hass, "device_tracker", "tracker_00:15:5d:00:00:01")).state == "not_home"
+    lldp = st(_x(hass, "sensor", "iface_2_lldp_neighbor"))
+    assert lldp.state == "AH-7c0680" and lldp.attributes["management_address"] == "192.168.9.73"
+    # The unconfigured AP behind port 2 and the Extreme core switch behind port 49 are offered for setup.
+    calls = exos_entry.discovery_calls  # type: ignore[attr-defined]
+    assert sorted(c.kwargs["data"][CONF_HOST] for c in calls) == ["192.168.8.2", "192.168.9.73"]
+    # No Wi-Fi entities on a switch.
+    ents = er.async_entries_for_config_entry(er.async_get(hass), exos_entry.entry_id)
+    assert not [e for e in ents if "ssid" in e.unique_id or "wifi" in e.unique_id]
+
+
+async def test_exos_controls(hass: HomeAssistant, exos_entry: MockConfigEntry) -> None:
+    client = _client()
+    client.commands.clear()
+    await hass.services.async_call("switch", "turn_off", {"entity_id": _x(hass, "switch", "poe_4")}, blocking=True)
+    assert _config_cmds(client)[:2] == ["disable inline-power ports 4", "save configuration"]
+
+    client.commands.clear()
+    await hass.services.async_call("button", "press", {"entity_id": _x(hass, "button", "poe_cycle_1")}, blocking=True)
+    assert _config_cmds(client) == ["reset inline-power ports 1"]
+
+    client.commands.clear()
+    await hass.services.async_call("switch", "turn_on", {"entity_id": _x(hass, "switch", "port_5")}, blocking=True)
+    assert _config_cmds(client)[:2] == ["enable ports 5", "save configuration"]
+
+    with pytest.raises(HomeAssistantError, match="uplink"):
+        await hass.services.async_call("switch", "turn_off", {"entity_id": _x(hass, "switch", "port_49")}, blocking=True)
+
+    client.commands.clear()
+    await hass.services.async_call("button", "press", {"entity_id": _x(hass, "button", "reboot")}, blocking=True)
+    assert client.commands == ["reboot"]
+
+
+async def test_exos_poe_cycle_fallback(hass: HomeAssistant, exos_entry: MockConfigEntry) -> None:
+    client = _client()
+    client.responses["reset inline-power ports 1"] = EXOS_ERROR
+    client.commands.clear()
+    with patch("custom_components.aerohive_local.coordinator.asyncio.sleep", return_value=None):
+        await hass.services.async_call("button", "press", {"entity_id": _x(hass, "button", "poe_cycle_1")}, blocking=True)
+    assert _config_cmds(client) == [
+        "reset inline-power ports 1", "disable inline-power ports 1", "enable inline-power ports 1",
+    ]  # fmt: skip
+
+
+async def test_exos_unsaved_and_boot_problem(hass: HomeAssistant, exos_entry: MockConfigEntry) -> None:
+    client = _client()
+    coordinator = exos_entry.runtime_data
+    client.config_unsaved = True
+    client.responses["show switch"] = (
+        load_fixture("synthetic_exos_show_switch.txt")
+        .replace("Config Booted:    primary.cfg", "Config Booted:    Factory Default")
+    )
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(_x(hass, "binary_sensor", "unsaved_config")).state == "on"
+    problem = hass.states.get(_x(hass, "binary_sensor", "boot_config_problem"))
+    assert problem.state == "on" and "Factory Default" in problem.attributes["problems"][0]
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, f"boot_config_problem_{exos_entry.entry_id}")
+    assert issue is not None and issue.translation_key == "boot_config_problem"
+
+    # Save configuration clears the '*' marker; a good boot clears the issue.
+    client.config_unsaved = False
+    client.responses["show switch"] = load_fixture("synthetic_exos_show_switch.txt")
+    client.commands.clear()
+    await hass.services.async_call("button", "press", {"entity_id": _x(hass, "button", "save_config")}, blocking=True)
+    assert "save configuration" in client.commands
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(_x(hass, "binary_sensor", "unsaved_config")).state == "off"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, f"boot_config_problem_{exos_entry.entry_id}") is None
+
+
+# --------------------------------------------------------------------------
+# Backups and change detection
+# --------------------------------------------------------------------------
+
+
+def _backups(entry: MockConfigEntry) -> list[backup_mod.BackupFile]:
+    return backup_mod.list_backups(entry.runtime_data.backup_folder)
+
+
+def _age_backups(entry: MockConfigEntry, hours: int = 2) -> None:
+    """Pretend the existing backups were taken a while ago."""
+    for backup in _backups(entry):
+        old = (backup.created - timedelta(hours=hours)).strftime("%Y%m%d-%H%M%S")
+        os.rename(backup.path, backup.path.with_name(f"{old}.cfg"))
+
+
+async def _poll_config(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    coordinator = entry.runtime_data
+    coordinator._config_dirty = True  # noqa: SLF001
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+
+async def test_first_backup_and_external_change(hass: HomeAssistant, exos_entry: MockConfigEntry) -> None:
+    backups = _backups(exos_entry)
+    assert len(backups) == 1
+    assert "disable ports 5" in backup_mod.read_backup(backups[0].path)
+    # Unchanged config (only a comment differs): no new file.
+    client = _client()
+    client.responses["show configuration"] = "# generated at a different time\n" + client.responses["show configuration"]
+    await _poll_config(hass, exos_entry)
+    assert len(_backups(exos_entry)) == 1
+    # Someone changed the config on the CLI while the switch kept running: backed up.
+    _age_backups(exos_entry)
+    client.responses["show configuration"] += "configure ports 7 display-string printer\n"
+    await _poll_config(hass, exos_entry)
+    assert len(_backups(exos_entry)) == 2
+    assert hass.states.get(_x(hass, "binary_sensor", "config_changed_after_reboot")).state == "off"
+
+
+async def test_change_after_reboot_is_flagged_then_accepted(hass: HomeAssistant, exos_entry: MockConfigEntry) -> None:
+    client = _client()
+    _age_backups(exos_entry)
+    # Power cut: the switch rebooted 1 minute ago and lost "disable ports 5".
+    client.responses["show switch"] = load_fixture("synthetic_exos_show_switch.txt").replace(
+        "System UpTime:    6 hours 0 minutes 12 seconds", "System UpTime:    0 hours 1 minutes 0 seconds"
+    )
+    client.responses["show configuration"] = client.responses["show configuration"].replace("disable ports 5\n", "")
+    await _poll_config(hass, exos_entry)
+
+    flag = hass.states.get(_x(hass, "binary_sensor", "config_changed_after_reboot"))
+    assert flag.state == "on"
+    assert flag.attributes["lines_removed"] == 1
+    assert "- disable ports 5" in flag.attributes["changes"]
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, f"config_changed_after_reboot_{exos_entry.entry_id}")
+    assert issue is not None and issue.translation_placeholders["removed"] == "1"
+    assert len(_backups(exos_entry)) == 1  # known-good backup kept as the latest
+
+    # An unrelated change from Home Assistant doesn't hide the problem.
+    await hass.services.async_call("switch", "turn_off", {"entity_id": _x(hass, "switch", "poe_4")}, blocking=True)
+    await _poll_config(hass, exos_entry)
+    assert hass.states.get(_x(hass, "binary_sensor", "config_changed_after_reboot")).state == "on"
+    assert len(_backups(exos_entry)) == 1
+
+    # "Back up now" is refused so the known-good backup isn't replaced by accident.
+    with pytest.raises(HomeAssistantError, match="changed after a reboot"):
+        await hass.services.async_call(
+            "button", "press", {"entity_id": _x(hass, "button", "backup_config")}, blocking=True
+        )
+
+    # The user decides the current configuration is right.
+    await hass.services.async_call("button", "press", {"entity_id": _x(hass, "button", "accept_config")}, blocking=True)
+    await hass.async_block_till_done()
+    assert hass.states.get(_x(hass, "binary_sensor", "config_changed_after_reboot")).state == "off"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, f"config_changed_after_reboot_{exos_entry.entry_id}") is None
+    assert len(_backups(exos_entry)) == 2
+
+
+async def test_restore_brings_back_the_backup(hass: HomeAssistant, exos_entry: MockConfigEntry) -> None:
+    client = _client()
+    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, EXOS_MAC)})
+    _age_backups(exos_entry)
+    client.responses["show switch"] = load_fixture("synthetic_exos_show_switch.txt").replace(
+        "6 hours 0 minutes 12 seconds", "0 hours 1 minutes 0 seconds"
+    )
+    good_config = client.responses["show configuration"]
+    client.responses["show configuration"] = good_config.replace("disable ports 5\n", "")
+    await _poll_config(hass, exos_entry)
+    assert hass.states.get(_x(hass, "binary_sensor", "config_changed_after_reboot")).state == "on"
+
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN, "restore_config", {"device_id": device.id, "confirm": False}, blocking=True, return_response=True
+        )
+
+    listing = await hass.services.async_call(
+        DOMAIN, "list_backups", {"device_id": device.id}, blocking=True, return_response=True
+    )
+    assert len(listing["backups"]) == 1
+
+    client.commands.clear()
+    client.responses["configure ports 49 display-string uplink"] = "Error: something odd"
+    result = await hass.services.async_call(
+        DOMAIN, "restore_config", {"device_id": device.id, "confirm": True, "save": True},
+        blocking=True, return_response=True,
+    )  # fmt: skip
+    sent = _config_cmds(client)
+    assert sent[0] == 'configure snmp sysName "X450e-48p"'
+    assert "disable ports 5" in sent and not any(c.startswith("#") for c in sent)
+    assert sent[-1] == "save configuration"
+    assert result["lines_sent"] == 9 and result["errors"] == 1 and result["saved"] is True
+
+    # The device now reports the restored configuration: the problem clears.
+    client.responses["show configuration"] = good_config
+    await _poll_config(hass, exos_entry)
+    assert hass.states.get(_x(hass, "binary_sensor", "config_changed_after_reboot")).state == "off"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, f"config_changed_after_reboot_{exos_entry.entry_id}") is None
+
+
+async def test_cut_off_config_read_is_not_backed_up(hass: HomeAssistant, exos_entry: MockConfigEntry) -> None:
+    client = _client()
+    coordinator = exos_entry.runtime_data
+    full = client.responses["show configuration"]
+    reads = iter([full[:60], full])  # first read cut off, the confirming read is complete
+    original_run = FakeClient.run
+
+    async def flaky(self, command: str, **kwargs: Any) -> str:
+        if command == "show configuration":
+            self.commands.append(command)
+            return next(reads, full)
+        return await original_run(self, command, **kwargs)
+
+    _age_backups(exos_entry)
+    with patch.object(FakeClient, "run", flaky):
+        coordinator._config_dirty = True  # noqa: SLF001
+        await coordinator.async_refresh()
+    assert len(_backups(exos_entry)) == 1  # nothing written for the cut-off read
+    assert hass.states.get(_x(hass, "binary_sensor", "config_changed_after_reboot")).state == "off"
+
+
+async def test_backup_service_and_hiveos_backups(hass: HomeAssistant, exos_entry: MockConfigEntry) -> None:
+    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, EXOS_MAC)})
+    result = await hass.services.async_call(
+        DOMAIN, "backup_config", {"device_id": device.id}, blocking=True, return_response=True
+    )
+    assert result["file"].endswith(".cfg")
+    assert len(_backups(exos_entry)) == 1  # unchanged: no duplicate
+    last = hass.states.get(_x(hass, "sensor", "last_backup"))
+    assert last.attributes["backups"] == 1
+    assert last.attributes["folder"].endswith(f"X450e-48p_{EXOS_MAC.replace(':', '')}")
+
+
+def test_restore_lines_per_dialect() -> None:
+    exos = backup_mod.restore_lines("#\n# Module x\nenable sntp-client\n\ndisable ports 5\n", "exos")
+    assert exos == ["enable sntp-client", "disable ports 5"]
+    hiveos = backup_mod.restore_lines(
+        "ssid A\nsecurity-object A security protocol-suite wpa2-aes-psk ascii-key ***\n", "hiveos"
+    )
+    assert hiveos == ["ssid A"]  # masked key lines can't be restored
+    switch = backup_mod.restore_lines("!Current Configuration:\nconfigure\ninterface 1/0/3\nno poe\nexit\n", "switch")
+    assert switch == ["configure", "interface 1/0/3", "no poe", "exit"]
+
+
+def test_backup_files(tmp_path) -> None:
+    now = dt_util.utcnow()
+    first, written = backup_mod.write_backup(tmp_path, "a\nb\n", now)
+    assert written
+    same, written = backup_mod.write_backup(tmp_path, "# comment\na\nb\n", now + timedelta(minutes=1))
+    assert not written and same.path == first.path
+    for i in range(25):
+        backup_mod.write_backup(tmp_path, f"a\nline {i}\n", now + timedelta(minutes=2 + i))
+    assert len(backup_mod.list_backups(tmp_path)) == backup_mod.BACKUPS_TO_KEEP
+    summary = backup_mod.diff_summary("a\nb\nc\n", "a\nc\nd\n")
+    assert summary["added"] == 1 and summary["removed"] == 1
+    assert summary["sample"] == ["- b", "+ d"]
+
+
+async def test_config_flow_exos_uses_system_mac(hass: HomeAssistant) -> None:
+    from homeassistant import config_entries
+    from homeassistant.data_entry_flow import FlowResultType
+
+    original = FakeClient.__init__
+
+    def init(self, *args: Any, **kwargs: Any) -> None:
+        original(self, *args, **kwargs)
+        self.hostname = "X450e-48p"
+        self.dialect = "exos"
+        self.responses = _exos_responses()
+
+    with patch.object(FakeClient, "__init__", init):
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "manual"})
+        with patch("custom_components.aerohive_local.async_setup_entry", return_value=True):
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {**USER_INPUT, CONF_HOST: "192.168.9.65"}
+            )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "X450e-48p"
+    assert result["result"].unique_id == EXOS_MAC
+    assert "show interface" not in FakeClient.instances[-1].commands
+
+
+async def test_overview_and_diagnostics_report_problems(hass: HomeAssistant, exos_entry: MockConfigEntry) -> None:
+    from custom_components.aerohive_local.diagnostics import async_get_config_entry_diagnostics
+
+    client = _client()
+    client.config_unsaved = True
+    await exos_entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    overview = next(e for e in hass.config_entries.async_entries(DOMAIN) if e.data.get("entry_type") == "overview")
+    await overview.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    entity_id = er.async_get(hass).async_get_entity_id("sensor", DOMAIN, "overview_config_problems")
+    state = hass.states.get(entity_id)
+    assert state.state == "1"
+    assert state.attributes["devices"] == [{"name": "X450e-48p", "problems": ["unsaved configuration changes"]}]
+    diag = await async_get_config_entry_diagnostics(hass, exos_entry)
+    assert diag["data"]["cli"] == "exos"
+    assert diag["data"]["config_unsaved"] is True
+    assert diag["data"]["backup"]["count"] == 1
+    assert "00:04:96:aa:bb:01" not in repr(diag)
+
+
+def test_diagnostics_redactor() -> None:
+    from custom_components.aerohive_local.diagnostics import redact
+
+    data = {
+        "raw": {"system_mac": "00:04:96:aa:bb:01", "machine_type": "X450e-48p", "wifi0_mac_addr": "bcf3:107c:0690",
+                "serial_number": "123", "ip_addr": "10.0.0.1", "mtu": "1500"},
+        "stations": [{"mac": "aa:bb:cc:dd:ee:ff", "ip": "10.0.0.5", "hostname": "phone", "signal": -50}],
+        "lldp": {"chassis_id": "00:04:96:12:34:56", "management_address": "10.0.0.2", "port_id": "1:24"},
+        "empty_mac": None,
+    }  # fmt: skip
+    out = redact(data)
+    assert out["raw"] == {"system_mac": "**REDACTED**", "machine_type": "X450e-48p", "wifi0_mac_addr": "**REDACTED**",
+                          "serial_number": "**REDACTED**", "ip_addr": "**REDACTED**", "mtu": "1500"}  # fmt: skip
+    assert out["stations"][0] == {"mac": "**REDACTED**", "ip": "**REDACTED**", "hostname": "**REDACTED**", "signal": -50}
+    assert out["lldp"]["chassis_id"] == "**REDACTED**" and out["lldp"]["port_id"] == "1:24"
+    assert out["empty_mac"] is None

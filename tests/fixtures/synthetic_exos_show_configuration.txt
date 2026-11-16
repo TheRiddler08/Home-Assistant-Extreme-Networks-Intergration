@@ -1,0 +1,18 @@
+#
+# Module devmgr configuration.
+#
+configure snmp sysName "X450e-48p"
+configure sntp-client primary 192.168.8.150 vr VR-Default
+enable sntp-client
+#
+# Module vlan configuration.
+#
+configure vlan Default ipaddress 192.168.9.65 255.255.254.0
+configure iproute add default 192.168.8.1 vr VR-Default
+configure ports 4 display-string camera
+configure ports 49 display-string uplink
+disable ports 5
+#
+# Module poe configuration.
+#
+disable inline-power ports 3

@@ -27,6 +27,12 @@ async def async_setup_entry(
 
     def factory(data: AerohiveData) -> Iterable[tuple[str, Callable[[], Entity]]]:
         yield "reboot", lambda: AerohiveRebootButton(coordinator)
+        for key, icon, action in (
+            ("save_config", "mdi:content-save", "async_save_config"),
+            ("backup_config", "mdi:content-save-cog", "async_backup_config"),
+            ("accept_config", "mdi:check-decagram", "async_accept_config"),
+        ):
+            yield key, lambda key=key, icon=icon, action=action: AerohiveActionButton(coordinator, key, icon, action)
 
         for port in data.poe_ports:
             yield f"poe_cycle_{port}", lambda port=port: AerohivePoeCycleButton(coordinator, port)
@@ -63,3 +69,18 @@ class AerohivePoeCycleButton(AerohiveEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         await self.coordinator.async_power_cycle_poe(self._port)
+
+
+class AerohiveActionButton(AerohiveEntity, ButtonEntity):
+    """Save configuration / back up now / accept the current configuration."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: AerohiveCoordinator, key: str, icon: str, action: str) -> None:
+        super().__init__(coordinator, key)
+        self._attr_translation_key = key
+        self._attr_icon = icon
+        self._action = action
+
+    async def async_press(self) -> None:
+        await getattr(self.coordinator, self._action)()

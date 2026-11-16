@@ -1,0 +1,17 @@
+Port Summary
+Port  Display              VLAN Name          Port  Link  Speed  Duplex
+#     String               (or # VLANs)       State State Actual Actual
+==================================================================================
+1                          Default            E     A     1000   FULL
+2                          Default            E     A     100    FULL
+3                          Default            E     R
+4     camera               Default            E     A     100    FULL
+5                          Default            D     R
+48                         Default            E     R
+49    uplink               Default            E     A     1000   FULL
+50                         Default            E     NP
+51                         Default            E     NP
+52                         Default            E     NP
+==================================================================================
+   Port State: D-Disabled, E-Enabled
+   Link State: A-Active, R-Ready, NP-Port not present, L-Loopback

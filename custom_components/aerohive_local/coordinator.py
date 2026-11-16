@@ -8,16 +8,21 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import partial
+from pathlib import Path
+from typing import Any
 
 from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY, ConfigEntry
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import discovery_flow
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
+from . import backup as backup_mod
 from . import commands
 from .client import (
     AerohiveAuthError,
@@ -40,6 +45,8 @@ from .const import (
 from .discovery import is_aerohive_mac
 from .parsers import (
     BootParams,
+    EnvironmentInfo,
+    ExosSwitchInfo,
     FdbEntry,
     HardwareInfo,
     Interface,
@@ -56,6 +63,18 @@ from .parsers import (
     is_aerohive_hostname,
     is_unsupported_command,
     normalize_mac,
+    parse_exos_cpu,
+    parse_exos_fans,
+    parse_exos_fdb,
+    parse_exos_inline_power,
+    parse_exos_inline_power_info,
+    parse_exos_lldp_detail,
+    parse_exos_lldp_neighbors,
+    parse_exos_port_statistics,
+    parse_exos_ports,
+    parse_exos_power,
+    parse_exos_show_switch,
+    parse_exos_temperature,
     parse_key_values,
     parse_lldp_neighbors,
     parse_mac_address_table,
@@ -83,8 +102,30 @@ _LOGGER = logging.getLogger(__name__)
 type AerohiveConfigEntry = ConfigEntry[AerohiveCoordinator]
 
 UPLINK_MAC_THRESHOLD = 16
+BACKUP_ROOT = "aerohive_local_backups"
+BACKUP_DOCS_URL = "https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/blob/main/docs/backups.md"
+
+
+def _backup_slug(entry: ConfigEntry) -> str:
+    """Folder name per device: title + MAC, filesystem-safe."""
+    title = "".join(c if c.isalnum() or c in "-_" else "_" for c in (entry.title or "device"))
+    uid = "".join(c for c in (entry.unique_id or entry.entry_id) if c.isalnum())
+    return f"{title}_{uid}"
 UNSUPPORTED_RETRY_SECONDS = 1800
 POE_MAX_PORTS = 24  # per-port PoE probing stops at this port number
+
+
+@dataclass
+class BackupState:
+    """Configuration backup / change-detection status of one device."""
+
+    folder: str
+    last_backup: datetime | None = None
+    last_file: str | None = None
+    count: int = 0
+    changed_after_reboot: bool = False
+    change_summary: dict[str, Any] | None = None
+    last_checked: datetime | None = None
 
 
 @dataclass
@@ -133,10 +174,17 @@ class AerohiveData:
     fdb: list[FdbEntry] = field(default_factory=list)
     lldp: dict[str, LldpNeighbor] = field(default_factory=dict)
     config: RunningConfigSummary | None = None
+    cli: str = commands.DIALECT_HIVEOS
+    exos: ExosSwitchInfo | None = None
+    environment: EnvironmentInfo | None = None
+    config_unsaved: bool | None = None
+    backup: BackupState | None = None
 
     @property
     def is_switch(self) -> bool:
-        """SR-series switches (or anything with eth1/1-style ports)."""
+        """SR-series or ExtremeXOS switches (or anything with eth1/1-style ports)."""
+        if self.cli == commands.DIALECT_EXOS:
+            return True
         platform = (self.version.platform or "").upper()
         return platform.startswith("SR") or any("/" in n for n in self.interfaces)
 
@@ -367,6 +415,13 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._poe_single: str | bool | None = None
         self._config_read_at: float | None = None
         self._announced: set[str] = set()
+        # Backups / change detection
+        self.backup_folder = Path(hass.config.path(BACKUP_ROOT, _backup_slug(entry)))
+        self._backup = BackupState(folder=str(self.backup_folder))
+        self._config_text: str | None = None
+        self._environment: EnvironmentInfo | None = None
+        self._config_text_new = False
+        self._ha_changed = False
         # name -> (monotonic time, rx_bytes, tx_bytes) from the previous poll
         self._counters: dict[str, tuple[float, int | None, int | None]] = {}
 
@@ -461,8 +516,11 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._poll_count += 1
         data = AerohiveData()
         version_out = await self.client.run("show version")
+        data.cli = self.client.dialect
         if self.client.dialect == commands.DIALECT_SWITCH:
             return await self._fetch_switch(data, version_out)
+        if self.client.dialect == commands.DIALECT_EXOS:
+            return await self._fetch_exos(data)
         data.version = parse_show_version(version_out)
         data.interfaces = await self._read_interfaces()
         data.ssids = await self._read_ssids(data)
@@ -500,6 +558,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             self._config_dirty = False
             if out := await self._optional("show running-config"):
                 self._config = parse_running_config_summary(out)
+                self._config_text, self._config_text_new = out, True
         if self._slow_at is None or now - self._slow_at > SLOW_REFRESH_SECONDS:
             self._slow_at = now
             self._config_dirty = True  # re-read on the next poll
@@ -521,6 +580,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         data.hostname = self.client.hostname
 
         self._update_boot_time(data)
+        await self._process_backup(data)
         return data
 
     def _update_boot_time(self, data: AerohiveData) -> None:
@@ -608,6 +668,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             if out := await self._optional("show running-config"):
                 self._config = parse_running_config_summary(out)
                 self._config_read_at = time.monotonic()
+                self._config_text, self._config_text_new = out, True
         if self._slow_at is None or now - self._slow_at > SLOW_REFRESH_SECONDS:
             self._slow_at = now
             self._config_dirty = True
@@ -630,6 +691,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             # Uptime from the running-config header, aged by the time since it was read.
             data.version.uptime_seconds = self._config.uptime_seconds + int(now - self._config_read_at)
         self._update_boot_time(data)
+        await self._process_backup(data)
         return data
 
     async def _poe_ports_one_by_one(self, data: AerohiveData) -> dict[str, PoePort]:
@@ -668,6 +730,313 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         if not result and not templates:
             self._poe_single = False  # no per-port PoE command on this firmware
         return result
+
+    async def _fetch_exos(self, data: AerohiveData) -> AerohiveData:
+        """Poll an ExtremeXOS switch (Summit X450e and others)."""
+        data.hostname = self.client.hostname
+        if out := await self._optional(commands.EXOS_SHOW_SWITCH):
+            info = parse_exos_show_switch(out)
+            data.exos = info
+            data.version = VersionInfo(
+                version=info.booted_version and f"ExtremeXOS {info.booted_version}",
+                firmware=info.booted_version,
+                os_name="ExtremeXOS",
+                platform=info.system_type,
+                uptime_seconds=info.uptime_seconds,
+                mac=info.mac,
+            )
+        if out := await self._optional(commands.EXOS_SHOW_PORTS):
+            data.interfaces = parse_exos_ports(out)
+        if self.detailed_stats and (out := await self._optional(commands.EXOS_SHOW_PORT_STATS)):
+            now = time.monotonic()
+            for name, detail in parse_exos_port_statistics(out).items():
+                iface = data.interfaces.get(name)
+                if iface is not None:
+                    detail.speed = iface.speed
+                    detail.duplex = iface.duplex
+                data.details[name] = detail
+                rate = self._rate(name, detail, now)
+                if rate is not None:
+                    data.throughput[name] = rate
+        if out := await self._optional(commands.EXOS_SHOW_POE):
+            summary = parse_exos_inline_power(out)
+            data.poe = summary if summary.budget_w is not None or summary.used_w is not None else None
+            if out := await self._optional(commands.EXOS_SHOW_POE_INFO):
+                data.poe_ports = parse_exos_inline_power_info(out)
+        if out := await self._optional(commands.EXOS_SHOW_FDB):
+            data.fdb = parse_exos_fdb(out)
+        if self.detailed_stats:
+            if out := await self._optional(commands.EXOS_SHOW_CPU):
+                data.cpu = parse_exos_cpu(out)
+            if out := await self._optional(commands.EXOS_SHOW_MEMORY):
+                data.memory = parse_show_memory(out)
+
+        now = time.monotonic()
+        if self._config_dirty:
+            self._config_dirty = False
+            if out := await self._optional(commands.EXOS_SHOW_CONFIG):
+                self._config_text, self._config_text_new = out, True
+        if self._slow_at is None or now - self._slow_at > SLOW_REFRESH_SECONDS:
+            self._slow_at = now
+            self._config_dirty = True
+            if out := await self._optional(commands.EXOS_SHOW_LLDP):
+                neighbors = parse_exos_lldp_neighbors(out)
+                for port in list(neighbors):
+                    detail_out = await self._optional(commands.EXOS_SHOW_LLDP_DETAIL.format(port=port))
+                    if detail_out and (detail := parse_exos_lldp_detail(detail_out, port)):
+                        detail.system_name = detail.system_name or neighbors[port].system_name
+                        detail.chassis_id = detail.chassis_id or neighbors[port].chassis_id
+                        detail.port_id = detail.port_id or neighbors[port].port_id
+                        neighbors[port] = detail
+                self._lldp = neighbors
+                self._announce_neighbors()
+            env = EnvironmentInfo()
+            if out := await self._optional(commands.EXOS_SHOW_TEMPERATURE):
+                env.temperature_c, env.temperature_status = parse_exos_temperature(out)
+            if out := await self._optional(commands.EXOS_SHOW_FANS):
+                env.fans_state, env.fans = parse_exos_fans(out)
+            if out := await self._optional(commands.EXOS_SHOW_POWER):
+                env.power_supplies = parse_exos_power(out)
+            self._environment = env
+        data.environment = self._environment
+        data.lldp = self._lldp
+        data.config_unsaved = self.client.config_unsaved
+        self._update_boot_time(data)
+        self._update_boot_problem_issue(data)
+        await self._process_backup(data)
+        return data
+
+    # ------------------------------------------------------------------ #
+    # Configuration backups and change detection
+    # ------------------------------------------------------------------ #
+
+    async def _process_backup(self, data: AerohiveData) -> None:
+        """Back up the configuration when it changed, or flag a change after a reboot.
+
+        - First time: back it up.
+        - Same as the latest backup: nothing to do (clears a previous flag).
+        - Changed while a "changed after reboot" flag is active: keep the flag,
+          no backup (the known-good backup stays the latest until the user
+          restores it or accepts the current configuration).
+        - Changed by Home Assistant, or by someone else while the device kept
+          running: back it up.
+        - Changed and the device rebooted since the latest backup: that's the
+          power-loss symptom (unsaved changes lost, wrong configuration
+          booted). Flag it and raise a repair issue; no backup is taken.
+
+        A changed configuration is read a second time before acting on it, so
+        a cut-off reply is never saved as a backup or raised as a problem.
+        """
+        state = self._backup
+        if self._config_text_new and self._config_text:
+            self._config_text_new = False
+            text = self._config_text
+            try:
+                latest = await self.hass.async_add_executor_job(backup_mod.latest_backup, self.backup_folder)
+                latest_text = (
+                    await self.hass.async_add_executor_job(backup_mod.read_backup, latest.path) if latest else None
+                )
+                state.last_checked = dt_util.utcnow()
+                if latest is None:
+                    if await self._confirm_config(text):
+                        await self._write_backup(text)
+                elif backup_mod.config_fingerprint(latest_text or "") == backup_mod.config_fingerprint(text):
+                    if state.changed_after_reboot:
+                        self._clear_change_flag()
+                    state.last_backup, state.last_file = latest.created, latest.name
+                elif not await self._confirm_config(text):
+                    pass  # inconsistent reads: decide on the next check
+                elif state.changed_after_reboot:
+                    self._flag_change(latest, latest_text or "", text)
+                elif self._ha_changed or not (data.boot_time and data.boot_time > latest.created):
+                    await self._write_backup(text)
+                else:
+                    self._flag_change(latest, latest_text or "", text)
+            except OSError as err:
+                _LOGGER.warning("%s: configuration backup failed: %s", self.client.host, err)
+            self._ha_changed = False
+        if state.count == 0:
+            backups = await self.hass.async_add_executor_job(backup_mod.list_backups, self.backup_folder)
+            state.count = len(backups)
+            if backups and state.last_backup is None:
+                state.last_backup, state.last_file = backups[0].created, backups[0].name
+        data.backup = BackupState(**vars(state))
+
+    async def _confirm_config(self, text: str) -> bool:
+        """Read the configuration again; True if it matches (not a cut-off reply)."""
+        command = commands.SHOW_CONFIG_COMMANDS.get(self.client.dialect, "show running-config")
+        try:
+            again = await self.client.run(command, timeout=180)
+        except AerohiveError:
+            self._config_dirty = True
+            return False
+        if backup_mod.config_fingerprint(again) != backup_mod.config_fingerprint(text):
+            _LOGGER.debug("%s: two configuration reads differ, checking again next time", self.client.host)
+            self._config_dirty = True
+            return False
+        return True
+
+    def _flag_change(self, latest: backup_mod.BackupFile, latest_text: str, text: str) -> None:
+        state = self._backup
+        newly_flagged = not state.changed_after_reboot
+        state.changed_after_reboot = True
+        state.change_summary = backup_mod.diff_summary(latest_text, text)
+        state.last_backup, state.last_file = latest.created, latest.name
+        self._raise_change_issue(latest, state.change_summary, log=newly_flagged)
+
+    async def _write_backup(self, text: str, *, force: bool = False) -> backup_mod.BackupFile:
+        backup, written = await self.hass.async_add_executor_job(
+            partial(backup_mod.write_backup, self.backup_folder, text, dt_util.utcnow(), force=force)
+        )
+        backups = await self.hass.async_add_executor_job(backup_mod.list_backups, self.backup_folder)
+        self._backup.count = len(backups)
+        self._backup.last_backup, self._backup.last_file = backup.created, backup.name
+        if written:
+            _LOGGER.info("%s: configuration backed up to %s", self.client.host, backup.path)
+        return backup
+
+    def _issue_id(self, kind: str) -> str:
+        return f"{kind}_{self.config_entry.entry_id}"
+
+    def _device_name(self) -> str:
+        return (self.data.hostname if self.data else None) or self.config_entry.title
+
+    def _raise_change_issue(self, latest: backup_mod.BackupFile, summary: dict[str, Any], *, log: bool = True) -> None:
+        if log:
+            _LOGGER.warning(
+                "%s: configuration differs from the backup of %s after a reboot (%s line(s) added, %s removed)",
+                self.client.host, latest.created.isoformat(), summary["added"], summary["removed"],
+            )  # fmt: skip
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._issue_id("config_changed_after_reboot"),
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="config_changed_after_reboot",
+            translation_placeholders={
+                "device": self._device_name(),
+                "backup": dt_util.as_local(latest.created).strftime("%Y-%m-%d %H:%M"),
+                "added": str(summary["added"]),
+                "removed": str(summary["removed"]),
+                "changes": "\n".join(str(line) for line in summary["sample"]) or "-",
+            },
+            learn_more_url=BACKUP_DOCS_URL,
+        )
+
+    def _clear_change_flag(self) -> None:
+        self._backup.changed_after_reboot = False
+        self._backup.change_summary = None
+        ir.async_delete_issue(self.hass, DOMAIN, self._issue_id("config_changed_after_reboot"))
+
+    def _update_boot_problem_issue(self, data: AerohiveData) -> None:
+        problems = data.exos.boot_problems if data.exos else []
+        issue_id = self._issue_id("boot_config_problem")
+        if problems:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key="boot_config_problem",
+                translation_placeholders={"device": self._device_name(), "problems": "; ".join(problems)},
+                learn_more_url=BACKUP_DOCS_URL,
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+
+    async def _read_config_text(self) -> str:
+        command = commands.SHOW_CONFIG_COMMANDS.get(self.client.dialect, "show running-config")
+        try:
+            text = await self.client.run(command, timeout=180)
+        except AerohiveError as err:
+            raise HomeAssistantError(f"Cannot read the configuration of {self.client.host}: {err}") from err
+        if is_unsupported_command(text) or not backup_mod.normalize_config(text):
+            raise HomeAssistantError(f"{self.client.host} returned no configuration for '{command}'")
+        return text
+
+    async def async_backup_config(self) -> dict[str, Any]:
+        """Back up now (no new file if nothing changed since the latest backup)."""
+        if self._backup.changed_after_reboot:
+            raise HomeAssistantError(
+                f"The configuration of {self._device_name()} changed after a reboot. Restore the latest "
+                "backup (restore_config action) or press 'Accept current configuration' first, so the "
+                "known-good backup isn't replaced by accident."
+            )
+        text = await self._read_config_text()
+        try:
+            backup = await self._write_backup(text)
+        except OSError as err:
+            raise HomeAssistantError(f"Could not write the backup: {err}") from err
+        self.async_update_listeners()
+        return {"file": str(backup.path), "created": backup.created.isoformat(), "size": backup.size}
+
+    async def async_accept_config(self) -> dict[str, Any]:
+        """The current configuration is correct: save it as the new known-good backup."""
+        text = await self._read_config_text()
+        try:
+            backup = await self._write_backup(text, force=True)
+        except OSError as err:
+            raise HomeAssistantError(f"Could not write the backup: {err}") from err
+        self._clear_change_flag()
+        await self.async_request_refresh()
+        return {"file": str(backup.path), "created": backup.created.isoformat()}
+
+    async def async_save_config(self) -> None:
+        try:
+            await self._save()
+        except AerohiveError as err:
+            raise HomeAssistantError(f"Error communicating with {self.client.host}: {err}") from err
+        self._ha_changed = True
+        self._config_dirty = True
+        await self.async_request_refresh()
+
+    async def async_list_backups(self) -> list[dict[str, Any]]:
+        backups = await self.hass.async_add_executor_job(backup_mod.list_backups, self.backup_folder)
+        return [{"file": b.name, "created": b.created.isoformat(), "size": b.size} for b in backups]
+
+    async def async_restore_config(self, file: str | None = None, save: bool = False) -> dict[str, Any]:
+        """Send the lines of a backup back to the device (latest backup if no file is given).
+
+        Lines the device rejects (e.g. "already exists") are collected and
+        reported; the rest are still applied. The result is only saved on the
+        device when save=True.
+        """
+        backups = await self.hass.async_add_executor_job(backup_mod.list_backups, self.backup_folder)
+        if not backups:
+            raise HomeAssistantError(f"No configuration backups for {self._device_name()} yet")
+        chosen = backups[0] if not file else next((b for b in backups if b.name == file), None)
+        if chosen is None:
+            raise HomeAssistantError(f"Backup {file} not found. Available: {', '.join(b.name for b in backups[:5])}")
+        text = await self.hass.async_add_executor_job(backup_mod.read_backup, chosen.path)
+        lines = backup_mod.restore_lines(text, self.client.dialect)
+        errors: list[str] = []
+        _LOGGER.warning("%s: restoring %d configuration line(s) from %s", self.client.host, len(lines), chosen.name)
+        try:
+            for line in lines:
+                if self.client.dialect == commands.DIALECT_SWITCH:
+                    out = await self.client.run(line, keep_mode=True, retry=False, confirm=True)
+                else:
+                    out = await self.client.run(line, retry=False, confirm=True, timeout=60)
+                if error := find_cli_error(out):
+                    errors.append(f"{commands.redact(line)} -> {error}")
+            if self.client.dialect == commands.DIALECT_SWITCH:
+                await self.client.run_sequence([])  # back to privileged mode
+            if save:
+                await self._save()
+        except AerohiveError as err:
+            raise HomeAssistantError(f"Restore interrupted: {err}") from err
+        self._ha_changed = save
+        self._config_dirty = True
+        await self.async_request_refresh()
+        return {
+            "backup": chosen.name,
+            "lines_sent": len(lines),
+            "errors": len(errors),
+            "error_lines": errors[:25],
+            "saved": save,
+        }
 
     def _announce_neighbors(self) -> None:
         """Offer unconfigured Aerohive/Extreme neighbours seen via LLDP for setup."""
@@ -755,14 +1124,21 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             self._config_dirty = True
             raise
         self._config_dirty = True
+        self._ha_changed = True
         await self.async_request_refresh()
 
     @property
     def is_switch_cli(self) -> bool:
         return self.client.dialect == commands.DIALECT_SWITCH
 
+    @property
+    def is_exos(self) -> bool:
+        return self.client.dialect == commands.DIALECT_EXOS
+
     async def _save(self) -> None:
-        if self.is_switch_cli:
+        if self.is_exos:
+            output = await self.client.run(commands.EXOS_SAVE, timeout=120, retry=False, confirm=True)
+        elif self.is_switch_cli:
             output = await self.client.run(commands.SW_SAVE, timeout=90, retry=False, confirm=True)
         else:
             output = await self.client.run(commands.SAVE_CONFIG, timeout=90, retry=False)
@@ -894,19 +1270,38 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 "many devices are learned on it). Turning it off could disconnect Home Assistant from "
                 "the device. Use the set_port action with force: true if you really mean it."
             )
-        if self.is_switch_cli:
+        if self.is_exos:
+            await self._apply([self._validated(commands.exos_port_enable, port, enable)])
+        elif self.is_switch_cli:
             await self._apply(self._validated(commands.switch_port_enable, port, enable), sequence=True)
         else:
             await self._apply([self._validated(commands.port_enable, port, enable)])
 
     async def async_set_poe(self, port: str, enable: bool) -> None:
-        if self.is_switch_cli:
+        if self.is_exos:
+            await self._apply([self._validated(commands.exos_poe, port, enable)])
+        elif self.is_switch_cli:
             await self._apply(self._validated(commands.switch_poe, port, enable), sequence=True)
         else:
             await self._apply([self._validated(commands.port_poe, port, enable)])
 
     async def async_power_cycle_poe(self, port: str, off_seconds: float = 5) -> None:
         """Turn PoE off and on again (runtime only, nothing is saved)."""
+        if self.is_exos:
+            try:
+                out = await self.client.run(self._validated(commands.exos_poe_reset, port))
+                if find_cli_error(out):
+                    # No "reset inline-power": disable, wait, enable.
+                    for cmd, pause in ((commands.exos_poe(port, False), off_seconds), (commands.exos_poe(port, True), 0)):
+                        out = await self.client.run(cmd)
+                        if error := find_cli_error(out):
+                            raise HomeAssistantError(f"{self.client.host} rejected '{cmd}': {error}")
+                        if pause:
+                            await asyncio.sleep(pause)
+            except AerohiveError as err:
+                raise HomeAssistantError(f"Error communicating with {self.client.host}: {err}") from err
+            await self.async_request_refresh()
+            return
         if self.is_switch_cli:
             reset_block = self._validated(commands.switch_poe_reset, port)
             off_block = self._validated(commands.switch_poe, port, False)
@@ -958,7 +1353,13 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
 
     async def async_reboot(self) -> None:
         try:
-            await self.client.reboot(commands.SW_REBOOT if self.is_switch_cli else commands.REBOOT)
+            if self.is_exos:
+                command = commands.EXOS_REBOOT
+            elif self.is_switch_cli:
+                command = commands.SW_REBOOT
+            else:
+                command = commands.REBOOT
+            await self.client.reboot(command)
         except AerohiveCommandError as err:
             raise HomeAssistantError(str(err)) from err
         except AerohiveConnectionError as err:

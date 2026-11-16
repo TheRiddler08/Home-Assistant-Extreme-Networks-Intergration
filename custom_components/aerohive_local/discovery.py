@@ -25,11 +25,13 @@ from pathlib import Path
 
 _LOGGER = logging.getLogger(__name__)
 
-# MAC prefixes (OUIs) used by Aerohive and by Extreme Networks' Aerohive
-# hardware. Not exhaustive: a device that doesn't match can still be found by
-# hostname or added by IP.
+# MAC prefixes (OUIs) used by Aerohive and Extreme Networks hardware (APs, SR
+# and ExtremeXOS switches). Not exhaustive: a device that doesn't match can
+# still be found by hostname or added by IP.
 AEROHIVE_OUIS: frozenset[str] = frozenset(
     {
+        "000496",  # Extreme Networks (ExtremeXOS switches, e.g. Summit X450e)
+        "00e02b",  # Extreme Networks
         "001977",  # Aerohive Networks
         "08ea44",  # Aerohive Networks
         "4018b1",  # Aerohive Networks

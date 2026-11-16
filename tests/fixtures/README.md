@@ -6,3 +6,5 @@
   truncated form).
 - `synthetic_*.txt`: hand-written approximations of HiveOS output. Replace them with
   real captures from `aerohive_local.run_show_command` when they're available.
+- `synthetic_exos_*.txt`: hand-written ExtremeXOS (Summit X450e) output following the documented
+  EXOS 12.x/15.x formats, until real captures are available.

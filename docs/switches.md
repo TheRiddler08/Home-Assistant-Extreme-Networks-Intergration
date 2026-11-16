@@ -1,4 +1,9 @@
-# Switches (SR2208P and other SR-series)
+# Switches
+
+Two kinds of switches are supported: Aerohive **SR-series** switches (below), and
+[**ExtremeXOS** switches](#extremexos-switches-summit-x450e) such as the Summit X450e.
+
+## SR2208P and other SR-series
 
 The SR2208P runs a FASTPATH-style switch CLI (prompt `(AH-Switch) #`, ports named `1/0/1`),
 not HiveOS. The integration detects this from the prompt and uses the switch's own
@@ -44,3 +49,25 @@ as an LLDP neighbour, with a management IP, that isn't set up yet, it shows up a
 
 Device trackers work for wired clients too. A tracked MAC is "home" while it's learned on
 one of the switch's access ports.
+
+## ExtremeXOS switches (Summit X450e)
+
+🧪 Preview: built from the ExtremeXOS documentation, not yet tested on a device.
+
+Detected from the prompt (`X450e-48p.3 #`). Polled with `show switch`, `show ports
+no-refresh`, `show ports statistics no-refresh`, `show inline-power`, `show fdb` and more
+(see [CLI commands](cli-commands.md#extremexos-summit-x450e-and-other-exos-switches)).
+
+You get the same per-port entities as on SR switches: link, speed, duplex, throughput,
+clients, LLDP neighbour, PoE power/status/on-off/power cycle, and port on/off with uplink
+protection. On top of that:
+
+- **Health:** temperature, fans, power supply, CPU, memory, system state, boot count.
+- **Boot check:** booted vs selected image and configuration, with an alert (and a Repairs
+  notice) if the switch came up with Factory Default or the wrong file.
+- **Unsaved changes:** an alert while the prompt shows `*`, plus a **Save configuration**
+  button.
+- **Backups:** see [Power-loss protection and backups](backups.md).
+
+Requirements: SSH enabled (`enable ssh2`) and an admin account; see
+[Supported devices](supported-devices.md#extremexos-switches).

@@ -245,3 +245,59 @@ def switch_poe(port: str, enable: bool) -> list[str]:
 def switch_poe_reset(port: str) -> list[str]:
     """'poe reset' power-cycles the port without changing the configuration."""
     return switch_interface_block(port, ["poe reset"])
+
+
+# --------------------------------------------------------------------------
+# ExtremeXOS (Summit X450e and other EXOS switches; prompt "X450e-48p.3 #")
+# --------------------------------------------------------------------------
+# Based on the ExtremeXOS 12.x / 15.x command reference. Not yet verified on a
+# device: see docs/cli-commands.md.
+
+DIALECT_EXOS = "exos"
+
+EXOS_DISABLE_PAGING = "disable clipaging"
+EXOS_SHOW_SWITCH = "show switch"
+EXOS_SHOW_PORTS = "show ports no-refresh"
+EXOS_SHOW_PORT_STATS = "show ports statistics no-refresh"
+EXOS_SHOW_POE = "show inline-power"
+EXOS_SHOW_POE_INFO = "show inline-power info ports"
+EXOS_SHOW_FDB = "show fdb"
+EXOS_SHOW_LLDP = "show lldp neighbors"
+EXOS_SHOW_LLDP_DETAIL = "show lldp ports {port} neighbors detailed"
+EXOS_SHOW_TEMPERATURE = "show temperature"
+EXOS_SHOW_FANS = "show fans"
+EXOS_SHOW_POWER = "show power"
+EXOS_SHOW_CPU = "show cpu-monitoring"
+EXOS_SHOW_MEMORY = "show memory"
+EXOS_SHOW_CONFIG = "show configuration"
+EXOS_SAVE = "save configuration"
+EXOS_REBOOT = "reboot"
+
+_EXOS_PORT_CMD_RE = re.compile(r"^[1-9]\d{0,2}(?::[1-9]\d{0,2})?$")
+
+
+def validate_exos_port(port: str) -> str:
+    port = (port or "").strip()
+    if not _EXOS_PORT_CMD_RE.match(port):
+        raise InvalidArgument(f"Invalid port: {port!r} (expected e.g. 5, or 1:5 on a stack)")
+    return port
+
+
+def exos_port_enable(port: str, enable: bool) -> str:
+    return f"{'enable' if enable else 'disable'} ports {validate_exos_port(port)}"
+
+
+def exos_poe(port: str, enable: bool) -> str:
+    return f"{'enable' if enable else 'disable'} inline-power ports {validate_exos_port(port)}"
+
+
+def exos_poe_reset(port: str) -> str:
+    return f"reset inline-power ports {validate_exos_port(port)}"
+
+
+# Commands that read the full configuration, per CLI dialect (for backups).
+SHOW_CONFIG_COMMANDS = {
+    DIALECT_HIVEOS: "show running-config",
+    DIALECT_SWITCH: "show running-config",
+    DIALECT_EXOS: EXOS_SHOW_CONFIG,
+}

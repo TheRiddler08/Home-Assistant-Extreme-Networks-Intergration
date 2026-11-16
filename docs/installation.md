@@ -2,7 +2,9 @@
 
 ## Installation
 
-Requires Home Assistant 2025.1 or newer, and SSH enabled on the devices.
+Requires Home Assistant 2025.1 or newer, and SSH enabled on the devices (on ExtremeXOS
+switches: `enable ssh2` and an admin account, see
+[Supported devices](supported-devices.md#extremexos-switches)).
 
 ### HACS (recommended)
 

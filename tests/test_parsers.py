@@ -310,6 +310,8 @@ def test_clean_output_more_and_ansi() -> None:
         ("       ^-- unknown keyword or invalid input", "^-- unknown keyword or invalid input"),
         ("Incomplete command", "Incomplete command"),
         ("Rx errors=0; Tx errors=0", None),
+        ("Error: Port 53 is not valid", "Error: Port 53 is not valid"),
+        ("Rx Errors : 0", None),
     ],
 )
 def test_find_cli_error(output: str, error: str | None) -> None:
@@ -603,3 +605,99 @@ def test_running_config_ssid_bindings() -> None:
     )
     summary = p.parse_running_config_summary(cfg)
     assert summary.ssid_bindings == {"wifi0": {"AP460C"}, "wifi1": {"Guest Wifi", "AP460C"}}
+
+
+# --------------------------------------------------------------------------
+# ExtremeXOS (synthetic fixtures following the documented EXOS formats)
+# --------------------------------------------------------------------------
+
+
+def test_exos_prompt() -> None:
+    m = p.PROMPT_RE.search("out\nX450e-48p.3 # ")
+    assert p.prompt_host(m) == "X450e-48p" and m.group("mode") == "#" and not m.group("unsaved")
+    m = p.PROMPT_RE.search("out\n* X450e-48p.17 #")
+    assert p.prompt_host(m) == "X450e-48p" and m.group("unsaved")
+    m = p.PROMPT_RE.search("Summit-Office.1 >")
+    assert p.prompt_host(m) == "Summit-Office" and m.group("mode") == ">"
+    # other prompt styles unaffected
+    assert p.PROMPT_RE.search("x\nAH-7c0680#").group("host") == "AH-7c0680"
+    assert p.PROMPT_RE.search("x\n(AH-Switch) #").group("phost") == "AH-Switch"
+    assert p.clean_output("a\nPress <SPACE> to continue or <Q> to quit:\r      \rb\n").split("\n")[:2] == ["a", "b"]
+
+
+def test_exos_show_switch() -> None:
+    info = p.parse_exos_show_switch(load_fixture("synthetic_exos_show_switch.txt"))
+    assert info.system_type == "X450e-48p"
+    assert info.mac == "00:04:96:aa:bb:01"
+    assert info.boot_count == 42
+    assert info.uptime_seconds == 6 * 3600 + 12
+    assert info.booted_version == "12.6.3.4"
+    assert (info.config_selected, info.config_booted) == ("primary.cfg", "primary.cfg")
+    assert info.boot_problems == []
+    bad = p.parse_exos_show_switch(
+        load_fixture("synthetic_exos_show_switch.txt")
+        .replace("Config Booted:    primary.cfg", "Config Booted:    Factory Default")
+        .replace("Image Booted:     primary", "Image Booted:     secondary")
+    )
+    assert len(bad.boot_problems) == 2
+    assert "Factory Default" in bad.boot_problems[0]
+    assert bad.booted_version == "12.5.4.5"
+
+
+def test_exos_ports() -> None:
+    ports = p.parse_exos_ports(load_fixture("synthetic_exos_show_ports.txt"))
+    assert list(ports) == ["1", "2", "3", "4", "5", "48", "49", "50", "51", "52"]
+    assert ports["1"].is_up and ports["1"].speed == "1000" and ports["1"].duplex == "Full"
+    assert ports["3"].is_up is False and ports["3"].speed is None
+    assert ports["4"].extra["display_string"] == "camera"
+    assert ports["5"].admin_state == "Disable"
+    assert ports["50"].extra["link_state"] == "NP"
+    assert all(i.is_port for i in ports.values())
+
+
+def test_exos_statistics_poe_fdb_lldp() -> None:
+    stats = p.parse_exos_port_statistics(load_fixture("synthetic_exos_show_ports_statistics.txt"))
+    assert (stats["49"].tx_bytes, stats["49"].rx_bytes) == (123456789, 98765432)
+    assert stats["1"].tx_packets == 1000
+    summary = p.parse_exos_inline_power(load_fixture("synthetic_exos_show_inline_power.txt"))
+    assert (summary.budget_w, summary.used_w, summary.remaining_w) == (370.0, 21.0, 349.0)
+    poe = p.parse_exos_inline_power_info(load_fixture("synthetic_exos_show_inline_power_info.txt"))
+    assert poe["1"].power_w == 5.8 and poe["1"].status == "delivering" and poe["1"].poe_class == "class3"
+    assert poe["3"].enabled is False and poe["2"].enabled is True
+    assert poe["4"].extra["output_current_ma"] == "310"
+    fdb = p.parse_exos_fdb(load_fixture("synthetic_exos_show_fdb.txt"))
+    assert [(e.mac, e.port, e.vlan) for e in fdb][2] == ("b8:a4:4f:00:d3:de", "4", 1)
+    assert len(fdb) == 4  # CPU entry skipped
+    lldp = p.parse_exos_lldp_neighbors(load_fixture("synthetic_exos_show_lldp_neighbors.txt"))
+    assert set(lldp) == {"1", "2", "49"}
+    assert lldp["49"].system_name == "core-switch" and lldp["49"].port_id == "1:24"
+    detail = p.parse_exos_lldp_detail(load_fixture("synthetic_exos_show_lldp_port_2_detail.txt"), "2")
+    assert detail.management_address == "192.168.9.73"
+    assert detail.system_name == "AH-7c0680"
+    assert detail.is_access_point
+
+
+def test_exos_environment_cpu_memory() -> None:
+    assert p.parse_exos_temperature(load_fixture("synthetic_exos_show_temperature.txt")) == (43.0, "Normal")
+    state, fans = p.parse_exos_fans(load_fixture("synthetic_exos_show_fans.txt"))
+    assert state == "Operational" and fans["fan-1"] == "Operational at 4800 RPM"
+    assert p.parse_exos_power(load_fixture("synthetic_exos_show_power.txt")) == {"PSU 1": "Powered On"}
+    assert p.parse_exos_cpu(load_fixture("synthetic_exos_show_cpu_monitoring.txt")).cpu_total == 2.0
+    mem = p.parse_show_memory(load_fixture("synthetic_exos_show_memory.txt"))
+    assert mem.memory_total_kb == 262144 and mem.memory_free_kb == 104121
+
+
+@pytest.mark.parametrize("garbage", ["", "\x00", "1 2 3", "a" * 3000, "Port  x\n=====\n1 E"])
+def test_exos_parsers_never_raise(garbage: str) -> None:
+    p.parse_exos_show_switch(garbage)
+    p.parse_exos_ports(garbage)
+    p.parse_exos_port_statistics(garbage)
+    p.parse_exos_inline_power(garbage)
+    p.parse_exos_inline_power_info(garbage)
+    p.parse_exos_fdb(garbage)
+    p.parse_exos_lldp_neighbors(garbage)
+    p.parse_exos_lldp_detail(garbage, "1")
+    p.parse_exos_temperature(garbage)
+    p.parse_exos_fans(garbage)
+    p.parse_exos_power(garbage)
+    p.parse_exos_cpu(garbage)

@@ -1,0 +1,10 @@
+Port Statistics
+Port      Link       Tx Pkt      Tx Byte      Rx Pkt      Rx Byte      Rx Pkt      Rx Pkt      Tx Pkt      Tx Pkt
+          State      Count       Count        Count       Count        Bcast       Mcast       Bcast       Mcast
+========= ===== =========== =========== =========== =========== =========== =========== =========== ===========
+1         A            1000      500000        2000      900000           0           0           0           0
+2         A              10        1000          20        2000           0           0           0           0
+3         R               0           0           0           0           0           0           0           0
+49        A           99999   123456789       88888    98765432           0           0           0           0
+========= ===== =========== =========== =========== =========== =========== =========== =========== ===========
+   Link State: A-Active, R-Ready, NP-Port Not Present, L-Loopback

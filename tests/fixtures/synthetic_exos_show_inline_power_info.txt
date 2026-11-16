@@ -1,0 +1,7 @@
+
+Port      State      Class     Volts   Curr   Power   Fault
+                                       (mA)   (Watts)
+1         delivering class3    48.4    121    5.8     None
+2         searching  ------    0.0     0      0.0     None
+3         disabled   ------    0.0     0      0.0     None
+4         delivering class2    48.2    310    15.2    None

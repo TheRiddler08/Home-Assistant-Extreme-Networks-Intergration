@@ -30,7 +30,7 @@ from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
 
 from . import async_create_client, commands
 from .client import AerohiveAuthError, AerohiveError
-from .commands import DIALECT_SWITCH
+from .commands import DIALECT_EXOS, DIALECT_SWITCH
 from .const import (
     CONF_DETAILED_STATS,
     CONF_ENABLE_ALL,
@@ -51,7 +51,12 @@ from .const import (
 )
 from .discovery import ScanResult, async_scan, narrow_network, scan_targets
 from .entity import radio_label
-from .parsers import normalize_mac, parse_show_interface, parse_show_version
+from .parsers import (
+    normalize_mac,
+    parse_exos_show_switch,
+    parse_show_interface,
+    parse_show_version,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -91,14 +96,17 @@ async def _probe(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     client = await async_create_client(hass, data)
     try:
         version = parse_show_version(await client.run("show version"))
-        mac = version.mac
-        if client.dialect != DIALECT_SWITCH:
+        mac, platform = version.mac, version.platform
+        if client.dialect == DIALECT_EXOS:
+            info = parse_exos_show_switch(await client.run(commands.EXOS_SHOW_SWITCH))
+            mac, platform = info.mac, info.system_type
+        elif client.dialect != DIALECT_SWITCH:
             interfaces = parse_show_interface(await client.run("show interface"))
             mgt = interfaces.get("mgt0")
             mac = (mgt.mac if mgt else None) or mac
     finally:
         await client.close()
-    return {"mac": mac, "hostname": client.hostname, "platform": version.platform}
+    return {"mac": mac, "hostname": client.hostname, "platform": platform}
 
 
 class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):

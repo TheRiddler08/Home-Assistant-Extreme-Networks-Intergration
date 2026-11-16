@@ -296,6 +296,25 @@ def _ssid_rows(o: OverviewData) -> list[dict[str, Any]]:
     return rows
 
 
+def _problem_rows(o: OverviewData) -> list[dict[str, Any]]:
+    """Devices with unsaved changes, a config changed after reboot, or a bad boot."""
+    rows = []
+    for d in o.devices:
+        data = d.data
+        problems = []
+        if data.backup is not None and data.backup.changed_after_reboot:
+            problems.append("configuration changed after reboot")
+        if data.exos is not None:
+            problems += data.exos.boot_problems
+        if data.config_unsaved:
+            problems.append("unsaved configuration changes")
+        if not d.online:
+            problems.append("offline")
+        if problems:
+            rows.append({"name": d.title, "problems": problems})
+    return rows
+
+
 def _band_clients(band: str) -> Callable[[OverviewData], int]:
     return lambda o: sum(1 for c in o.clients() if c.get("band") == band)
 
@@ -327,6 +346,9 @@ SENSORS: tuple[OverviewSensorSpec, ...] = (
     OverviewSensorSpec("poe_power_budget", "PoE power budget",
                        lambda o: o.total(o.switches, lambda d: d.poe.budget_w if d.poe else None),
                        unit=UnitOfPower.WATT, device_class=SensorDeviceClass.POWER),
+    OverviewSensorSpec("config_problems", "Devices with configuration problems",
+                       lambda o: len(_problem_rows(o)), attrs_fn=lambda o: {"devices": _problem_rows(o)},
+                       icon="mdi:alert-decagram"),
     OverviewSensorSpec("ports_up", "Switch ports up",
                        lambda o: sum(1 for s in o.switches for p in s.data.ports() if s.data.interfaces[p].is_up),
                        icon="mdi:ethernet", exists_fn=lambda o: bool(o.switches)),

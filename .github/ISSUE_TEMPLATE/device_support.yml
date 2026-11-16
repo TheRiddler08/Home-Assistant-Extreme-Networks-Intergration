@@ -48,7 +48,7 @@ body:
   - type: textarea
     id: interface
     attributes:
-      label: "`show interface` (APs / routers) or `show port all` (switches)"
+      label: "`show interface` (APs / routers), `show port all` (SR switches) or `show ports no-refresh` (ExtremeXOS)"
       render: text
   - type: textarea
     id: more
@@ -57,5 +57,7 @@ body:
       description: |
         APs / routers: `show ssid`, `show station` (with a client connected), `show interface wifi0`,
         `show interface wifi0.1`. Switches: `show poe`, `show poe port info 1/0/1`,
-        `show mac-addr-table`, `show lldp remote-device all`. If a command is rejected, paste the error.
+        `show mac-addr-table`, `show lldp remote-device all`. ExtremeXOS: `show switch`,
+        `show ports statistics no-refresh`, `show inline-power`, `show inline-power info ports`,
+        `show fdb`, `show lldp neighbors`, `show temperature`, `show fans`. If a command is rejected, paste the error.
       render: text

@@ -281,6 +281,62 @@ DEVICE_SENSORS: tuple[DeviceSensorDescription, ...] = (
         exists_fn=lambda d: bool(d.boot_params and d.boot_params.country_code),
     ),
     DeviceSensorDescription(
+        key="last_backup", translation_key="last_backup", device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=DIAG, icon="mdi:content-save-cog",
+        value_fn=lambda d: d.backup.last_backup if d.backup else None,
+        exists_fn=lambda d: d.backup is not None,
+        attrs_fn=lambda d: extra_attrs(
+            file=d.backup.last_file, backups=d.backup.count, folder=d.backup.folder,
+            last_checked=d.backup.last_checked.isoformat() if d.backup.last_checked else None,
+        ) if d.backup else {},
+    ),
+    DeviceSensorDescription(
+        key="boot_count", translation_key="boot_count", entity_category=DIAG, icon="mdi:counter",
+        value_fn=lambda d: d.exos.boot_count if d.exos else None,
+        exists_fn=lambda d: bool(d.exos and d.exos.boot_count is not None),
+    ),
+    DeviceSensorDescription(
+        key="image_booted", translation_key="image_booted", entity_category=DIAG, icon="mdi:chip",
+        value_fn=lambda d: d.exos.image_booted if d.exos else None,
+        exists_fn=lambda d: bool(d.exos and d.exos.image_booted),
+        attrs_fn=lambda d: extra_attrs(
+            image_selected=d.exos.image_selected, primary_version=d.exos.primary_version,
+            secondary_version=d.exos.secondary_version, booted_version=d.exos.booted_version,
+        ) if d.exos else {},
+    ),
+    DeviceSensorDescription(
+        key="config_booted", translation_key="config_booted", entity_category=DIAG, icon="mdi:file-cog",
+        value_fn=lambda d: d.exos.config_booted if d.exos else None,
+        exists_fn=lambda d: bool(d.exos and d.exos.config_booted),
+        attrs_fn=lambda d: extra_attrs(config_selected=d.exos.config_selected) if d.exos else {},
+    ),
+    DeviceSensorDescription(
+        key="system_state", translation_key="system_state", entity_category=DIAG, icon="mdi:heart-pulse",
+        value_fn=lambda d: d.exos.current_state if d.exos else None,
+        exists_fn=lambda d: bool(d.exos and d.exos.current_state),
+        attrs_fn=lambda d: extra_attrs(health=d.exos.health, boot_time=d.exos.boot_time) if d.exos else {},
+    ),
+    DeviceSensorDescription(
+        key="temperature", translation_key="temperature", device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS, state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.environment.temperature_c if d.environment else None,
+        exists_fn=lambda d: bool(d.environment and d.environment.temperature_c is not None),
+        attrs_fn=lambda d: extra_attrs(status=d.environment.temperature_status) if d.environment else {},
+    ),
+    DeviceSensorDescription(
+        key="fan_status", translation_key="fan_status", entity_category=DIAG, icon="mdi:fan",
+        value_fn=lambda d: d.environment.fans_state if d.environment else None,
+        exists_fn=lambda d: bool(d.environment and d.environment.fans_state),
+        attrs_fn=lambda d: dict(d.environment.fans) if d.environment else {},
+    ),
+    DeviceSensorDescription(
+        key="power_supply_status", translation_key="power_supply_status", entity_category=DIAG,
+        icon="mdi:power-plug-battery",
+        value_fn=lambda d: d.environment.power_state if d.environment else None,
+        exists_fn=lambda d: bool(d.environment and d.environment.power_supplies),
+        attrs_fn=lambda d: dict(d.environment.power_supplies) if d.environment else {},
+    ),
+    DeviceSensorDescription(
         key="wired_clients", translation_key="wired_clients", state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:lan-connect",
         value_fn=lambda d: len(d.wired_client_macs()),
@@ -935,6 +991,7 @@ def _raw_sources(data: AerohiveData) -> dict[str, tuple[str, dict[str, str], set
         mapped = {key for attr, key in detail.mapped_fields.items() if attr in _DETAIL_WITH_ENTITY}
         sources[f"if_{name}"] = (interface_label(data, name), detail.raw, mapped)
     for key, label, obj in (
+        ("exos", "Switch", data.exos),
         ("cpu", "CPU", data.cpu),
         ("memory", "Memory", data.memory),
         ("hw", "Hardware", data.hardware),

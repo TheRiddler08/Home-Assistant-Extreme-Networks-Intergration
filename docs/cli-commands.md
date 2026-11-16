@@ -68,6 +68,43 @@ SSID names with spaces are sent in double quotes.
 The session recovers from the switch's idle timeout by logging in again, re-entering
 `enable` and re-running the command.
 
+## ExtremeXOS (Summit X450e and other EXOS switches)
+
+All 🧪: written from the ExtremeXOS 12.x / 15.x command reference and not yet confirmed
+on a device. Real output is very welcome (see [Supported devices](supported-devices.md)).
+
+### Read
+
+| Command | Used for |
+| --- | --- |
+| `disable clipaging` | No paging (the `Press <SPACE> to continue` pager is answered otherwise) |
+| `show switch` | Model, system MAC, uptime, boot count, booted / selected image and configuration, state |
+| `show ports no-refresh` | Port admin state (E/D), link (A/R/NP), speed, duplex, display string |
+| `show ports statistics no-refresh` | Byte / packet counters → throughput (one command for all ports) |
+| `show inline-power`, `show inline-power info ports` | PoE budget / measured; per-port state, class, volts, current, power, fault |
+| `show fdb` | Clients per port |
+| `show cpu-monitoring`, `show memory` | CPU (System 5 s), memory |
+| `show configuration` | Backups and change detection (every 15 min and after changes) |
+| `show lldp neighbors` + `show lldp ports <n> neighbors detailed` | LLDP neighbours, their IP and capabilities (every 15 min) |
+| `show temperature`, `show fans`, `show power` | Environment sensors (every 15 min) |
+
+The prompt (`X450e-48p.3 #`) is recognised automatically; a leading `*` means unsaved changes.
+
+### Change
+
+| Command | Used for |
+| --- | --- |
+| `enable ports <n>` / `disable ports <n>` | Port on / off |
+| `enable inline-power ports <n>` / `disable inline-power ports <n>` | PoE on / off |
+| `reset inline-power ports <n>` (fallback: disable, wait 5 s, enable) | PoE power cycle |
+| `save configuration` | Save (the y/N question is answered `y`) |
+| `reboot` | Reboot |
+
+## Configuration backups (all devices)
+
+`show running-config` (HiveOS, SR switches) or `show configuration` (ExtremeXOS) is read to
+take backups. A restore sends the backup's lines back one by one; see [backups](backups.md).
+
 ## Older HiveOS-style SR switch firmware (`AH-xxxxxx#` prompt)
 
 `show pse`, `show mac-address-table`, `interface ethN/N pse shutdown`: 🟡 guessed, untested.

@@ -1,0 +1,4 @@
+PowerSupply 1 information:
+ State:                 Powered On
+ PartInfo:              PS 2336 0413J-00342 4300N-00000
+ Input:                 115.00 V AC

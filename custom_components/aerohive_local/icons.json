@@ -20,6 +20,18 @@
     },
     "set_port": {
       "service": "mdi:ethernet"
+    },
+    "backup_config": {
+      "service": "mdi:content-save-cog"
+    },
+    "list_backups": {
+      "service": "mdi:format-list-bulleted"
+    },
+    "save_config": {
+      "service": "mdi:content-save"
+    },
+    "restore_config": {
+      "service": "mdi:backup-restore"
     }
   }
 }

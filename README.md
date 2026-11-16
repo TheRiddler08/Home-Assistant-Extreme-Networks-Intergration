@@ -5,8 +5,9 @@
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Monitor and control **Aerohive / Extreme Networks access points, branch routers and SR
-switches locally over SSH**. It doesn't use the cloud, HiveManager or ExtremeCloud IQ.
+Monitor and control **Aerohive / Extreme Networks access points, branch routers, SR switches
+and ExtremeXOS switches locally over SSH**. It doesn't use the cloud, HiveManager or
+ExtremeCloud IQ.
 
 ## Features
 
@@ -19,7 +20,10 @@ switches locally over SSH**. It doesn't use the cloud, HiveManager or ExtremeClo
 - **Radios:** channel, width, TX/EIRP power, noise floor, utilisation.
 - **Switches:** port link, speed, throughput and counters; PoE power, status, on/off and
   power cycle; LLDP neighbours; port on/off with uplink protection.
-- **System:** firmware, model, serial, uptime, CPU, memory, IP address, reboot.
+- **System:** firmware, model, serial, uptime, CPU, memory, temperature, fans, IP address, reboot.
+- **Power-loss protection:** automatic configuration backups, an alert when a device comes
+  back from a reboot with a different configuration, boot and unsaved-changes checks
+  (ExtremeXOS), Save buttons and a restore action.
 - **Network overview:** one *Aerohive Network* device that combines every AP and switch.
 - **Safe by design:** one throttled SSH session per device, changes verified against the
   device's reply, passwords never logged or stored in entity states.
@@ -31,7 +35,8 @@ switches locally over SSH**. It doesn't use the cloud, HiveManager or ExtremeClo
 | Extreme Networks AP460C (IQ Engine 10.5) | ✅ Working |
 | Aerohive SR2208P switch (software 1.0.1.28) | ✅ Working |
 | Aerohive BR100 (HiveOS) | 🟡 Partial |
-| Other HiveOS / IQ Engine APs, other SR switches on the same software | Expected to work, untested |
+| Extreme Networks Summit X450e-48p (ExtremeXOS) | 🧪 Preview, needs testing |
+| Other HiveOS / IQ Engine APs, SR switches and ExtremeXOS switches | Expected to work, untested |
 
 Full details: [Supported devices](docs/supported-devices.md).
 
@@ -57,7 +62,8 @@ Networks (Local SSH)**, and choose **Scan my network** or **Enter IP address man
 | [Entities](docs/entities.md) | Every sensor, switch and control, with a dashboard example |
 | [Wi-Fi manager](docs/wifi.md) | Managing SSIDs and passwords |
 | [Network overview](docs/overview.md) | The combined *Aerohive Network* device |
-| [Switches](docs/switches.md) | SR-series switches: ports, PoE, LLDP |
+| [Switches](docs/switches.md) | SR-series and ExtremeXOS switches: ports, PoE, LLDP |
+| [Power-loss protection and backups](docs/backups.md) | Backups, change-after-reboot alerts, restore |
 | [Actions](docs/actions.md) | Actions for automations and debugging |
 | [How it works](docs/how-it-works.md) | SSH session, safety, glitch protection |
 | [CLI commands](docs/cli-commands.md) | Every command used, and which are verified |

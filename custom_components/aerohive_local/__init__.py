@@ -31,6 +31,9 @@ from homeassistant.helpers import (
 from homeassistant.helpers import (
     entity_registry as er,
 )
+from homeassistant.helpers import (
+    issue_registry as ir,
+)
 from homeassistant.helpers.typing import ConfigType
 
 from .client import AerohiveClient
@@ -108,6 +111,15 @@ SET_PORT_SCHEMA = vol.Schema(
         vol.Required(ATTR_PORT): cv.string,
         vol.Required("enabled"): cv.boolean,
         vol.Optional("force", default=False): cv.boolean,
+    }
+)
+DEVICE_ONLY_SCHEMA = vol.Schema({vol.Required(ATTR_DEVICE_ID): cv.string})
+RESTORE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_DEVICE_ID): cv.string,
+        vol.Optional("file"): cv.string,
+        vol.Optional("save", default=False): cv.boolean,
+        vol.Required("confirm"): cv.boolean,
     }
 )
 POWER_CYCLE_SCHEMA = vol.Schema(
@@ -204,6 +216,31 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         )
 
     hass.services.async_register(DOMAIN, "set_port", set_port, SET_PORT_SCHEMA)
+
+    async def backup_config(call: ServiceCall) -> ServiceResponse:
+        return await coordinator_for(call).async_backup_config()
+
+    async def list_backups(call: ServiceCall) -> ServiceResponse:
+        return {"backups": await coordinator_for(call).async_list_backups()}
+
+    async def save_config(call: ServiceCall) -> None:
+        await coordinator_for(call).async_save_config()
+
+    async def restore_config(call: ServiceCall) -> ServiceResponse:
+        if not call.data["confirm"]:
+            raise ServiceValidationError("Set confirm: true to restore a configuration backup")
+        return await coordinator_for(call).async_restore_config(call.data.get("file"), call.data["save"])
+
+    hass.services.async_register(
+        DOMAIN, "backup_config", backup_config, DEVICE_ONLY_SCHEMA, supports_response=SupportsResponse.OPTIONAL
+    )
+    hass.services.async_register(
+        DOMAIN, "list_backups", list_backups, DEVICE_ONLY_SCHEMA, supports_response=SupportsResponse.ONLY
+    )
+    hass.services.async_register(DOMAIN, "save_config", save_config, DEVICE_ONLY_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, "restore_config", restore_config, RESTORE_SCHEMA, supports_response=SupportsResponse.OPTIONAL
+    )
     return True
 
 
@@ -301,6 +338,12 @@ async def async_migrate_entry(hass: HomeAssistant, entry: AerohiveConfigEntry) -
 
 async def _async_update_listener(hass: HomeAssistant, entry: AerohiveConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: AerohiveConfigEntry) -> None:
+    """Remove this device's repair issues (backups are kept on disk)."""
+    for kind in ("config_changed_after_reboot", "boot_config_problem"):
+        ir.async_delete_issue(hass, DOMAIN, f"{kind}_{entry.entry_id}")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: AerohiveConfigEntry) -> bool:

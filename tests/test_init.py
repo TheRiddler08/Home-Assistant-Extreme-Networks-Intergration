@@ -76,6 +76,7 @@ class FakeClient:
         self.responses = _responses()
         self.fail_with: Exception | None = None
         self.dialect = "hiveos"
+        self.config_unsaved: bool | None = None
         FakeClient.instances.append(self)
 
     async def run(self, command: str, **kwargs: Any) -> str:
@@ -104,11 +105,13 @@ class FakeClient:
 
 
 @pytest.fixture(autouse=True)
-def fake_client():
+def fake_client(tmp_path):
     FakeClient.instances.clear()
     with (
         patch("custom_components.aerohive_local.AerohiveClient", FakeClient),
         patch("custom_components.aerohive_local.entity.CONTROL_DEBOUNCE_SECONDS", 0.05),
+        # Each test gets its own backup folder (an absolute path wins over the config dir).
+        patch("custom_components.aerohive_local.coordinator.BACKUP_ROOT", str(tmp_path / "backups")),
     ):
         yield
 

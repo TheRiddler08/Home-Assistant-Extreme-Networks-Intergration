@@ -1,0 +1,6 @@
+FanTray information:
+State:                 Operational
+NumFan:                3
+Fan-1:                 Operational at 4800 RPM
+Fan-2:                 Operational at 4830 RPM
+Fan-3:                 Operational at 4790 RPM

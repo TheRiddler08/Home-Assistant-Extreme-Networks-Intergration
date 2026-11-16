@@ -1,0 +1,6 @@
+System Memory Information
+-------------------------
+ Total DRAM (KB): 262144
+ System     (KB): 34567
+ User       (KB): 123456
+ Free       (KB): 104121

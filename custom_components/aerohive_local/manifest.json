@@ -50,6 +50,12 @@
     },
     {
       "macaddress": "B87CF2*"
+    },
+    {
+      "macaddress": "000496*"
+    },
+    {
+      "macaddress": "00E02B*"
     }
   ],
   "documentation": "https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/tree/main/docs",
@@ -63,5 +69,5 @@
   "requirements": [
     "asyncssh>=2.21.0"
   ],
-  "version": "0.6.3"
+  "version": "0.7.0"
 }

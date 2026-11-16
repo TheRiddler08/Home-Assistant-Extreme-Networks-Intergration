@@ -438,3 +438,88 @@ async def test_switch_idle_timeout_relogin() -> None:
         await client.close()
         srv.close()
         await srv.wait_closed()
+
+
+# --------------------------------------------------------------------------
+# ExtremeXOS: "X450e-48p.N #", "* " when unsaved, "Press <SPACE>..." pager
+# --------------------------------------------------------------------------
+
+
+def _make_exos_handler(received: list[str]):
+    async def handler(process: asyncssh.SSHServerProcess) -> None:
+        seq = 1
+        unsaved = False
+        paging = True
+
+        def prompt() -> None:
+            process.stdout.write(f"\r\n{'* ' if unsaved else ''}X450e-48p.{seq} # ")
+
+        process.stdout.write("\r\nExtremeXOS\r\nCopyright (C) 1996-2015 Extreme Networks.\r\n")
+        prompt()
+        while True:
+            line = await _read_line(process)
+            if line is None:
+                break
+            cmd = line.strip()
+            received.append(cmd)
+            seq += 1
+            if cmd == "disable clipaging":
+                paging = False
+            elif cmd == "enable clipaging":
+                paging = True
+                received.append("paging-on")
+            elif cmd == "show long":
+                for i in range(1, 41):
+                    process.stdout.write(f"line {i}\r\n")
+                    if paging and i == 20:
+                        process.stdout.write("Press <SPACE> to continue or <Q> to quit:")
+                        await process.stdin.read(1)
+                        process.stdout.write("\r                                          \r")
+            elif cmd.startswith(("disable ports", "enable ports", "disable inline-power", "enable inline-power")):
+                unsaved = True
+            elif cmd == "save configuration":
+                process.stdout.write("Do you want to save configuration to primary.cfg and overwrite it? (y/N) ")
+                answer = await _read_line(process)
+                received.append(f"save:{answer}")
+                if answer and answer.lower().startswith("y"):
+                    unsaved = False
+                    process.stdout.write("Saving configuration on master ....... done!\r\n")
+            elif cmd:
+                process.stdout.write(f"ok {cmd}\r\n")
+            prompt()
+        process.exit(0)
+
+    return handler
+
+
+@pytest.mark.parametrize("paging_supported", [True, False])
+async def test_exos_prompt_paging_unsaved_and_save(paging_supported: bool) -> None:
+    received: list[str] = []
+    handler = _make_exos_handler(received)
+    key = asyncssh.generate_private_key("ssh-rsa", 2048)
+    srv = await asyncssh.create_server(
+        _Server, "127.0.0.1", 0, server_host_keys=[key], process_factory=handler, line_editor=False
+    )
+    port = srv.sockets[0].getsockname()[1]
+    client = _client(port)
+    try:
+        if not paging_supported:
+            await client.connect()
+            client._proc.stdin.write("enable clipaging\n")  # simulate paging still on
+            await client._read_until_prompt(5)
+        out = await client.run("show long")
+        assert client.dialect == "exos"
+        assert client.hostname == "X450e-48p"
+        assert received[0] == "disable clipaging"
+        assert [x for x in out.split("\n") if x.strip()] == [f"line {i}" for i in range(1, 41)]
+        assert ("paging-on" in received) is not paging_supported
+        assert client.config_unsaved is False
+        await client.run("disable ports 5")
+        assert client.config_unsaved is True
+        await client.run("save configuration", confirm=True)
+        assert "save:y" in received
+        assert client.config_unsaved is False
+    finally:
+        await client.close()
+        srv.close()
+        await srv.wait_closed()

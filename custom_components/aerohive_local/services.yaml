@@ -118,3 +118,49 @@ set_port:
       default: false
       selector:
         boolean:
+
+backup_config:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+
+list_backups:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+
+save_config:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+
+restore_config:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+    file:
+      required: false
+      example: "20261114-160000.cfg"
+      selector:
+        text:
+    save:
+      default: false
+      selector:
+        boolean:
+    confirm:
+      required: true
+      default: false
+      selector:
+        boolean:

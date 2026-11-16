@@ -1,0 +1,9 @@
+
+Inline Power System Information
+Configured          : Enabled
+Power Usage Threshold : 70 percent (per slot)
+Legacy Mode         : Disabled
+
+Inline Power Slot Information
+Slot  Inline-Power  Firmware   Budgeted   Measured
+1     Operational   290        370 W      21 W

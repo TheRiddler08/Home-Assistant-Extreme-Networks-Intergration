@@ -275,11 +275,55 @@
       },
       "ports_discards": {
         "name": "All ports discards"
+      },
+      "last_backup": {
+        "name": "Last configuration backup"
+      },
+      "boot_count": {
+        "name": "Boot count"
+      },
+      "image_booted": {
+        "name": "Booted image"
+      },
+      "config_booted": {
+        "name": "Booted configuration"
+      },
+      "system_state": {
+        "name": "System state"
+      },
+      "temperature": {
+        "name": "Temperature"
+      },
+      "fan_status": {
+        "name": "Fans"
+      },
+      "power_supply_status": {
+        "name": "Power supply"
       }
     },
     "button": {
       "reboot": {
         "name": "Reboot"
+      },
+      "save_config": {
+        "name": "Save configuration"
+      },
+      "backup_config": {
+        "name": "Back up configuration"
+      },
+      "accept_config": {
+        "name": "Accept current configuration"
+      }
+    },
+    "binary_sensor": {
+      "config_changed_after_reboot": {
+        "name": "Configuration changed after reboot"
+      },
+      "boot_config_problem": {
+        "name": "Boot configuration problem"
+      },
+      "unsaved_config": {
+        "name": "Unsaved configuration changes"
       }
     }
   },
@@ -409,6 +453,68 @@
           "description": "Also allow turning off an uplink port (may disconnect Home Assistant from the device)."
         }
       }
+    },
+    "backup_config": {
+      "name": "Back up configuration",
+      "description": "Read the device's configuration and save it to a backup file in Home Assistant (skipped if nothing changed since the last backup).",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Aerohive / Extreme device."
+        }
+      }
+    },
+    "list_backups": {
+      "name": "List configuration backups",
+      "description": "List the configuration backups stored for a device.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Aerohive / Extreme device."
+        }
+      }
+    },
+    "save_config": {
+      "name": "Save configuration",
+      "description": "Save the running configuration on the device so it survives a reboot or power loss.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Aerohive / Extreme device."
+        }
+      }
+    },
+    "restore_config": {
+      "name": "Restore configuration",
+      "description": "Send a configuration backup back to the device line by line. Lines the device rejects are reported; nothing is saved on the device unless save is on.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Aerohive / Extreme device."
+        },
+        "file": {
+          "name": "Backup file",
+          "description": "File name from List configuration backups. Default: the latest backup."
+        },
+        "save": {
+          "name": "Save on the device",
+          "description": "Save the configuration on the device after restoring."
+        },
+        "confirm": {
+          "name": "Confirm",
+          "description": "Must be on: restoring changes the device configuration."
+        }
+      }
+    }
+  },
+  "issues": {
+    "config_changed_after_reboot": {
+      "title": "{device}: configuration changed after a reboot",
+      "description": "After its last reboot, {device} is running a configuration that differs from the backup taken on {backup} ({added} line(s) added, {removed} removed). This is what happens when unsaved changes are lost in a power cut, or the device boots an old or default configuration.\n\nChanges:\n```\n{changes}\n```\n\n- If the backup is correct, run the **Restore configuration** action (`aerohive_local.restore_config`) for this device, with `save: true`.\n- If the current configuration is correct, press **Accept current configuration** on the device page.\n\nNo new backup is taken until you do one of these, so the last known-good one stays available."
+    },
+    "boot_config_problem": {
+      "title": "{device}: did not boot as configured",
+      "description": "{device} reports: {problems}.\n\nThis usually follows a power loss or a corrupted configuration file. Check `show switch` on the device. To boot the saved configuration again, run `use configuration primary` and then `reboot` on the switch, or restore the latest backup with the **Restore configuration** action."
     }
   }
 }

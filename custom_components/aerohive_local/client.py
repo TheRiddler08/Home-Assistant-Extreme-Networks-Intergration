@@ -16,7 +16,14 @@ from typing import Any
 
 import asyncssh
 
-from .commands import DIALECT_HIVEOS, DIALECT_SWITCH, DISABLE_PAGING_COMMANDS, redact
+from .commands import (
+    DIALECT_EXOS,
+    DIALECT_HIVEOS,
+    DIALECT_SWITCH,
+    DISABLE_PAGING_COMMANDS,
+    EXOS_DISABLE_PAGING,
+    redact,
+)
 from .parsers import (
     CONFIRM_TAIL_RE,
     MORE_TAIL_RE,
@@ -126,6 +133,7 @@ class AerohiveClient:
         self.prompt_mode: str | None = None
         self.prompt_submode: str | None = None  # "Config", "Interface 1/0/1" (switch CLI)
         self.dialect: str = DIALECT_HIVEOS
+        self.config_unsaved: bool | None = None  # ExtremeXOS only
         self.paging_disabled = False
 
     @property
@@ -193,7 +201,12 @@ class AerohiveClient:
         if match:
             self.hostname = prompt_host(match)
             self._note_prompt(match)
-            self.dialect = DIALECT_SWITCH if match.group("phost") else DIALECT_HIVEOS
+            if match.group("xhost"):
+                self.dialect = DIALECT_EXOS
+            elif match.group("phost"):
+                self.dialect = DIALECT_SWITCH
+            else:
+                self.dialect = DIALECT_HIVEOS
         _LOGGER.debug("Connected to %s (prompt %s%s)", self._host, self.hostname, self.prompt_mode)
 
         # Switch CLIs may start in user mode ("(AH-Switch) >"): enter privileged mode.
@@ -202,7 +215,8 @@ class AerohiveClient:
 
         # Try to disable paging; fall back to answering --More-- prompts.
         self.paging_disabled = False
-        for command in DISABLE_PAGING_COMMANDS:
+        paging_commands = (EXOS_DISABLE_PAGING,) if self.dialect == DIALECT_EXOS else DISABLE_PAGING_COMMANDS
+        for command in paging_commands:
             try:
                 out = await self._exec(command, self._command_timeout)
             except AerohiveError:
@@ -218,6 +232,9 @@ class AerohiveClient:
     def _note_prompt(self, match: re.Match[str]) -> None:
         self.prompt_mode = match.group("mode")
         self.prompt_submode = match.group("submode")
+        # ExtremeXOS marks unsaved configuration changes with "* " before the prompt.
+        if match.group("xhost"):
+            self.config_unsaved = bool(match.group("unsaved"))
 
     async def _ensure_privileged(self) -> None:
         """Switch CLI: leave config modes and re-enter enable mode if needed."""

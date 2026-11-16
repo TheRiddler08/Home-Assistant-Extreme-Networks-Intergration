@@ -67,3 +67,26 @@ data:
   device_id: <AP>
   mac: "aa:bb:cc:dd:ee:ff"
 ```
+
+## `aerohive_local.set_port`
+
+Turn an Ethernet port on or off (and save). Uplink ports are protected unless `force: true`.
+
+```yaml
+action: aerohive_local.set_port
+data:
+  device_id: <switch>
+  port: "5"          # 1/0/5 on SR switches, 5 on ExtremeXOS
+  enabled: false
+```
+
+## Configuration backups
+
+See [Power-loss protection and backups](backups.md) for the full picture.
+
+| Action | Does |
+| --- | --- |
+| `aerohive_local.save_config` | Save the running configuration on the device |
+| `aerohive_local.backup_config` | Back up now (returns the file; no duplicate if unchanged). Refused while a "changed after reboot" alert is active |
+| `aerohive_local.list_backups` | List the backups of a device (returns a response) |
+| `aerohive_local.restore_config` | Send a backup back to the device (`confirm: true` required; `save: true` to save afterwards; `file:` to pick one) |

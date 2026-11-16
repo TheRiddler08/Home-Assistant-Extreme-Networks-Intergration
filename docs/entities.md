@@ -61,6 +61,29 @@ disabled by default (e.g. `wifi0 (2.4 GHz) mtu`, `Eth1 operational state`). Numb
 their unit (dBm, %, Mbit/s…). You can turn this off with **Create sensors for every raw
 field** in the options.
 
+## Configuration safety (all devices)
+
+See [Power-loss protection and backups](backups.md).
+
+| Entity | Notes |
+| --- | --- |
+| `Last configuration backup` (timestamp) | attributes: file, number of backups, folder |
+| `Configuration changed after reboot` (problem binary sensor) | attributes: lines added / removed, the changes |
+| `Save configuration`, `Back up configuration`, `Accept current configuration` (buttons) | |
+
+## ExtremeXOS switches (extra)
+
+| Entity | Notes |
+| --- | --- |
+| `Boot configuration problem` (problem binary sensor) | booted Factory Default / another configuration or image, or not OPERATIONAL |
+| `Unsaved configuration changes` (problem binary sensor) | from the `*` in the prompt |
+| `Booted image`, `Booted configuration` | attributes: selected image / configuration, primary and secondary versions |
+| `Boot count`, `System state` | from `show switch` |
+| `Temperature`, `Fans`, `Power supply` | from `show temperature`, `show fans`, `show power` |
+
+Ports are named like on the switch (`Port 1` … `Port 52`, or `1:5` on a stack) and get the
+same port, PoE, client and LLDP entities as [SR switches](switches.md).
+
 ## Other platforms
 
 | Platform | Entity |

@@ -3,6 +3,36 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.7.0] - 2026-11-16
+
+### Added
+- **ExtremeXOS switches (preview):** Summit X450e-48p and other ExtremeXOS switches are
+  detected from the prompt (`X450e-48p.3 #`). Ports (link, speed, duplex, throughput,
+  counters), PoE (budget, per-port power/status/class/voltage/current, on/off, power cycle),
+  clients per port, LLDP neighbours (with discovery of unconfigured devices), temperature,
+  fans, power supply, CPU, memory, boot count, booted image and configuration. Built from
+  the ExtremeXOS documentation; real output is needed to confirm it.
+- **Power-loss protection** for every device type:
+  - automatic configuration backups (every 15 minutes and after changes, only when the
+    configuration changed; last 20 kept in `/config/aerohive_local_backups/`)
+  - "Configuration changed after reboot" alert and Repairs notice when a device comes back
+    with a different configuration, keeping the known-good backup as the latest
+  - "Boot configuration problem" alert (ExtremeXOS booted Factory Default, the wrong
+    configuration or image, or isn't operational)
+  - "Unsaved configuration changes" alert (ExtremeXOS `*` prompt)
+  - Save configuration / Back up configuration / Accept current configuration buttons
+  - `save_config`, `backup_config`, `list_backups` and `restore_config` actions
+  - "Devices with configuration problems" sensor on the *Aerohive Network* device
+- Extreme Networks MAC prefixes (`00:04:96`, `00:E0:2B`) for the network scan, DHCP and
+  LLDP discovery.
+
+### Changed
+- Diagnostics redact every MAC address, serial number, IP address, hostname and LLDP
+  neighbour identifier, including inside raw device fields.
+
+### Fixed
+- `Error: ...` replies (as ExtremeXOS reports errors) are recognised as failures.
+
 ## [0.6.3] - 2026-11-14
 
 ### Fixed
@@ -89,6 +119,7 @@ GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 - Initial release: HiveOS / IQ Engine APs over SSH with legacy algorithms; sensors, SSID
   switches, max clients, Wi-Fi key, reboot, device trackers, debug `show` command action.
 
+[0.7.0]: https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/releases/tag/v0.7.0
 [0.6.3]: https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/releases/tag/v0.6.3
 [0.6.2]: https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/releases/tag/v0.6.2
 [0.6.1]: https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/releases/tag/v0.6.1

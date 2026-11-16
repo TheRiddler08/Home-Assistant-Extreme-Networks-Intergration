@@ -24,7 +24,11 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][A-Za-z0-9]")
 MORE_RE = re.compile(
     r"[ \t]*-+[ \t]*More[ \t]*-+(?:[ \t]*or[ \t]*\(q\)uit)?[ \t]*(?:\r[ \t]*)*", re.IGNORECASE
 )
-MORE_TAIL_RE = re.compile(r"-+[ \t]*More[ \t]*-+(?:[ \t]*or[ \t]*\(q\)uit)?[ \t]*$", re.IGNORECASE)
+MORE_TAIL_RE = re.compile(
+    r"(?:-+[ \t]*More[ \t]*-+(?:[ \t]*or[ \t]*\(q\)uit)?|Press <SPACE> to continue or <Q> to quit:)[ \t]*$",
+    re.IGNORECASE,
+)
+_EXOS_MORE_RE = re.compile(r"Press <SPACE> to continue or <Q> to quit:[ \t]*(?:\r[ \t]*)*", re.IGNORECASE)
 CONFIRM_TAIL_RE = re.compile(
     r"(\((?:y/n|yes/no)\)|\[(?:y/n|yes/no)\]|<(?:y/n|yes/no)>|\b(?:y/n|yes/no)\b)"
     r"[^\n]{0,20}[:?]?\s*$",
@@ -34,16 +38,19 @@ CONFIRM_TAIL_RE = re.compile(
 #   HiveOS / IQ Engine APs and routers: "AH-7c0680#"
 #   SR-series switches (FASTPATH-style): "(AH-Switch) #", "(AH-Switch) >",
 #   and in config mode "(AH-Switch) (Config)#" / "(AH-Switch) (Interface 1/0/1)#"
+#   ExtremeXOS switches: "X450e-48p.3 #", "* X450e-48p.4 #" (* = unsaved changes)
 PROMPT_RE = re.compile(
-    r"(?:^|\n)[ \t]*(?:\((?P<phost>[^()\n]{1,64})\)(?:[ \t]*\((?P<submode>[^()\n]{1,64})\))?[ \t]*"
+    r"(?:^|\n)[ \t]*(?:"
+    r"(?P<unsaved>\*[ \t]+)?(?P<xhost>[A-Za-z0-9][A-Za-z0-9_\-\.]*?)\.(?P<seq>\d+)[ \t]+"
+    r"|\((?P<phost>[^()\n]{1,64})\)(?:[ \t]*\((?P<submode>[^()\n]{1,64})\))?[ \t]*"
     r"|(?P<host>[A-Za-z0-9][A-Za-z0-9_\-\.]*))"
     r"(?P<mode>[#>])[ \t]*$"
 )
 
 
 def prompt_host(match: re.Match[str]) -> str:
-    """Hostname from a PROMPT_RE match (either prompt style)."""
-    return match.group("host") or match.group("phost")
+    """Hostname from a PROMPT_RE match (any prompt style)."""
+    return match.group("host") or match.group("phost") or match.group("xhost")
 
 NONE_VALUES = {"", "-", "--", "n/a", "na", "none"}
 
@@ -54,6 +61,7 @@ def clean_output(text: str) -> str:
         return ""
     text = ANSI_RE.sub("", text)
     text = MORE_RE.sub("", text)
+    text = _EXOS_MORE_RE.sub("", text)
     if "\b" in text:
         out: list[str] = []
         for char in text:
@@ -93,6 +101,7 @@ def strip_echo_and_prompt(output: str, command: str) -> str:
 # Lines that indicate the device rejected a command.
 _ERROR_PATTERNS = [
     re.compile(r"^\s*ERROR\b.*$", re.MULTILINE),
+    re.compile(r"^\s*Error\s*:.*$", re.MULTILINE | re.IGNORECASE),  # ExtremeXOS: "Error: Port 53 is invalid"
     re.compile(r"^.*\b[Uu]nknown keyword\b.*$", re.MULTILINE),
     re.compile(r"^.*\bInvalid\b.*$", re.MULTILINE | re.IGNORECASE),
     re.compile(r"^.*\bIncomplete command\b.*$", re.MULTILINE | re.IGNORECASE),
@@ -214,7 +223,7 @@ def _valid_ip(value: str | None) -> str | None:
 # Table parsing
 # --------------------------------------------------------------------------
 
-SEPARATOR_RE = re.compile(r"^\s*-+(?:\s+-+)*\s*$")
+SEPARATOR_RE = re.compile(r"^\s*(?:-+(?:\s+-+)*|=+(?:\s+=+)*)\s*$")
 TOKEN_RE = re.compile(r"\S+")
 
 
@@ -285,7 +294,7 @@ def parse_tables(text: str, header_re: re.Pattern[str] | None = None) -> list[Ta
             and lines[idx - 1].strip()
             and not SEPARATOR_RE.match(lines[idx - 1])
         ):
-            spans = [_Span(m.start(), m.end()) for m in re.finditer(r"-+", line)]
+            spans = [_Span(m.start(), m.end()) for m in re.finditer(r"-+|=+", line)]
             # Multi-line headers ("Admin" above "Mode", units row below): merge per column.
             header_lines = [lines[idx - 1]]
             back = idx - 2
@@ -482,9 +491,10 @@ def parse_show_version(text: str) -> VersionInfo:
 # --------------------------------------------------------------------------
 
 _IFACE_NAME_RE = re.compile(
-    r"^((mgt|eth|wifi|red|agg|tunnel|usbnet|vlan|lte|br)\S*|\d+/\d+/\d+)$", re.IGNORECASE
+    r"^((mgt|eth|wifi|red|agg|tunnel|usbnet|vlan|lte|br)\S*|\d+/\d+/\d+|\d+(?::\d+)?)$", re.IGNORECASE
 )
 _USP_RE = re.compile(r"^(\d+)/(\d+)/(\d+)$")  # unit/slot/port (SR-series switch CLI)
+_EXOS_PORT_RE = re.compile(r"^\d+(?::\d+)?$")  # ExtremeXOS port / stack slot:port
 _CHAN_RE = re.compile(r"^(?P<chan>[^()\s]+)?\s*(?:\((?P<width>[^)]*)\))?$")
 _RADIO_RE = re.compile(r"^wifi\d+$")
 
@@ -515,6 +525,8 @@ class Interface:
         usp = _USP_RE.match(self.name)
         if usp:
             return usp.group(1) != "0"
+        if _EXOS_PORT_RE.match(self.name):  # ExtremeXOS: "1".."52", stacks "1:5"
+            return True
         return self.name.startswith("eth") and "." not in self.name
 
     @property
@@ -1616,6 +1628,295 @@ def parse_lldp_neighbors(text: str) -> dict[str, LldpNeighbor]:
         if neighbor is not None:
             result.setdefault(neighbor.local_port, neighbor)
     return result
+
+
+# --------------------------------------------------------------------------
+# ExtremeXOS (Summit X450e and other EXOS switches)
+# --------------------------------------------------------------------------
+
+_EXOS_PORT_STATES = {"E", "D", "F", "L"}  # enabled, disabled, ...
+_EXOS_LINK_STATES = {"A", "R", "NP", "L", "D", "LB", "ND", "d"}
+
+
+@dataclass
+class ExosSwitchInfo:
+    """'show switch' on ExtremeXOS."""
+
+    sysname: str | None = None
+    system_type: str | None = None
+    mac: str | None = None
+    uptime_seconds: int | None = None
+    boot_count: int | None = None
+    boot_time: str | None = None
+    current_state: str | None = None
+    health: str | None = None
+    image_selected: str | None = None
+    image_booted: str | None = None
+    primary_version: str | None = None
+    secondary_version: str | None = None
+    config_selected: str | None = None
+    config_booted: str | None = None
+    raw: dict[str, str] = field(default_factory=dict)
+    mapped_keys: list[str] = field(default_factory=list)
+
+    @property
+    def booted_version(self) -> str | None:
+        booted = (self.image_booted or "").lower()
+        if booted.startswith("secondary"):
+            return self.secondary_version
+        return self.primary_version
+
+    @property
+    def boot_problems(self) -> list[str]:
+        """Signs the switch did not come up the way it was configured to."""
+        problems = []
+        booted = (self.config_booted or "").lower()
+        if booted and any(w in booted for w in ("default", "factory", "none")):
+            problems.append(f"booted with {self.config_booted} instead of a saved configuration")
+        elif self.config_booted and self.config_selected and self.config_booted != self.config_selected:
+            problems.append(f"booted {self.config_booted} but {self.config_selected} is selected")
+        if self.image_booted and self.image_selected and self.image_booted != self.image_selected:
+            problems.append(f"booted the {self.image_booted} image but {self.image_selected} is selected")
+        state = (self.current_state or "").upper()
+        if state and state != "OPERATIONAL":
+            problems.append(f"state is {self.current_state}")
+        return problems
+
+
+def parse_exos_show_switch(text: str) -> ExosSwitchInfo:
+    kv = parse_key_values(text)
+    info = ExosSwitchInfo(raw=kv)
+    fields_map = {
+        "sysname": "sysname", "system_type": "system_type", "boot_time": "boot_time",
+        "current_state": "current_state", "syshealth_check": "health", "image_selected": "image_selected",
+        "image_booted": "image_booted", "primary_ver": "primary_version", "secondary_ver": "secondary_version",
+        "config_selected": "config_selected", "config_booted": "config_booted",
+    }  # fmt: skip
+    for key, attr in fields_map.items():
+        if _none_if_empty(kv.get(key)) is not None:
+            setattr(info, attr, kv[key])
+            info.mapped_keys.append(key)
+    info.mac = normalize_mac(kv.get("system_mac"))
+    info.boot_count = parse_int(kv.get("boot_count"))
+    info.uptime_seconds = parse_uptime(kv.get("system_uptime"))
+    info.mapped_keys += [k for k in ("system_mac", "boot_count", "system_uptime") if k in kv]
+    return info
+
+
+def parse_exos_ports(text: str) -> dict[str, Interface]:
+    """'show ports no-refresh' (Port Summary), parsed by tokens from the right.
+
+    Row: <port> [display string] <vlan name> <port state> <link state> [speed] [duplex]
+    """
+    result: dict[str, Interface] = {}
+    for line in clean_output(text).split("\n"):
+        tokens = line.split()
+        if len(tokens) < 3 or not _EXOS_PORT_RE.match(tokens[0]):
+            continue
+        name, rest = tokens[0], tokens[1:]
+        iface = Interface(name=name)
+        if rest and rest[-1].upper() in {"FULL", "HALF"}:
+            iface.duplex = rest.pop().capitalize()
+        if rest and rest[-1].isdigit():
+            iface.speed = rest.pop()
+        if rest and rest[-1] in _EXOS_LINK_STATES:
+            link = rest.pop()
+            iface.state = "Up" if link == "A" else "Down"
+            iface.extra["link_state"] = link
+        else:
+            continue
+        if rest and rest[-1] in _EXOS_PORT_STATES:
+            iface.admin_state = "Enable" if rest.pop() == "E" else "Disable"
+        if rest:
+            iface.vlan = rest.pop()
+        if rest:
+            iface.extra["display_string"] = " ".join(rest)
+        result[name] = iface
+    return result
+
+
+def parse_exos_port_statistics(text: str) -> dict[str, InterfaceDetail]:
+    """'show ports statistics no-refresh': Tx Pkt, Tx Byte, Rx Pkt, Rx Byte, ... per port."""
+    result: dict[str, InterfaceDetail] = {}
+    for line in clean_output(text).split("\n"):
+        tokens = line.split()
+        if len(tokens) < 6 or not _EXOS_PORT_RE.match(tokens[0]):
+            continue
+        numbers = [t for t in tokens[1:] if t.isdigit()]
+        if len(numbers) < 4:
+            continue
+        detail = InterfaceDetail(name=tokens[0])
+        detail.tx_packets, detail.tx_bytes, detail.rx_packets, detail.rx_bytes = (int(n) for n in numbers[:4])
+        result[tokens[0]] = detail
+    return result
+
+
+def parse_exos_inline_power(text: str) -> PoeSummary:
+    """'show inline-power': budget and measured power (slot table or key/values)."""
+    summary = PoeSummary(raw=parse_key_values(text))
+    for key, value in summary.raw.items():
+        if summary.budget_w is None and ("budget" in key or "allocated" in key):
+            summary.budget_w = parse_number(value)
+        elif summary.used_w is None and ("measured" in key or "consum" in key):
+            summary.used_w = parse_number(value)
+    if summary.budget_w is None:
+        for line in clean_output(text).split("\n"):
+            watts = re.findall(r"(\d+(?:\.\d+)?)\s*W\b", line)
+            if len(watts) >= 2:
+                summary.budget_w = summary.budget_w or 0.0
+                summary.budget_w += float(watts[0])
+                summary.used_w = (summary.used_w or 0.0) + float(watts[1])
+    if summary.budget_w is not None and summary.used_w is not None:
+        summary.remaining_w = round(summary.budget_w - summary.used_w, 2)
+    return summary
+
+
+def parse_exos_inline_power_info(text: str) -> dict[str, PoePort]:
+    """'show inline-power info ports': Port State Class Volts Curr(mA) Power(W) Fault."""
+    result: dict[str, PoePort] = {}
+    for line in clean_output(text).split("\n"):
+        tokens = line.split()
+        if len(tokens) < 6 or not _EXOS_PORT_RE.match(tokens[0]):
+            continue
+        port, state, poe_class = tokens[0], tokens[1], tokens[2]
+        numbers = tokens[3:6]
+        if not all(parse_number(n) is not None for n in numbers):
+            continue
+        entry = PoePort(port=port, status=state, poe_class=_none_if_empty(poe_class.strip("-")) or None)
+        entry.power_w = parse_number(numbers[2])
+        entry.admin = "Disable" if state.lower().startswith("disabled") else "Enable"
+        entry.extra = {
+            "output_voltage_v": numbers[0],
+            "output_current_ma": numbers[1],
+            "fault_status": " ".join(tokens[6:]) or "None",
+        }
+        result[port] = entry
+    return result
+
+
+def parse_exos_fdb(text: str) -> list[FdbEntry]:
+    """'show fdb': MAC, VLAN name(id), age, flags, port (last column)."""
+    entries: list[FdbEntry] = []
+    for line in clean_output(text).split("\n"):
+        mac_match = MAC_SEARCH_RE.search(line)
+        if not mac_match:
+            continue
+        tokens = line.split()
+        port = tokens[-1] if tokens else ""
+        if not _EXOS_PORT_RE.match(port):
+            continue  # CPU / static self entries
+        vlan = re.search(r"\((\d{1,4})\)", line)
+        flags = line[mac_match.end():]
+        entry_type = "static" if re.search(r"\bs\b", flags) else "dynamic"
+        mac = normalize_mac(mac_match.group(0))
+        if mac:
+            entries.append(FdbEntry(mac=mac, port=port, vlan=int(vlan.group(1)) if vlan else None, entry_type=entry_type))
+    return entries
+
+
+def parse_exos_lldp_neighbors(text: str) -> dict[str, LldpNeighbor]:
+    """'show lldp neighbors': Port, Chassis ID, Port ID, TTL, Age, System Name."""
+    result: dict[str, LldpNeighbor] = {}
+    for line in clean_output(text).split("\n"):
+        tokens = line.split()
+        if len(tokens) < 5 or not _EXOS_PORT_RE.match(tokens[0]):
+            continue
+        if not (tokens[3].isdigit() and tokens[4].isdigit()):
+            continue
+        result[tokens[0]] = LldpNeighbor(
+            local_port=tokens[0],
+            chassis_id=tokens[1],
+            port_id=tokens[2],
+            system_name=" ".join(tokens[5:]) or None,
+            raw={"line": line.strip()},
+        )
+    return result
+
+
+def parse_exos_lldp_detail(text: str, port: str) -> LldpNeighbor | None:
+    """'show lldp port N neighbors detailed' (key: value lines with '- ' bullets)."""
+    values: dict[str, str] = {}
+    for line in clean_output(text).split("\n"):
+        line = line.strip().lstrip("- ").strip()
+        for part in line.split(";"):
+            if ":" in part:
+                key, _, value = part.partition(":")
+                key = normalize_key(key)
+                if key and key not in values:
+                    values[key] = value.strip().strip('"')
+    if not values:
+        return None
+    return LldpNeighbor(
+        local_port=port,
+        system_name=values.get("system_name"),
+        chassis_id=values.get("chassis_id"),
+        port_id=values.get("port_id"),
+        port_description=values.get("port_description"),
+        management_address=_valid_ip(values.get("management_address")),
+        capabilities=values.get("system_capabilities"),
+        capabilities_enabled=values.get("enabled_capabilities"),
+        raw=values,
+    )
+
+
+@dataclass
+class EnvironmentInfo:
+    """Temperature, fans and power supplies (ExtremeXOS)."""
+
+    temperature_c: float | None = None
+    temperature_status: str | None = None
+    fans_state: str | None = None
+    fans: dict[str, str] = field(default_factory=dict)
+    power_supplies: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def power_state(self) -> str | None:
+        if not self.power_supplies:
+            return None
+        states = set(self.power_supplies.values())
+        return states.pop() if len(states) == 1 else ", ".join(f"{k}: {v}" for k, v in self.power_supplies.items())
+
+
+def parse_exos_temperature(text: str) -> tuple[float | None, str | None]:
+    for line in clean_output(text).split("\n"):
+        match = re.search(r"(-?\d+(?:\.\d+)?)\s+(Normal|Warning|Critical|Alarm|Error|Fault)\b", line, re.IGNORECASE)
+        if match:
+            return float(match.group(1)), match.group(2).capitalize()
+    return None, None
+
+
+def parse_exos_fans(text: str) -> tuple[str | None, dict[str, str]]:
+    kv = parse_key_values(text)
+    fans = {k.replace("_", "-"): v for k, v in kv.items() if re.match(r"^fan_?\d+$", k)}
+    return kv.get("state"), fans
+
+
+def parse_exos_power(text: str) -> dict[str, str]:
+    """'show power': State per power supply."""
+    supplies: dict[str, str] = {}
+    current = "PSU"
+    for line in clean_output(text).split("\n"):
+        header = re.match(r"^\s*PowerSupply\s+(\d+)", line, re.IGNORECASE)
+        if header:
+            current = f"PSU {header.group(1)}"
+            continue
+        state = re.match(r"^\s*State\s*:\s*(.+?)\s*$", line, re.IGNORECASE)
+        if state:
+            supplies[current] = state.group(1)
+    return supplies
+
+
+def parse_exos_cpu(text: str) -> SystemStats:
+    """'show cpu-monitoring': the 'System' row's 5-second utilisation."""
+    stats = SystemStats()
+    for line in clean_output(text).split("\n"):
+        tokens = line.split()
+        if tokens and tokens[0].lower() == "system":
+            numbers = [parse_number(t) for t in tokens[1:] if parse_number(t) is not None]
+            if numbers:
+                stats.cpu_total = numbers[0]
+                break
+    return stats
 
 
 # --------------------------------------------------------------------------

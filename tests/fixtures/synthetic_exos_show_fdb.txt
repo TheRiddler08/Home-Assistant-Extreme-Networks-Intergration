@@ -1,0 +1,11 @@
+Mac                     Vlan       Age  Flags         Port / Virtual Port List
+------------------------------------------------------------------------------
+00:04:96:12:34:56    Default(0001) 0012 d m           49
+00:15:5d:00:00:01    Default(0001) 0034 d m           49
+b8:a4:4f:00:d3:de    Default(0001) 0005 d m           4
+d4:3a:65:00:a5:94    Default(0001) 0002 d m           1
+00:04:96:aa:bb:01    Default(0001) 0000 s m  i         CPU
+
+Flags : d - Dynamic, s - Static, p - Permanent, n - NetLogin, m - MAC, i - IP,
+        x - IPX, l - lockdown MAC, L - lockdown-timeout MAC, M- Mirror, B - Egress Blackhole,
+Total: 5 Static: 1  Perm: 0  Dyn: 4  Dropped: 0  Locked: 0  Locked with Timeout: 0
