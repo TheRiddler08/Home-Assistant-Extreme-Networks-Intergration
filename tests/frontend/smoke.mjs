@@ -51,7 +51,7 @@ async function open(query, viewport = { width: 1280, height: 900 }) {
 // Overview: one tile per device, problems counted.
 let page = await open("?view=panel");
 const panel = () => page.locator("aerohive-network-panel");
-check((await panel().locator(".tile").count()) === 4, "overview shows 4 device tiles");
+check((await panel().locator(".tile").count()) === 5, "overview shows 5 device tiles");
 check((await panel().locator(".summary .bad .big").textContent()).trim() === "3", "overview counts 3 problems");
 await panel().locator(".tile").first().click();
 await page.waitForTimeout(200);
@@ -93,6 +93,7 @@ await page.close();
 // Wi-Fi tab: timer, edit, add, toggle; non-admins can only look.
 page = await open("?view=panel&path=wifi");
 check((await panel().locator(".net").count()) === 3, "Wi-Fi tab lists 3 networks");
+check((await panel().locator(".muted").first().textContent()).includes("2 access points"), "router with Wi-Fi counts as an access point");
 await panel().locator('.net[data-ssid="Guest Wifi"] [data-action="wifi-timer"]').click();
 await panel().locator('input[data-field="minutes"][value="120"]').check();
 await panel().locator('[data-action="wifi-timer-start"]').click();

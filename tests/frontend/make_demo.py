@@ -87,7 +87,23 @@ ap["ssids"] = [
 ]
 for radio in ap["radios"]:
     radio["ssids"] = ["AP460C", "Guest Wifi"]
-snap["devices"] = [switch, sr, ap, ap2]
+br = copy.deepcopy(ap)
+br.update(entry_id="BR100", device_id="dev-br", name="AH-001120", host="192.168.9.1", ip="192.168.9.1", kind="router",
+          model="BR100", firmware="HiveOS 6.5r8 build-123456", mac="00:19:77:00:11:20",
+          stations=[{**sta, "mac": "02:22:33:44:55:%02x" % i, "hostname": name, "ip": f"192.168.9.{120 + i}"}
+                    for i, (sta, name) in enumerate(zip(ap["stations"], ["office-laptop", "printer"]))])
+br_ports = []
+for n in range(5):
+    port = copy.deepcopy(template)
+    up = n in (0, 1, 4)
+    port.update(name=f"eth{n}", label=None, up=up, enabled=True, present=True, speed=1000 if up else None,
+                duplex="Full" if up else None, uplink=n == 0, poe=None, neighbor=None, errors=0,
+                rx_kbps=round(random.uniform(50, 9000), 1) if up else None, tx_kbps=round(random.uniform(50, 3000), 1) if up else None,
+                clients=[{"mac": "02:00:00:bb:%02x:01" % n, "vlan": 1}] if up and n else [])
+    br_ports.append(port)
+br["ports"] = br_ports
+br["wired_clients"] = 2
+snap["devices"] = [switch, sr, br, ap, ap2]
 snap["wifi_timers"] = []
 out = Path(__file__).with_name("demo.json")
 out.write_text(json.dumps(snap, indent=1) + "\n")

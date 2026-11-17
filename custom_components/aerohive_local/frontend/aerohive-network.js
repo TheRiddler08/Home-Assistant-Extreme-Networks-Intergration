@@ -537,9 +537,22 @@ function columns(ports) {
   return cols;
 }
 
+const isRouterPorts = (ports) => ports.length > 0 && ports.every((p) => /^eth\d+$/i.test(p.name));
+
 function renderFaceplate(device, { selected = null, filter = null } = {}) {
   const ports = device.ports || [];
   if (!ports.length) return `<div class="empty">No ports reported yet.</div>`;
+  if (isRouterPorts(ports)) {
+    // Branch routers (BR100): one row, WAN (eth0) then the LAN ports.
+    const sorted = [...ports].sort((a, b) => natCompare(a.name, b.name));
+    const wan = sorted.filter((p) => p.name.toLowerCase() === "eth0");
+    const lan = sorted.filter((p) => p.name.toLowerCase() !== "eth0");
+    const col = (p, label) => `<div class="fp-col"><span class="fp-num">${esc(label)}</span>${renderPort(p, selected, filter)}</div>`;
+    return `<div class="faceplate" role="group" aria-label="Router ports">
+      ${wan.length ? `<div class="fp-block">${col(wan[0], "WAN")}</div>` : ""}
+      <div class="fp-block ${wan.length ? "extra" : ""}">${lan.map((p) => col(p, portNumber(p.name))).join("")}</div>
+    </div>`;
+  }
   return faceplateLayout(ports)
     .map(
       (row) => `
@@ -594,6 +607,9 @@ function renderLegend() {
 function renderMiniFaceplate(device) {
   const ports = [...(device.ports || [])].sort((a, b) => natCompare(a.name, b.name));
   if (!ports.length) return "";
+  if (isRouterPorts(ports)) {
+    return `<div class="mini-fp" aria-hidden="true"><div class="blk" style="grid-template-rows:7px">${ports.map((p) => `<b class="${portState(p)}"></b>`).join("")}</div></div>`;
+  }
   const blocks = [];
   for (let i = 0; i < ports.length; i += 12) blocks.push(ports.slice(i, i + 12));
   return `<div class="mini-fp" aria-hidden="true">${blocks

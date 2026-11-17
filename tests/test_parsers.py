@@ -792,3 +792,9 @@ def test_exos_parsers_never_raise(garbage: str) -> None:
     p.parse_exos_fans(garbage)
     p.parse_exos_power(garbage)
     p.parse_exos_cpu(garbage)
+
+
+def test_model_ethernet_ports() -> None:
+    assert p.model_ethernet_ports("BR100") == ("eth0", "eth1", "eth2", "eth3", "eth4")
+    assert p.model_ethernet_ports("br-100") == ("eth0", "eth1", "eth2", "eth3", "eth4")
+    assert p.model_ethernet_ports("AP460C") == () and p.model_ethernet_ports(None) == ()

@@ -17,7 +17,7 @@ The flavour is detected automatically from the prompt when the device connects.
 | --- | --- | --- | --- |
 | Extreme Networks **AP460C** | IQ Engine 10.5r3 | ✅ Working | 2.4 GHz `wifi0`, 5 GHz `wifi1` (`wifi2` sensor radio unused). Parsers built from real output. |
 | Aerohive **SR2208P** | Switch software 1.0.1.28 | ✅ Working | 8× PoE+ (1/0/1–1/0/8), 2 uplinks (1/0/9–1/0/10). All reads and PoE/port commands verified on the device. |
-| Aerohive **BR100** | HiveOS (circa 2014) | 🟡 Partial | Works with the HiveOS parsers. `show interface` layout based on a synthetic sample; real output welcome. |
+| Aerohive **BR100** | HiveOS (circa 2014) | 🟡 Partial | Works with the HiveOS parsers. All five ports (eth0 WAN, eth1–eth4 LAN) are shown; ports the `show interface` summary leaves out are read with `show interface ethN`. Real output welcome. |
 | Extreme Networks **Summit X450e-48p** | ExtremeXOS 12.x / 15.x | 🧪 Preview | Built from the ExtremeXOS command reference and synthetic samples. Needs real output to be confirmed. See [below](#extremexos-switches). |
 
 ✅ Working: built and tested from real output of that device.

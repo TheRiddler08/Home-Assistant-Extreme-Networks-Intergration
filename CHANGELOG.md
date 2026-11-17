@@ -3,6 +3,17 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.10.2] - 2026-11-17
+
+### Fixed
+- **BR100 showed only some of its Ethernet ports** (for example 2 instead of 5): its
+  `show interface` summary doesn't always list every port. BR100 and BR200 now always have
+  eth0 (WAN) and eth1–eth4 (LAN); ports missing from the summary are read one by one
+  (`show interface ethN`) for their link state, speed and traffic.
+
+### Changed
+- Branch routers are drawn as one row in the Network panel: WAN, then LAN 1–4.
+
 ## [0.10.1] - 2026-11-17
 
 ### Fixed

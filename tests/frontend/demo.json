@@ -1,10 +1,10 @@
 {
  "version": 1,
- "generated": "2026-11-17T19:01:52.097652+00:00",
+ "generated": "2026-11-17T19:28:59.873700+00:00",
  "devices": [
   {
-   "entry_id": "01M7NE649HYKK7Z4AZSZ30ZFKT",
-   "device_id": "7d7b392de107398f05e9ce1332cbe24b",
+   "entry_id": "01M7NFQSXCCHQYTT0PK8Q2GQZ5",
+   "device_id": "a7a5d753754fad56e3380950660f8d0f",
    "name": "X450e-48p",
    "host": "192.168.9.65",
    "online": true,
@@ -16,7 +16,7 @@
    "mac": "00:04:96:aa:bb:01",
    "ip": "192.168.8.20",
    "uptime": 277200,
-   "boot_time": "2026-11-17T13:01:40+00:00",
+   "boot_time": "2026-11-17T13:28:47+00:00",
    "cpu": 2.0,
    "memory": 60.3,
    "temperature": 43.0,
@@ -1511,7 +1511,7 @@
     "boot_problems": [],
     "image_booted": "primary",
     "config_booted": "primary.cfg",
-    "last_backup": "2026-11-17T19:01:52+00:00",
+    "last_backup": "2026-11-17T19:28:59+00:00",
     "backups": 1
    },
    "problems": [
@@ -1541,7 +1541,7 @@
    "mac": "08:ea:44:00:00:01",
    "ip": "192.168.9.66",
    "uptime": 277200,
-   "boot_time": "2026-11-17T13:01:40+00:00",
+   "boot_time": "2026-11-17T13:28:47+00:00",
    "cpu": 2.0,
    "memory": 60.3,
    "temperature": null,
@@ -1852,7 +1852,7 @@
     "boot_problems": [],
     "image_booted": null,
     "config_booted": null,
-    "last_backup": "2026-11-17T19:01:52+00:00",
+    "last_backup": "2026-11-17T19:28:59+00:00",
     "backups": 1
    },
    "problems": [
@@ -1869,8 +1869,259 @@
    }
   },
   {
-   "entry_id": "01M7NE64642T5224YCDBXW5MZR",
-   "device_id": "74aaf283b4df8f11219d5be590dd61e9",
+   "entry_id": "BR100",
+   "device_id": "dev-br",
+   "name": "AH-001120",
+   "host": "192.168.9.1",
+   "online": true,
+   "kind": "router",
+   "cli": "hiveos",
+   "model": "BR100",
+   "firmware": "HiveOS 6.5r8 build-123456",
+   "serial": "01234567890123",
+   "mac": "00:19:77:00:11:20",
+   "ip": "192.168.9.1",
+   "uptime": 11565,
+   "boot_time": "2026-11-17T16:16:14+00:00",
+   "cpu": 5.9,
+   "memory": 42.8,
+   "temperature": null,
+   "temperature_status": null,
+   "fans": null,
+   "fan_rpm": {},
+   "power_supplies": {},
+   "poe": null,
+   "ports": [
+    {
+     "name": "eth0",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 1000,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": true,
+     "rx_kbps": 7468.3,
+     "tx_kbps": 526.2,
+     "rx_bytes": 900000,
+     "tx_bytes": 500000,
+     "errors": 0,
+     "poe": null,
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "eth1",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 1000,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 256.7,
+     "tx_kbps": 2855.4,
+     "rx_bytes": 900000,
+     "tx_bytes": 500000,
+     "errors": 0,
+     "poe": null,
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:bb:01:01",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "eth2",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": null,
+     "tx_kbps": null,
+     "rx_bytes": 900000,
+     "tx_bytes": 500000,
+     "errors": 0,
+     "poe": null,
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "eth3",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": null,
+     "tx_kbps": null,
+     "rx_bytes": 900000,
+     "tx_bytes": 500000,
+     "errors": 0,
+     "poe": null,
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "eth4",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 1000,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 4777.9,
+     "tx_kbps": 482.5,
+     "rx_bytes": 900000,
+     "tx_bytes": 500000,
+     "errors": 0,
+     "poe": null,
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:bb:04:01",
+       "vlan": 1
+      }
+     ]
+    }
+   ],
+   "radios": [
+    {
+     "name": "wifi0",
+     "label": "wifi0 (2.4 GHz)",
+     "band": "2.4 GHz",
+     "up": true,
+     "channel": 6,
+     "width": 20,
+     "tx_power": 17.0,
+     "eirp": 21.0,
+     "noise": -95.0,
+     "utilization": 22.0,
+     "clients": 2,
+     "ssids": [
+      "AP460C",
+      "Guest Wifi"
+     ],
+     "rx_kbps": null,
+     "tx_kbps": null
+    },
+    {
+     "name": "wifi1",
+     "label": "wifi1 (5 GHz)",
+     "band": "5 GHz",
+     "up": true,
+     "channel": 36,
+     "width": 20,
+     "tx_power": null,
+     "eirp": null,
+     "noise": null,
+     "utilization": null,
+     "clients": 1,
+     "ssids": [
+      "AP460C",
+      "Guest Wifi"
+     ],
+     "rx_kbps": null,
+     "tx_kbps": null
+    }
+   ],
+   "ssids": [
+    {
+     "name": "AP460C",
+     "broadcasting": true,
+     "hidden": false,
+     "clients": 4,
+     "radios": [
+      "wifi0",
+      "wifi1"
+     ],
+     "max_clients": 100,
+     "security": "wpa2-aes-psk"
+    },
+    {
+     "name": "Guest Wifi",
+     "broadcasting": true,
+     "hidden": true,
+     "clients": 3,
+     "radios": [
+      "wifi0",
+      "wifi1"
+     ],
+     "max_clients": 100,
+     "security": "wpa2-aes-psk"
+    },
+    {
+     "name": "IoT",
+     "broadcasting": true,
+     "hidden": false,
+     "clients": 0,
+     "radios": [
+      "wifi0"
+     ],
+     "max_clients": 100,
+     "security": "wpa2-aes-psk"
+    }
+   ],
+   "stations": [
+    {
+     "mac": "02:22:33:44:55:00",
+     "ip": "192.168.9.120",
+     "hostname": "office-laptop",
+     "ssid": "AP460C",
+     "radio": "wifi0",
+     "signal": -40,
+     "tx_rate": "866M",
+     "rx_rate": "65M",
+     "connected": "00:10:23"
+    },
+    {
+     "mac": "02:22:33:44:55:01",
+     "ip": "192.168.9.121",
+     "hostname": "printer",
+     "ssid": "Guest Wifi",
+     "radio": "wifi1",
+     "signal": -46,
+     "tx_rate": "400M",
+     "rx_rate": "65M",
+     "connected": "00:10:23"
+    }
+   ],
+   "wired_clients": 2,
+   "vlans": [],
+   "config": {
+    "unsaved": null,
+    "changed_after_reboot": false,
+    "change_summary": null,
+    "boot_problems": [],
+    "image_booted": null,
+    "config_booted": null,
+    "last_backup": "2026-11-17T19:28:59+00:00",
+    "backups": 1
+   },
+   "problems": [],
+   "features": {
+    "port_names": false,
+    "poe": false,
+    "save": true,
+    "reboot_save_prompt": false
+   }
+  },
+  {
+   "entry_id": "01M7NFQSSSKRMWSTB9R8VBMF7C",
+   "device_id": "94b2dbc8b8808e5d7761a94ef8d223c7",
    "name": "AH-7c0680",
    "host": "192.168.1.10",
    "online": true,
@@ -1882,7 +2133,7 @@
    "mac": "bc:f3:10:7c:06:80",
    "ip": "192.168.1.10",
    "uptime": 11565,
-   "boot_time": "2026-11-17T15:49:06+00:00",
+   "boot_time": "2026-11-17T16:16:14+00:00",
    "cpu": 5.9,
    "memory": 42.8,
    "temperature": null,
@@ -2057,7 +2308,7 @@
     "boot_problems": [],
     "image_booted": null,
     "config_booted": null,
-    "last_backup": "2026-11-17T19:01:51+00:00",
+    "last_backup": "2026-11-17T19:28:59+00:00",
     "backups": 1
    },
    "problems": [],
@@ -2082,7 +2333,7 @@
    "mac": "bc:f3:10:7c:06:80",
    "ip": "192.168.9.74",
    "uptime": 11565,
-   "boot_time": "2026-11-17T15:49:06+00:00",
+   "boot_time": "2026-11-17T16:16:14+00:00",
    "cpu": 5.9,
    "memory": 42.8,
    "temperature": null,
@@ -2188,7 +2439,7 @@
     "boot_problems": [],
     "image_booted": null,
     "config_booted": null,
-    "last_backup": "2026-11-17T19:01:51+00:00",
+    "last_backup": "2026-11-17T19:28:59+00:00",
     "backups": 1
    },
    "problems": [],

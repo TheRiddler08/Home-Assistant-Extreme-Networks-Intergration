@@ -941,3 +941,42 @@ async def test_show_ssid_unsupported_after_two_polls_then_reprobed(hass: HomeAss
         await coordinator.async_refresh()
     assert "show ssid" not in coordinator._unsupported  # noqa: SLF001
     assert "AP460C" in coordinator.data.ssids
+
+
+async def test_br100_shows_all_five_ports_even_if_summary_lists_two(hass: HomeAssistant) -> None:
+    """The BR100's 'show interface' may list only some Ethernet ports; the rest are read one by one."""
+    from custom_components.aerohive_local.snapshot import device_kind
+
+    original_init = FakeClient.__init__
+    summary = (
+        "Name        MAC addr       Mode     State Chan(Width) VLAN Radio     Hive    SSID\n"
+        "----------- -------------- -------- ----- ----------- ---- --------- ------- ---------\n"
+        "Mgt0        0019:7700:1120 -        U     -           1    -         hive0   -\n"
+        "Eth0        0019:7700:1121 wan      U     -           -    -         -       -\n"
+        "Eth1        0019:7700:1122 bridge   D     -           1    -         -       -\n"
+        "Wifi0       0019:7700:1130 access   U     11          -    radio_ng0 -       -\n"
+    )
+
+    def init(self, *args: Any, **kwargs: Any) -> None:
+        original_init(self, *args, **kwargs)
+        self.hostname = "AH-001120"
+        self.responses["show version"] = "Version: HiveOS 6.5r8 build-123456\nPlatform: BR100\n"
+        self.responses["show interface"] = summary
+        self.responses["show interface eth4"] = load_fixture("synthetic_show_interface_eth1.txt").replace("Eth1", "Eth4")
+        self.responses["show interface eth2"] = "Eth2  MAC addr=0019:7700:1123;\nAdmin state=enabled; Operational state=down;\n"
+        self.responses["show interface eth3"] = "Eth3  MAC addr=0019:7700:1124;\nAdmin state=enabled; Operational state=down;\n"
+
+    with patch.object(FakeClient, "__init__", init):
+        entry = MockConfigEntry(domain=DOMAIN, unique_id="00:19:77:00:11:20", data=USER_INPUT, title="AH-001120")
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    data = entry.runtime_data.data
+    assert data.ports() == ["eth0", "eth1", "eth2", "eth3", "eth4"]
+    assert data.interfaces["eth4"].is_up is True and data.interfaces["eth4"].speed
+    assert data.interfaces["eth2"].is_up is False
+    assert device_kind(data) == "router"
+    assert "show interface eth4" in FakeClient.instances[-1].commands
+    # Every port gets its entities, including the one in use that the summary left out.
+    registry = er.async_get(hass)
+    assert registry.async_get_entity_id("binary_sensor", DOMAIN, "00:19:77:00:11:20_iface_eth4")

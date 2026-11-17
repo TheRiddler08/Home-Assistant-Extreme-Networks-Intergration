@@ -1472,6 +1472,23 @@ def parse_show_poe(text: str) -> tuple[PoeSummary, dict[str, PoePort]]:
     return summary, ports
 
 
+# Ethernet ports on the front of branch routers. 'show interface' doesn't always list
+# all of them, so missing ones are read one by one ('show interface ethN').
+_MODEL_ETH_PORTS = {
+    "BR100": ("eth0", "eth1", "eth2", "eth3", "eth4"),  # eth0 = WAN, eth1-eth4 = LAN
+    "BR200": ("eth0", "eth1", "eth2", "eth3", "eth4"),
+}
+
+
+def model_ethernet_ports(platform: str | None) -> tuple[str, ...]:
+    """The Ethernet ports a model has ('BR100' -> eth0..eth4); () when unknown."""
+    model = re.sub(r"[^A-Z0-9]", "", (platform or "").upper())
+    for name, ports in _MODEL_ETH_PORTS.items():
+        if model.startswith(name):
+            return ports
+    return ()
+
+
 def poe_port_count(version: VersionInfo) -> int | None:
     """'Aerohive SR2208P: 8 GE POE+ ports, ...' -> 8."""
     for key in ("machine_type", "system_description"):

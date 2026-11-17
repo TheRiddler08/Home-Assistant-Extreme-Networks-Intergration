@@ -45,6 +45,7 @@ from .const import (
 )
 from .discovery import is_aerohive_mac
 from .parsers import (
+    model_ethernet_ports,
     dialect_from_version,
     BootParams,
     EnvironmentInfo,
@@ -541,9 +542,11 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
     def _detail_targets(self, data: AerohiveData) -> list[str]:
         """Interfaces whose 'show interface <name>' detail is read each poll."""
         targets = list(data.radio_names())
+        # Ports the summary didn't list are read on their own to learn their link state.
+        targets += sorted(n for n, i in data.interfaces.items() if i.is_port and i.extra.get("listed") == "no")
         if self.detailed_stats:
             for name, iface in sorted(data.interfaces.items()):
-                if iface.is_port and iface.is_up:
+                if iface.is_port and iface.is_up and name not in targets:
                     targets.append(name)
                 elif iface.parent in targets and iface.ssid and iface.is_up is not False:
                     targets.append(name)
@@ -582,6 +585,10 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             return await self._fetch_exos(data)
         data.version = parse_show_version(version_out)
         data.interfaces = await self._read_interfaces()
+        for name in model_ethernet_ports(data.version.platform):
+            if name not in data.interfaces:
+                # Not in the summary (the BR100 lists only some ports): read it on its own below.
+                data.interfaces[name] = Interface(name=name, extra={"listed": "no"})
         data.ssids = await self._read_ssids(data)
         if data.radio_names():
             station_out = await self._optional("show station")
@@ -593,6 +600,12 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 continue
             detail = parse_show_interface_detail(out, name)
             data.details[name] = detail
+            iface = data.interfaces.get(name)
+            if iface is not None and iface.state is None and detail.operational_state:
+                iface.state = "Up" if re.match(r"\s*(up|u\b|link up|connected)", detail.operational_state, re.I) else "Down"
+            if iface is not None:
+                iface.speed = iface.speed or detail.speed
+                iface.duplex = iface.duplex or detail.duplex
             rate = self._rate(name, detail, time.monotonic())
             if rate is not None:
                 data.throughput[name] = rate
