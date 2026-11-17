@@ -1,6 +1,50 @@
 # Managing Wi-Fi networks (SSIDs)
 
-## The Wi-Fi manager
+## In the Network panel (easiest)
+
+Open **Network** in the sidebar → **Wi-Fi**. Every network is listed once, however many
+access points have it, with its bands, clients and whether it's hidden or open.
+
+![Wi-Fi tab](images/panel-wifi.png)
+
+- **On / off:** the switch on each network turns it on or off on every access point that
+  has it.
+- **Temporarily:** *Turn off for…* / *Turn on for…* picks 30 minutes to 24 hours. Afterwards
+  the network goes back to exactly how it was (the same bands on the same access points),
+  even if Home Assistant restarts in between. While a timer runs, the network shows when it
+  goes back, with *Turn on now* / *Keep off*.
+- **Edit:** new password (leave empty to keep the current one), bands (2.4 GHz / 5 GHz; none
+  turns it off), hide the name, max clients, and which access points to change. Delete is
+  here too.
+- **Add network:** name, password (empty = open network), bands, hidden, access points.
+
+Only administrators can change networks; other users see them read-only. Passwords go
+straight to the access points over Home Assistant's WebSocket connection, and are never
+stored, logged or put on the event bus.
+
+On an access point's page in the panel, select a network to change it on that access
+point only.
+
+For a dashboard, the **Aerohive Wi-Fi** card has the same switches and timers, for example
+for a guest network:
+
+```yaml
+type: custom:aerohive-wifi-card
+networks: ["Guest Wifi"]   # optional: only these networks
+title: Guest Wi-Fi         # optional
+```
+
+In automations, use the [`set_ssid` action](actions.md#aerohive_localset_ssid):
+
+```yaml
+action: aerohive_local.set_ssid
+data:
+  ssid: Guest Wifi
+  enabled: true
+  duration: "02:00:00"     # optional: back to how it was after 2 hours
+```
+
+## The Wi-Fi manager (integration options)
 
 **Settings → Devices & services → Aerohive / Extreme Networks → (your AP) → Configure →
 Manage Wi-Fi networks.** Or open it on the **Aerohive Network** entry to manage all APs at once.

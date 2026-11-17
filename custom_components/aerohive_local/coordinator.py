@@ -1388,6 +1388,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             cmds.append(self._validated(commands.ssid_hide, ssid, True))
         _LOGGER.info("%s: creating SSID %s on %s", self.client.host, ssid, ", ".join(targets) or "no radio")
         await self._apply(cmds, secret=password or None)
+        await self.async_request_refresh()  # the new network shows without waiting for the save
 
     async def async_update_ssid(
         self,
@@ -1403,13 +1404,16 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         if ssid not in data.ssids:
             raise HomeAssistantError(f"SSID {ssid} does not exist")
         cmds: list[str] = []
+        state: dict[tuple[str, ...], bool] = {}
         if radios is not None:
             for radio in data.radio_names():
                 want, have = radio in radios, data.ssid_on_radio(ssid, radio)
                 if want != have:
                     cmds.append(self._validated(commands.ssid_bind, radio, ssid, want))
+                    state[("ssid", ssid, radio)] = want
         if hidden is not None and hidden != bool(data.ssid_hidden(ssid)):
             cmds.append(self._validated(commands.ssid_hide, ssid, hidden))
+            state[("hidden", ssid)] = hidden
         if max_clients is not None and max_clients != data.ssids[ssid].max_client:
             cmds.append(self._validated(commands.ssid_max_client, ssid, int(max_clients)))
         if password:
@@ -1419,7 +1423,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         if not cmds:
             return False
         _LOGGER.info("%s: updating SSID %s (%d change(s))", self.client.host, ssid, len(cmds))
-        await self._apply(cmds, secret=password or None)
+        await self._apply(cmds, secret=password or None, overrides=state)
         return True
 
     async def async_delete_ssid(self, ssid: str) -> None:
@@ -1435,6 +1439,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         except HomeAssistantError:
             self.expect_removal = False
             raise
+        await self.async_request_refresh()  # the network disappears without waiting for the save
 
     async def async_set_port_enabled(self, port: str, enable: bool, force: bool = False) -> None:
         if not enable and not force and port in self.data.uplink_ports():

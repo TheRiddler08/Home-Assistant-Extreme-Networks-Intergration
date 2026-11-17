@@ -119,6 +119,40 @@ set_port:
       selector:
         boolean:
 
+set_ssid:
+  fields:
+    ssid:
+      required: true
+      example: "Guest Wifi"
+      selector:
+        text:
+    device_id:
+      selector:
+        device:
+          integration: aerohive_local
+    enabled:
+      selector:
+        boolean:
+    bands:
+      selector:
+        select:
+          multiple: true
+          options:
+            - "2.4 GHz"
+            - "5 GHz"
+    hidden:
+      selector:
+        boolean:
+    max_clients:
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    duration:
+      selector:
+        duration:
+
 refresh:
   fields:
     device_id:

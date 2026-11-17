@@ -1,10 +1,10 @@
 {
  "version": 1,
- "generated": "2026-11-17T14:05:40.409001+00:00",
+ "generated": "2026-11-17T19:01:52.097652+00:00",
  "devices": [
   {
-   "entry_id": "01M7MX7S462RBEW4RP4CD8DWT8",
-   "device_id": "02a89eaeb6175c979e1004676dd6c0ed",
+   "entry_id": "01M7NE649HYKK7Z4AZSZ30ZFKT",
+   "device_id": "7d7b392de107398f05e9ce1332cbe24b",
    "name": "X450e-48p",
    "host": "192.168.9.65",
    "online": true,
@@ -16,7 +16,7 @@
    "mac": "00:04:96:aa:bb:01",
    "ip": "192.168.8.20",
    "uptime": 277200,
-   "boot_time": "2026-11-17T08:05:28+00:00",
+   "boot_time": "2026-11-17T13:01:40+00:00",
    "cpu": 2.0,
    "memory": 60.3,
    "temperature": 43.0,
@@ -1511,7 +1511,7 @@
     "boot_problems": [],
     "image_booted": "primary",
     "config_booted": "primary.cfg",
-    "last_backup": "2026-11-17T14:05:40+00:00",
+    "last_backup": "2026-11-17T19:01:52+00:00",
     "backups": 1
    },
    "problems": [
@@ -1541,7 +1541,7 @@
    "mac": "08:ea:44:00:00:01",
    "ip": "192.168.9.66",
    "uptime": 277200,
-   "boot_time": "2026-11-17T08:05:28+00:00",
+   "boot_time": "2026-11-17T13:01:40+00:00",
    "cpu": 2.0,
    "memory": 60.3,
    "temperature": null,
@@ -1852,7 +1852,7 @@
     "boot_problems": [],
     "image_booted": null,
     "config_booted": null,
-    "last_backup": "2026-11-17T14:05:40+00:00",
+    "last_backup": "2026-11-17T19:01:52+00:00",
     "backups": 1
    },
    "problems": [
@@ -1869,8 +1869,8 @@
    }
   },
   {
-   "entry_id": "01M7MX7S0W3KPY4Y7Q4R0M9VBD",
-   "device_id": "6214fb5adfbbe21752a4eae93668c360",
+   "entry_id": "01M7NE64642T5224YCDBXW5MZR",
+   "device_id": "74aaf283b4df8f11219d5be590dd61e9",
    "name": "AH-7c0680",
    "host": "192.168.1.10",
    "online": true,
@@ -1882,7 +1882,7 @@
    "mac": "bc:f3:10:7c:06:80",
    "ip": "192.168.1.10",
    "uptime": 11565,
-   "boot_time": "2026-11-17T10:52:55+00:00",
+   "boot_time": "2026-11-17T15:49:06+00:00",
    "cpu": 5.9,
    "memory": 42.8,
    "temperature": null,
@@ -1937,13 +1937,36 @@
      "name": "AP460C",
      "broadcasting": true,
      "hidden": false,
-     "clients": 4
+     "clients": 4,
+     "radios": [
+      "wifi0",
+      "wifi1"
+     ],
+     "max_clients": 100,
+     "security": "wpa2-aes-psk"
     },
     {
      "name": "Guest Wifi",
      "broadcasting": true,
      "hidden": true,
-     "clients": 3
+     "clients": 3,
+     "radios": [
+      "wifi0",
+      "wifi1"
+     ],
+     "max_clients": 100,
+     "security": "wpa2-aes-psk"
+    },
+    {
+     "name": "IoT",
+     "broadcasting": true,
+     "hidden": false,
+     "clients": 0,
+     "radios": [
+      "wifi0"
+     ],
+     "max_clients": 100,
+     "security": "wpa2-aes-psk"
     }
    ],
    "stations": [
@@ -2034,7 +2057,7 @@
     "boot_problems": [],
     "image_booted": null,
     "config_booted": null,
-    "last_backup": "2026-11-17T14:05:40+00:00",
+    "last_backup": "2026-11-17T19:01:51+00:00",
     "backups": 1
    },
    "problems": [],
@@ -2059,7 +2082,7 @@
    "mac": "bc:f3:10:7c:06:80",
    "ip": "192.168.9.74",
    "uptime": 11565,
-   "boot_time": "2026-11-17T10:52:55+00:00",
+   "boot_time": "2026-11-17T15:49:06+00:00",
    "cpu": 5.9,
    "memory": 42.8,
    "temperature": null,
@@ -2112,7 +2135,13 @@
      "name": "AP460C",
      "broadcasting": true,
      "hidden": false,
-     "clients": 3
+     "clients": 3,
+     "radios": [
+      "wifi0",
+      "wifi1"
+     ],
+     "max_clients": 50,
+     "security": null
     }
    ],
    "stations": [
@@ -2159,7 +2188,7 @@
     "boot_problems": [],
     "image_booted": null,
     "config_booted": null,
-    "last_backup": "2026-11-17T14:05:40+00:00",
+    "last_backup": "2026-11-17T19:01:51+00:00",
     "backups": 1
    },
    "problems": [],
@@ -2170,5 +2199,6 @@
     "reboot_save_prompt": false
    }
   }
- ]
+ ],
+ "wifi_timers": []
 }

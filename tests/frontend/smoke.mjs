@@ -90,6 +90,43 @@ await page.waitForTimeout(1000);
 check((await panel().locator(".banner.err").count()) === 0, "restoring clears the changed-after-reboot banner");
 await page.close();
 
+// Wi-Fi tab: timer, edit, add, toggle; non-admins can only look.
+page = await open("?view=panel&path=wifi");
+check((await panel().locator(".net").count()) === 3, "Wi-Fi tab lists 3 networks");
+await panel().locator('.net[data-ssid="Guest Wifi"] [data-action="wifi-timer"]').click();
+await panel().locator('input[data-field="minutes"][value="120"]').check();
+await panel().locator('[data-action="wifi-timer-start"]').click();
+await page.waitForTimeout(900);
+check((await panel().locator('.net[data-ssid="Guest Wifi"] .timer-note').count()) === 1, "timer shows on the network");
+check(!(await panel().locator('.net[data-ssid="Guest Wifi"] [data-wifi-toggle]').isChecked()), "network is off during the timer");
+await panel().locator('.net[data-ssid="AP460C"] [data-action="wifi-edit"]').click();
+await panel().locator('input[data-field="bands"][value="5 GHz"]').uncheck();
+await panel().locator("#wifi-password").fill("short");
+await panel().locator('[data-action="wifi-save"]').click();
+check((await panel().locator(".toast.err").count()) === 1, "short Wi-Fi password is refused before sending");
+await panel().locator("#wifi-password").fill("long-enough-key");
+await panel().locator('[data-action="wifi-save"]').click();
+await page.waitForTimeout(900);
+await panel().locator('[data-action="wifi-add"]').first().click();
+await panel().locator("#wifi-name").fill("Kids");
+await panel().locator('[data-action="wifi-create"]').click();
+await page.waitForTimeout(900);
+check((await panel().locator(".net").count()) === 4, "new network appears");
+await panel().locator('.net[data-ssid="IoT"] [data-wifi-toggle]').evaluate((el) => el.click());
+await page.waitForTimeout(900);
+const wifiCalls = await page.evaluate(() => window.serviceCalls.map((c) => c.data));
+check(JSON.stringify(wifiCalls) === JSON.stringify([
+  { type: "aerohive_local/wifi/update", ssid: "Guest Wifi", enabled: false, duration_minutes: 120 },
+  { type: "aerohive_local/wifi/update", ssid: "AP460C", password: "long-enough-key", bands: ["2.4 GHz"] },
+  { type: "aerohive_local/wifi/create", ssid: "Kids", bands: ["2.4 GHz", "5 GHz"], hidden: false },
+  { type: "aerohive_local/wifi/update", ssid: "IoT", enabled: false },
+]), `Wi-Fi commands sent: ${JSON.stringify(wifiCalls)}`);
+await page.close();
+page = await open("?view=panel&path=wifi&admin=0");
+check((await panel().locator('[data-action="wifi-edit"], [data-action="wifi-add"]').count()) === 0, "non-admins get no Wi-Fi controls");
+check(await panel().locator(".net [data-wifi-toggle]").first().isDisabled(), "non-admin toggles are disabled");
+await page.close();
+
 // Clients search, cards, phone width.
 page = await open("?view=panel&path=clients");
 await panel().locator("#client-search").fill("pixel");
@@ -99,7 +136,7 @@ await page.close();
 page = await open("?view=cards");
 check((await page.locator("aerohive-switch-card").first().locator(".port").count()) === 52, "switch card renders the faceplate");
 await page.close();
-for (const query of ["?view=panel", "?view=panel&path=X450e-48p", "?view=cards"]) {
+for (const query of ["?view=panel", "?view=panel&path=X450e-48p", "?view=panel&path=wifi", "?view=cards"]) {
   page = await open(query, { width: 360, height: 780 });
   check(!(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), `${query}: no sideways scroll at 360 px`);
   await page.close();

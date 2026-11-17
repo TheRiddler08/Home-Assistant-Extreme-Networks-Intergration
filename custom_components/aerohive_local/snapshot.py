@@ -214,6 +214,9 @@ def device_snapshot(hass: HomeAssistant, coordinator: AerohiveCoordinator) -> di
                 "broadcasting": data.ssid_broadcasting(name),
                 "hidden": data.ssid_hidden(name),
                 "clients": data.clients_on_ssid(name),
+                "radios": [r for r in data.radio_names() if data.ssid_on_radio(name, r)],
+                "max_clients": data.ssids[name].max_client,
+                "security": data.config.ssid_security(name) if data.config else None,
             }
             for name in sorted(data.ssids)
         ]
@@ -257,4 +260,12 @@ def network_snapshot(hass: HomeAssistant) -> dict[str, Any]:
         if isinstance(coordinator, AerohiveCoordinator):
             devices.append(device_snapshot(hass, coordinator))
     devices.sort(key=lambda d: ({"switch": 0, "router": 1, "ap": 2}.get(d.get("kind"), 3), (d["name"] or "").lower()))
-    return {"version": SNAPSHOT_VERSION, "generated": datetime.now(UTC).isoformat(), "devices": devices}
+    from .wifi import DATA_TIMERS  # noqa: PLC0415
+
+    timers = hass.data.get(DATA_TIMERS)
+    return {
+        "version": SNAPSHOT_VERSION,
+        "generated": datetime.now(UTC).isoformat(),
+        "devices": devices,
+        "wifi_timers": timers.as_list() if timers else [],
+    }

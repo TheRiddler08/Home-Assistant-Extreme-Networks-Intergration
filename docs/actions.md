@@ -80,6 +80,25 @@ data:
   enabled: false
 ```
 
+## `aerohive_local.set_ssid`
+
+Change a Wi-Fi network on every access point that has it (or on one, with `device_id`).
+All fields except `ssid` are optional.
+
+```yaml
+action: aerohive_local.set_ssid
+data:
+  ssid: Guest Wifi
+  enabled: false           # on (on bands, or all radios) / off
+  bands: ["2.4 GHz"]       # which bands it's on
+  hidden: true
+  max_clients: 20
+  duration: "01:30:00"     # with enabled: only for this long, then back to how it was
+```
+
+A timed change is remembered across restarts. Turning the network on or off without a
+duration cancels a running timer. Passwords are changed with `set_ssid_password`.
+
 ## `aerohive_local.refresh`
 
 Read everything from a device right away, including what's normally read every 15

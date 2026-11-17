@@ -47,6 +47,9 @@
     },
     "refresh": {
       "service": "mdi:refresh"
+    },
+    "set_ssid": {
+      "service": "mdi:wifi-cog"
     }
   }
 }

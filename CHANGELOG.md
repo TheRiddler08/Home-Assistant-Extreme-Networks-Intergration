@@ -3,6 +3,25 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.10.0] - 2026-11-17
+
+### Added
+- **Manage Wi-Fi networks in the Network panel:** a *Wi-Fi* tab lists every network once
+  across all access points. Turn networks on or off, edit the password, bands, hidden name
+  and max clients (on all access points or chosen ones), add and delete networks. Only
+  administrators can make changes; passwords go over the WebSocket connection, never the
+  event bus.
+- **Temporary changes:** turn a network off (or on) for 30 minutes to 24 hours. It goes back
+  to exactly how it was afterwards, also after a Home Assistant restart.
+- **Aerohive Wi-Fi card** (`custom:aerohive-wifi-card`) with the same switches and timers,
+  for example for a guest network.
+- `set_ssid` action: on/off (optionally with `duration`), bands, hidden, max clients, on every
+  access point with the network or one.
+
+### Changed
+- Wi-Fi changes from Home Assistant show at once (like ports), and new or deleted networks
+  appear without waiting for the next poll.
+
 ## [0.9.0] - 2026-11-17
 
 ### Added

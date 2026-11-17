@@ -180,6 +180,58 @@ function clientNames(data) {
   return names;
 }
 
+/** Wi-Fi networks across access points: name -> APs, bands, clients, timer. */
+function wifiNetworks(data) {
+  const aps = (data?.devices || []).filter((d) => d.online && ((d.radios || []).length || (d.ssids || []).length));
+  const map = new Map();
+  for (const device of aps) {
+    for (const ssid of device.ssids || []) {
+      let net = map.get(ssid.name);
+      if (!net) {
+        net = { name: ssid.name, aps: [], clients: 0, hidden: false, on: false, bands: new Set(), security: null, maxClients: null };
+        map.set(ssid.name, net);
+      }
+      const bands = (ssid.radios || []).map((r) => (device.radios || []).find((x) => x.name === r)?.band).filter(Boolean);
+      net.aps.push({ device, ssid, bands });
+      net.clients += ssid.clients || 0;
+      net.hidden = net.hidden || Boolean(ssid.hidden);
+      net.on = net.on || (ssid.radios || []).length > 0;
+      bands.forEach((b) => net.bands.add(b));
+      net.security = net.security || ssid.security;
+      if (net.maxClients == null) net.maxClients = ssid.max_clients;
+    }
+  }
+  const timers = new Map((data?.wifi_timers || []).map((t) => [t.ssid, t]));
+  const allBands = [...new Set(aps.flatMap((d) => (d.radios || []).map((r) => r.band).filter(Boolean)))].sort();
+  const networks = [...map.values()]
+    .map((n) => ({ ...n, bands: [...n.bands].sort(), timer: timers.get(n.name) || null }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return { aps, networks, allBands: allBands.length ? allBands : ["2.4 GHz", "5 GHz"] };
+}
+
+function fmtUntil(iso) {
+  if (!iso) return "";
+  const when = new Date(iso);
+  const sameDay = when.toDateString() === new Date().toDateString();
+  const time = when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return sameDay ? time : `${when.toLocaleDateString([], { weekday: "short" })} ${time}`;
+}
+
+function wifiStatus(net) {
+  if (net.timer) return `${net.timer.enabled ? "On" : "Off"} until ${fmtUntil(net.timer.until)}`;
+  if (!net.on) return "Off";
+  return net.bands.length ? `On · ${net.bands.join(" + ")}` : "On";
+}
+
+const WIFI_DURATIONS = [
+  [30, "30 minutes"],
+  [60, "1 hour"],
+  [120, "2 hours"],
+  [240, "4 hours"],
+  [480, "8 hours"],
+  [1440, "24 hours"],
+];
+
 /* ------------------------------------------------------------------ */
 /* Icons (inline, 24x24 line icons)                                     */
 /* ------------------------------------------------------------------ */
@@ -204,6 +256,11 @@ const ICON_PATHS = {
   cycle: '<path d="M21 12a9 9 0 0 1-15.5 6.2M3 12a9 9 0 0 1 15.5-6.2M18.5 2v4h-4M5.5 22v-4h4"/>',
   clients: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18.5 20a6.5 6.5 0 0 0-3-5.5"/>',
   wifi: '<path d="M2 8.5a15 15 0 0 1 20 0M5 12a10.5 10.5 0 0 1 14 0M8.5 15.5a5.5 5.5 0 0 1 7 0M12 19h.01"/>',
+  timer: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9.5 2h5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
 };
 
 const icon = (name, cls = "") =>
@@ -394,6 +451,27 @@ button { font: inherit; color: inherit; }
 .client-list li { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
 .mono { font-family: var(--code-font-family, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12.5px; }
 
+.checks { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.checks label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.checks input { accent-color: var(--ah-accent); width: 16px; height: 16px; }
+.form-row { margin-top: 14px; }
+.form-row > .section-title { display: block; margin-bottom: 6px; }
+.field input[type="password"], .field input[type="number"] {
+  flex: 1; min-width: 0; height: 36px; padding: 0 10px; border-radius: 8px; font: inherit; color: var(--ah-text);
+  border: 1px solid var(--ah-line); background: var(--ah-bg);
+}
+.field input:focus { outline: 2px solid var(--ah-accent); outline-offset: -1px; }
+.hint { font-size: 12px; color: var(--ah-muted); margin-top: 6px; }
+.hint.err { color: var(--ah-err); }
+.durations { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.durations .choice { margin-top: 0; align-items: center; }
+.net { display: flex; flex-direction: column; gap: 10px; padding: 16px; }
+.net-head { display: flex; align-items: center; gap: 12px; }
+.net-name { font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
+.net-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.net-actions .grow { min-width: 8px; }
+.timer-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px;
+  background: color-mix(in srgb, var(--ah-accent) 10%, transparent); font-size: 13px; }
 .toast {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 20; max-width: calc(100% - 32px);
   background: #323232; color: #fff; padding: 12px 18px; border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
@@ -576,6 +654,18 @@ class AerohiveBase extends HTMLElement {
     this._toastTimer = null;
     this.shadowRoot.addEventListener("click", (ev) => this._onClick(ev));
     this.shadowRoot.addEventListener("change", (ev) => this._onChange(ev));
+    this.shadowRoot.addEventListener("input", (ev) => {
+      const target = ev.target;
+      if (!target.dataset || !target.dataset.field || target.type === "checkbox" || target.type === "radio") return;
+      this._captureField(target);
+      if (target.id === "wifi-password") {
+        // The dialog isn't re-rendered while typing; update the hint in place.
+        const hint = target.closest(".form-row").querySelector(".hint");
+        const bad = target.value && (target.value.length < 8 || target.value.length > 63);
+        hint.classList.toggle("err", Boolean(bad));
+        hint.textContent = bad ? "A Wi-Fi password needs 8 to 63 characters." : "Sent straight to the access points; never stored in Home Assistant.";
+      }
+    });
     this.shadowRoot.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape" && this._dialog) this._closeDialog();
       if (ev.key === "Enter" && ev.target.matches && ev.target.matches("input[data-enter]")) {
@@ -663,7 +753,7 @@ class AerohiveBase extends HTMLElement {
   /* Rendering keeps an input that has focus (e.g. renaming a port) intact. */
   _dialogHasFocus() {
     const active = this.shadowRoot.activeElement;
-    return Boolean(active && active.closest && active.closest(".dialog") && active.matches("input[type=text]"));
+    return Boolean(active && active.closest && active.closest(".dialog") && active.matches("input[type=text], input[type=password], input[type=number]"));
   }
 
   _renderDialogInto(host) {
@@ -692,6 +782,9 @@ class AerohiveBase extends HTMLElement {
   _dialogHtml() {
     const d = this._dialog;
     if (!d) return "";
+    if (d.type === "wifi-edit") return this._wifiEditDialog(d);
+    if (d.type === "wifi-add") return this._wifiAddDialog(d);
+    if (d.type === "wifi-timer") return this._wifiTimerDialog(d);
     const device = findDevice(this._data, d.device);
     if (!device && d.type !== "confirm") return "";
     if (d.type === "port") return this._portDialog(device, d);
@@ -732,7 +825,8 @@ class AerohiveBase extends HTMLElement {
     this._render();
     let ok = false;
     try {
-      await this._hass.callService(DOMAIN, service, data);
+      if (typeof service === "object") await this._hass.callWS(service);
+      else await this._hass.callService(DOMAIN, service, data);
       if (success) this._toast(success);
       ok = true;
     } catch (err) {
@@ -756,6 +850,271 @@ class AerohiveBase extends HTMLElement {
 
   _isBusy(key) {
     return this._busy.has(key);
+  }
+
+  /* ---------------- Wi-Fi networks ---------------- */
+
+  _isAdmin() {
+    return !this._hass || !this._hass.user || this._hass.user.is_admin !== false;
+  }
+
+  _wifiToggle(ssid, on) {
+    this._optimisticWifi = this._optimisticWifi || new Map();
+    this._optimisticWifi.set(ssid, { on, until: Date.now() + 15000 });
+    this._render();
+    this._call(
+      { type: `${DOMAIN}/wifi/update`, ssid, enabled: on },
+      { busyKey: `wifi:${ssid}`, success: `${ssid} turned ${on ? "on" : "off"}` },
+    ).then((ok) => {
+      if (!ok) this._optimisticWifi.delete(ssid);
+      this._render();
+    });
+  }
+
+  /* The toggle shows the user's choice until the access points report it. */
+  _wifiOn(net) {
+    const pending = this._optimisticWifi && this._optimisticWifi.get(net.name);
+    if (pending && (pending.until < Date.now() || pending.on === net.on)) this._optimisticWifi.delete(net.name);
+    else if (pending) return pending.on;
+    return net.on;
+  }
+
+  _networkCard(net, { compact = false } = {}) {
+    const admin = this._isAdmin();
+    const on = this._wifiOn(net);
+    const busy = this._isBusy(`wifi:${net.name}`);
+    const apNames = net.aps.map((a) => a.device.name);
+    return `<div class="card net" data-ssid="${esc(net.name)}">
+      <div class="net-head">
+        <span class="avatar ${on ? "" : "off"}">${icon("wifi")}</span>
+        <div class="grow">
+          <div class="net-name">${esc(net.name)} ${net.security ? `<span class="muted" title="${esc(net.security)}">${icon("lock")}</span>` : ""}</div>
+          <div class="tile-sub">${esc(wifiStatus({ ...net, on }))}</div>
+        </div>
+        <label class="toggle" title="${on ? "Turn off" : "Turn on"}">
+          <input type="checkbox" data-wifi-toggle="${esc(net.name)}" ${on ? "checked" : ""} ${admin && !busy ? "" : "disabled"} aria-label="${esc(net.name)} on or off">
+          <span class="track"></span>
+        </label>
+      </div>
+      ${net.timer ? `<div class="timer-note">${icon("timer")}<span class="grow">${esc(net.name)} goes back ${net.timer.enabled ? "off" : "on"} at ${esc(fmtUntil(net.timer.until))}.</span>
+        ${admin ? `<button class="btn" data-action="wifi-timer-restore" data-ssid="${esc(net.name)}">${net.timer.enabled ? "Turn off now" : "Turn on now"}</button>
+        <button class="btn" data-action="wifi-timer-keep" data-ssid="${esc(net.name)}">Keep ${net.timer.enabled ? "on" : "off"}</button>` : ""}</div>` : ""}
+      ${compact ? "" : `<div class="chips">
+        <span class="chip">${icon("clients")}${net.clients} client${net.clients === 1 ? "" : "s"}</span>
+        ${net.bands.map((b) => `<span class="chip">${esc(b)}</span>`).join("")}
+        ${net.hidden ? '<span class="chip">hidden</span>' : ""}
+        ${net.security ? `<span class="chip">${esc(net.security)}</span>` : '<span class="chip warn">open</span>'}
+        <span class="chip" title="${esc(apNames.join(", "))}">${net.aps.length === 1 ? esc(apNames[0]) : `${net.aps.length} access points`}</span>
+      </div>`}
+      ${admin ? `<div class="net-actions">
+        <button class="btn" data-action="wifi-timer" data-ssid="${esc(net.name)}">${icon("timer")}${on ? "Turn off for…" : "Turn on for…"}</button>
+        <span class="grow"></span>
+        <button class="btn" data-action="wifi-edit" data-ssid="${esc(net.name)}">${icon("edit")}Edit</button>
+      </div>` : ""}
+    </div>`;
+  }
+
+  _bandChecks(allBands, selected) {
+    return `<div class="checks">${allBands
+      .map((b) => `<label><input type="checkbox" data-field="bands" data-multi value="${esc(b)}" ${selected.includes(b) ? "checked" : ""}>${esc(b)}</label>`)
+      .join("")}</div>`;
+  }
+
+  _apChecks(aps, selected) {
+    return `<div class="checks">${aps
+      .map((d) => `<label><input type="checkbox" data-field="aps" data-multi value="${esc(d.entry_id)}" ${selected.includes(d.entry_id) ? "checked" : ""}>${esc(d.name)}</label>`)
+      .join("")}</div>`;
+  }
+
+  _passwordField(form, { required = false } = {}) {
+    const show = form.showPassword;
+    const value = form.password || "";
+    const bad = value && (value.length < 8 || value.length > 63);
+    return `<div class="form-row"><label class="section-title" for="wifi-password">${required ? "Password" : "New password"}</label>
+      <div class="field">
+        <input type="${show ? "text" : "password"}" id="wifi-password" data-field="password" value="${esc(value)}" autocomplete="new-password" spellcheck="false"
+          placeholder="${required ? "8–63 characters, empty for an open network" : "Leave empty to keep the current one"}">
+        <button class="icon-btn" data-action="wifi-show-password" aria-label="${show ? "Hide" : "Show"} password" title="${show ? "Hide" : "Show"} password">${icon("eye")}</button>
+      </div>
+      <div class="hint ${bad ? "err" : ""}">${bad ? "A Wi-Fi password needs 8 to 63 characters." : required && !value ? "Without a password anyone nearby can join." : "Sent straight to the access points; never stored in Home Assistant."}</div>
+    </div>`;
+  }
+
+  _wifiEditDialog(d) {
+    const { networks, allBands } = wifiNetworks(this._data);
+    const net = networks.find((n) => n.name === d.ssid);
+    if (!net) return `<div class="dialog" role="dialog" aria-modal="true"><p>${esc(d.ssid)} no longer exists.</p><div class="dlg-actions"><button class="btn" data-action="close">Close</button></div></div>`;
+    const form = (d.form = d.form || {});
+    const scope = d.scope ? net.aps.filter((a) => d.scope.includes(a.device.entry_id)) : net.aps;
+    const currentBands = [...new Set(scope.flatMap((a) => a.bands))].sort();
+    const bands = form.bands ?? currentBands;
+    const hidden = form.hidden ?? scope.some((a) => a.ssid.hidden);
+    const maxClients = form.max ?? (net.maxClients ?? "");
+    const aps = form.aps ?? scope.map((a) => a.device.entry_id);
+    const busy = this._isBusy(`wifi-save:${net.name}`);
+    return `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+      <div class="dlg-head"><div class="grow"><h2 id="dlg-title">${esc(net.name)}</h2>
+        <div class="muted">${esc(wifiStatus(net))}${net.security ? ` · ${esc(net.security)}` : ""}</div></div>
+        <button class="icon-btn" data-action="close" aria-label="Close">${icon("close")}</button></div>
+      ${this._passwordField(form)}
+      <div class="form-row"><span class="section-title">Bands</span>${this._bandChecks(allBands, bands)}
+        <div class="hint">No band ticked turns the network off.</div></div>
+      <div class="form-row"><label class="toggle"><input type="checkbox" data-field="hidden" ${hidden ? "checked" : ""}><span class="track"></span><span>Hide the network name</span></label></div>
+      ${net.maxClients != null ? `<div class="form-row"><label class="section-title" for="wifi-max">Max clients per access point</label>
+        <div class="field"><input type="number" id="wifi-max" min="1" max="255" data-field="max" value="${esc(maxClients)}"></div></div>` : ""}
+      ${net.aps.length > 1 ? `<div class="form-row"><span class="section-title">Apply to</span>${this._apChecks(net.aps.map((a) => a.device), aps)}</div>` : ""}
+      <div class="dlg-actions">
+        <button class="btn danger" data-action="wifi-delete" style="margin-right:auto">${icon("trash")}Delete</button>
+        <button class="btn" data-action="close">Cancel</button>
+        <button class="btn primary" data-action="wifi-save" ${busy ? "disabled" : ""}>${icon("check")}${busy ? "Saving…" : "Save"}</button>
+      </div></div>`;
+  }
+
+  _wifiAddDialog(d) {
+    const { aps, networks, allBands } = wifiNetworks(this._data);
+    const form = (d.form = d.form || {});
+    const name = form.name ?? "";
+    const exists = networks.some((n) => n.name === name.trim());
+    const busy = this._isBusy("wifi-create");
+    return `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+      <div class="dlg-head"><h2 id="dlg-title" class="grow">Add a Wi-Fi network</h2>
+        <button class="icon-btn" data-action="close" aria-label="Close">${icon("close")}</button></div>
+      <div class="form-row" style="margin-top:0"><label class="section-title" for="wifi-name">Network name</label>
+        <div class="field"><input type="text" id="wifi-name" data-field="name" maxlength="32" value="${esc(name)}" autocomplete="off" spellcheck="false" placeholder="e.g. Guest Wifi"></div>
+        ${exists ? '<div class="hint err">A network with this name already exists.</div>' : ""}</div>
+      ${this._passwordField(form, { required: true })}
+      <div class="form-row"><span class="section-title">Bands</span>${this._bandChecks(allBands, form.bands ?? allBands)}</div>
+      <div class="form-row"><label class="toggle"><input type="checkbox" data-field="hidden" ${form.hidden ? "checked" : ""}><span class="track"></span><span>Hide the network name</span></label></div>
+      ${aps.length > 1 ? `<div class="form-row"><span class="section-title">Access points</span>${this._apChecks(aps, form.aps ?? aps.map((a) => a.entry_id))}</div>` : ""}
+      <div class="dlg-actions">
+        <button class="btn" data-action="close">Cancel</button>
+        <button class="btn primary" data-action="wifi-create" ${busy ? "disabled" : ""}>${icon("plus")}${busy ? "Adding…" : "Add network"}</button>
+      </div></div>`;
+  }
+
+  _wifiTimerDialog(d) {
+    const { networks } = wifiNetworks(this._data);
+    const net = networks.find((n) => n.name === d.ssid);
+    if (!net) return "";
+    const turnOn = d.turnOn ?? !this._wifiOn(net);
+    const form = (d.form = d.form || {});
+    const minutes = Number(form.minutes ?? 60);
+    const busy = this._isBusy(`wifi-timer:${net.name}`);
+    return `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+      <div class="dlg-head"><h2 id="dlg-title" class="grow">Turn ${esc(net.name)} ${turnOn ? "on" : "off"} for…</h2>
+        <button class="icon-btn" data-action="close" aria-label="Close">${icon("close")}</button></div>
+      <p class="muted" style="margin:0 0 12px">Afterwards it goes back to how it is now, even if Home Assistant restarts in between.</p>
+      <div class="durations" role="radiogroup">${WIFI_DURATIONS.map(
+        ([m, label]) => `<label class="choice"><input type="radio" name="duration" data-field="minutes" value="${m}" ${m === minutes ? "checked" : ""}><span>${label}</span></label>`,
+      ).join("")}</div>
+      <div class="dlg-actions">
+        <button class="btn" data-action="close">Cancel</button>
+        <button class="btn primary" data-action="wifi-timer-start" ${busy ? "disabled" : ""}>${icon("timer")}${busy ? "Working…" : `Turn ${turnOn ? "on" : "off"}`}</button>
+      </div></div>`;
+  }
+
+  _wifiAction(action, el) {
+    const d = this._dialog;
+    const ssid = el.dataset.ssid || (d && d.ssid);
+    switch (action) {
+      case "wifi-add":
+        this._openDialog({ type: "wifi-add", focus: "#wifi-name" });
+        return true;
+      case "wifi-edit":
+        this._openDialog({ type: "wifi-edit", ssid, scope: el.dataset.scope ? [el.dataset.scope] : null });
+        return true;
+      case "wifi-timer":
+        this._openDialog({ type: "wifi-timer", ssid });
+        return true;
+      case "wifi-show-password":
+        d.form = d.form || {};
+        d.form.showPassword = !d.form.showPassword;
+        this._render();
+        return true;
+      case "wifi-timer-restore":
+      case "wifi-timer-keep":
+        this._call(
+          { type: `${DOMAIN}/wifi/timer_cancel`, ssid, restore: action === "wifi-timer-restore" },
+          { busyKey: `wifi:${ssid}`, success: action === "wifi-timer-restore" ? `${ssid} is back to how it was` : `Timer for ${ssid} cancelled` },
+        );
+        return true;
+      case "wifi-timer-start": {
+        const { networks } = wifiNetworks(this._data);
+        const net = networks.find((n) => n.name === ssid);
+        if (!net) return true;
+        const turnOn = d.turnOn ?? !this._wifiOn(net);
+        const minutes = Number((d.form && d.form.minutes) ?? 60);
+        const label = (WIFI_DURATIONS.find(([m]) => m === minutes) || [0, `${minutes} minutes`])[1];
+        this._call(
+          { type: `${DOMAIN}/wifi/update`, ssid, enabled: turnOn, duration_minutes: minutes },
+          { busyKey: `wifi-timer:${ssid}`, success: `${ssid} is ${turnOn ? "on" : "off"} for ${label}` },
+        ).then((ok) => ok && this._closeDialog());
+        return true;
+      }
+      case "wifi-save": {
+        const { networks } = wifiNetworks(this._data);
+        const net = networks.find((n) => n.name === ssid);
+        if (!net) return true;
+        const form = d.form || {};
+        const scope = d.scope ? net.aps.filter((a) => d.scope.includes(a.device.entry_id)) : net.aps;
+        const msg = { type: `${DOMAIN}/wifi/update`, ssid };
+        const aps = form.aps ?? scope.map((a) => a.device.entry_id);
+        if (!aps.length) return this._toast("Choose at least one access point", true), true;
+        if (aps.length !== net.aps.length) msg.entry_ids = aps;
+        if (form.password) {
+          if (form.password.length < 8 || form.password.length > 63) return this._toast("A Wi-Fi password needs 8 to 63 characters", true), true;
+          msg.password = form.password;
+        }
+        const currentBands = [...new Set(scope.flatMap((a) => a.bands))].sort();
+        if (form.bands && form.bands.slice().sort().join() !== currentBands.join()) msg.bands = form.bands;
+        if (form.hidden !== undefined && form.hidden !== scope.some((a) => a.ssid.hidden)) msg.hidden = form.hidden;
+        if (form.max !== undefined && form.max !== "" && Number(form.max) !== net.maxClients) msg.max_clients = Number(form.max);
+        if (Object.keys(msg).length === 2 || (Object.keys(msg).length === 3 && msg.entry_ids)) {
+          this._closeDialog();
+          return true;
+        }
+        this._call(msg, { busyKey: `wifi-save:${ssid}`, success: `${ssid} saved` }).then((ok) => ok && this._closeDialog());
+        return true;
+      }
+      case "wifi-create": {
+        const { aps, networks, allBands } = wifiNetworks(this._data);
+        const form = d.form || {};
+        const name = (form.name || "").trim();
+        if (!name) return this._toast("Enter a network name", true), true;
+        if (networks.some((n) => n.name === name)) return this._toast("A network with this name already exists", true), true;
+        if (form.password && (form.password.length < 8 || form.password.length > 63)) return this._toast("A Wi-Fi password needs 8 to 63 characters", true), true;
+        const bands = form.bands ?? allBands;
+        if (!bands.length) return this._toast("Choose at least one band", true), true;
+        const chosen = form.aps ?? aps.map((a) => a.entry_id);
+        if (!chosen.length) return this._toast("Choose at least one access point", true), true;
+        const msg = { type: `${DOMAIN}/wifi/create`, ssid: name, bands, hidden: Boolean(form.hidden) };
+        if (form.password) msg.password = form.password;
+        if (chosen.length !== aps.length) msg.entry_ids = chosen;
+        this._call(msg, { busyKey: "wifi-create", success: `${name} added${form.password ? "" : " (open network)"}` }).then((ok) => ok && this._closeDialog());
+        return true;
+      }
+      case "wifi-delete": {
+        const back = { ...d };
+        this._dialog = {
+          type: "confirm",
+          title: `Delete ${ssid}?`,
+          text: `The network is removed from ${d.scope ? "this access point" : "every access point that has it"}, and everyone on it is disconnected.`,
+          confirm: "Delete",
+          danger: true,
+          back,
+          focus: '.dialog [data-action="close"]',
+          onYes: () =>
+            this._call(
+              { type: `${DOMAIN}/wifi/delete`, ssid, ...(d.scope ? { entry_ids: d.scope } : {}) },
+              { busyKey: `wifi:${ssid}`, success: `${ssid} deleted` },
+            ).then((ok) => ok && this._closeDialog()),
+        };
+        this._render();
+        return true;
+      }
+      default:
+        return false;
+    }
   }
 
   /* ---------------- dialogs ---------------- */
@@ -920,8 +1279,28 @@ class AerohiveBase extends HTMLElement {
     return null;
   }
 
+  _captureField(target) {
+    if (!this._dialog || !target.dataset || !target.dataset.field) return false;
+    const form = (this._dialog.form = this._dialog.form || {});
+    const field = target.dataset.field;
+    if (target.type === "checkbox" && target.dataset.multi !== undefined) {
+      const root = target.closest(".dialog");
+      form[field] = [...root.querySelectorAll(`input[data-field="${field}"]`)].filter((i) => i.checked).map((i) => i.value);
+    } else if (target.type === "checkbox") form[field] = target.checked;
+    else form[field] = target.value;
+    return true;
+  }
+
   _onChange(ev) {
     const target = ev.target;
+    if (this._captureField(target)) {
+      if (target.dataset.rerender !== undefined) this._render();
+      return;
+    }
+    if (target.dataset.wifiToggle !== undefined) {
+      this._wifiToggle(target.dataset.wifiToggle, target.checked);
+      return;
+    }
     if (target.dataset.choice && this._dialog) {
       this._dialog[target.dataset.choice] = target.value;
       return;
@@ -975,6 +1354,7 @@ class AerohiveBase extends HTMLElement {
   }
 
   _handleAction(action, el) {
+    if (action.startsWith("wifi-") && this._wifiAction(action, el)) return;
     const dialog = this._dialog;
     const device = dialog ? findDevice(this._data, dialog.device) : findDevice(this._data, el.closest("[data-device]")?.dataset.device);
     switch (action) {
@@ -1238,6 +1618,7 @@ class AerohiveNetworkPanel extends AerohiveBase {
         <button class="icon-btn refresh-all" data-action="refresh" aria-label="Refresh all devices now" title="Refresh all devices now">${icon("reboot")}</button>
         <div class="tabs" role="tablist">
           <button class="tab" role="tab" data-action="tab" data-tab="devices">Devices</button>
+          <button class="tab" role="tab" data-action="tab" data-tab="wifi">Wi-Fi</button>
           <button class="tab" role="tab" data-action="tab" data-tab="clients">Clients</button>
         </div></div>
       <div class="content" id="content"></div><div id="dialog"></div>`;
@@ -1284,7 +1665,7 @@ class AerohiveNetworkPanel extends AerohiveBase {
     const clean = (path || "").replace(/^\/+|\/+$/g, "");
     if (clean === this._path) return;
     this._path = clean;
-    this._tab = clean === "clients" ? "clients" : "devices";
+    this._tab = clean === "clients" || clean === "wifi" ? clean : "devices";
     this._render();
   }
 
@@ -1318,7 +1699,7 @@ class AerohiveNetworkPanel extends AerohiveBase {
   }
 
   _defaultDevice() {
-    return this._path && this._path !== "clients" ? this._path : null;
+    return this._path && this._path !== "clients" && this._path !== "wifi" ? this._path : null;
   }
 
   _render() {
@@ -1357,6 +1738,7 @@ class AerohiveNetworkPanel extends AerohiveBase {
       return;
     }
     if (this._tab === "clients") content.innerHTML = this._clientsView();
+    else if (this._tab === "wifi") content.innerHTML = this._wifiView();
     else if (this._path) {
       const device = findDevice(this._data, this._path);
       content.innerHTML = device ? this._deviceView(device) : `<div class="card empty">This device isn't loaded. <button class="btn" data-action="home">Back to all devices</button></div>`;
@@ -1541,12 +1923,13 @@ class AerohiveNetworkPanel extends AerohiveBase {
       <thead><tr><th>SSID</th><th>Status</th><th>Clients</th></tr></thead>
       <tbody>${device.ssids
         .map(
-          (s) => `<tr><td><strong>${esc(s.name)}</strong>${s.hidden ? ' <span class="chip">hidden</span>' : ""}</td>
+          (s) => `<tr class="click" data-action="wifi-edit" data-ssid="${esc(s.name)}" data-scope="${esc(device.entry_id)}" tabindex="0"><td><strong>${esc(s.name)}</strong>${s.hidden ? ' <span class="chip">hidden</span>' : ""}</td>
             <td><span class="row"><span class="dot ${s.broadcasting ? "ok" : ""}"></span>${s.broadcasting ? "Broadcasting" : "Off"}</span></td>
             <td class="num">${esc(s.clients)}</td></tr>`,
         )
         .join("")}</tbody></table></div>
-      <div class="muted" style="font-size:12px;margin-top:10px">Add networks or change passwords in the integration's options (Settings → Devices &amp; services → Aerohive → Configure).</div></div>`;
+      <div class="row" style="margin-top:12px"><span class="muted grow" style="font-size:12px">Select a network to change it on this access point.</span>
+        <button class="btn" data-action="tab" data-tab="wifi">${icon("wifi")}All Wi-Fi networks</button></div></div>`;
   }
 
   _stationsCard(device) {
@@ -1568,6 +1951,27 @@ class AerohiveNetworkPanel extends AerohiveBase {
       <tbody>${device.vlans
         .map((v) => `<tr><td><strong>${esc(v.name)}</strong></td><td class="num">${esc(v.vid)}</td><td class="mono">${v.ip ? `${esc(v.ip)}/${esc(v.prefix)}` : '<span class="muted">–</span>'}</td><td class="num">${esc(v.active ?? "–")} <span class="muted">/ ${esc(v.total ?? "–")} active</span></td></tr>`)
         .join("")}</tbody></table></div></div>`;
+  }
+
+  /* ---------------- Wi-Fi ---------------- */
+
+  _wifiView() {
+    const { aps, networks } = wifiNetworks(this._data);
+    if (!aps.length) {
+      return `<div class="card empty"><p><strong>No access points online.</strong></p><p>Wi-Fi networks are managed on the access points; add one, or check that it's reachable.</p></div>`;
+    }
+    const admin = this._isAdmin();
+    const clients = networks.reduce((n, net) => n + net.clients, 0);
+    return `
+      <div class="detail-head" style="margin-bottom:16px">
+        <div class="grow"><h1 style="font-size:22px">Wi-Fi networks</h1>
+          <div class="muted">${networks.length} network${networks.length === 1 ? "" : "s"} on ${aps.length} access point${aps.length === 1 ? "" : "s"} · ${clients} client${clients === 1 ? "" : "s"}</div></div>
+        ${admin ? `<button class="btn primary" data-action="wifi-add">${icon("plus")}Add network</button>` : ""}
+      </div>
+      ${admin ? "" : '<div class="banner warn">' + icon("lock") + '<div class="grow">Only administrators can change Wi-Fi networks.</div></div>'}
+      ${networks.length ? `<div class="grid">${networks.map((n) => this._networkCard(n)).join("")}</div>` : '<div class="card empty">No Wi-Fi networks yet.</div>'}
+      <p class="muted" style="font-size:12px;margin-top:16px">Changes apply to every access point with the network unless you pick some in Edit,
+        and are saved on them within a couple of seconds. Timed changes go back on their own, also after a restart.</p>`;
   }
 
   /* ---------------- clients ---------------- */
@@ -1636,7 +2040,7 @@ class AerohiveNetworkPanel extends AerohiveBase {
 
   _onAction(action, el) {
     if (action === "tab") {
-      this._navigate(el.dataset.tab === "clients" ? "clients" : "");
+      this._navigate(el.dataset.tab === "devices" ? "" : el.dataset.tab);
     } else if (action === "open") {
       this._navigate(el.dataset.open);
     } else if (action === "home") {
@@ -1686,6 +2090,12 @@ ha-card, .ha-card { display: block; padding: 16px; overflow: hidden; }
 .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 12px 16px; }
 .stat-label { font-size: 12px; color: var(--ah-muted); }
 .stat-value { font-size: 17px; font-weight: 500; margin-bottom: 4px; }
+.net-list { display: grid; gap: 10px; }
+.net-list .net { padding: 12px; box-shadow: none; }
+.net .avatar { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; flex: none;
+  background: color-mix(in srgb, var(--ah-accent) 14%, transparent); color: var(--ah-accent); }
+.net .avatar.off { background: color-mix(in srgb, var(--ah-text) 10%, transparent); color: var(--ah-muted); }
+.tile-sub { font-size: 13px; color: var(--ah-muted); }
 `;
 
 class AerohiveCardBase extends AerohiveBase {
@@ -1861,6 +2271,34 @@ class AerohiveNetworkCard extends AerohiveCardBase {
   }
 }
 
+class AerohiveWifiCard extends AerohiveCardBase {
+  static getStubConfig() {
+    return {};
+  }
+
+  getCardSize() {
+    return 3;
+  }
+
+  _cardHtml() {
+    const { aps, networks } = wifiNetworks(this._data);
+    const wanted = Array.isArray(this._config.networks) && this._config.networks.length ? this._config.networks : null;
+    const shown = wanted ? networks.filter((n) => wanted.includes(n.name)) : networks;
+    const admin = this._isAdmin();
+    return `<style>${FLIP_CSS}</style>
+      <div class="head"><span class="avatar">${icon("wifi")}</span><div class="grow"><div class="name">${esc(this._config.title || "Wi-Fi")}</div>
+        <div class="sub">${shown.length} network${shown.length === 1 ? "" : "s"} · ${aps.length} access point${aps.length === 1 ? "" : "s"}</div></div>
+        ${admin && !wanted ? `<button class="icon-btn" data-action="wifi-add" aria-label="Add a Wi-Fi network" title="Add a Wi-Fi network">${icon("plus")}</button>` : ""}
+        <button class="icon-btn" data-action="open-wifi" aria-label="Open Wi-Fi in the Network panel" title="Open Wi-Fi in the Network panel">${icon("back", "flip")}</button></div>
+      ${shown.length ? `<div class="net-list">${shown.map((n) => this._networkCard(n, { compact: true })).join("")}</div>` : `<div class="empty">${aps.length ? "No matching Wi-Fi networks." : "No access points online."}</div>`}`;
+  }
+
+  _onAction(action, el) {
+    if (action === "open-wifi") this._openPanel("wifi");
+    else super._onAction(action, el);
+  }
+}
+
 /* Card editor: pick the device (and a title). */
 class AerohiveCardEditor extends HTMLElement {
   setConfig(config) {
@@ -1919,6 +2357,7 @@ const ELEMENTS = {
   "aerohive-switch-card": AerohiveSwitchCard,
   "aerohive-device-card": AerohiveDeviceCard,
   "aerohive-network-card": AerohiveNetworkCard,
+  "aerohive-wifi-card": AerohiveWifiCard,
   "aerohive-card-editor": AerohiveCardEditor,
 };
 for (const [tag, cls] of Object.entries(ELEMENTS)) {
@@ -1930,6 +2369,7 @@ for (const card of [
   { type: "aerohive-switch-card", name: "Aerohive switch", description: "Switch faceplate with live port status, PoE and port controls." },
   { type: "aerohive-device-card", name: "Aerohive device", description: "Health, configuration status and actions for one access point, router or switch." },
   { type: "aerohive-network-card", name: "Aerohive network", description: "Every Aerohive / Extreme Networks device at a glance." },
+  { type: "aerohive-wifi-card", name: "Aerohive Wi-Fi", description: "Turn Wi-Fi networks on or off, also for a while (e.g. guest Wi-Fi for 2 hours)." },
 ]) {
   if (!window.customCards.some((c) => c.type === card.type)) window.customCards.push({ ...card, preview: true, documentationURL: "https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/blob/main/docs/dashboard.md" });
 }

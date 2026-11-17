@@ -19,8 +19,9 @@ ExtremeCloud IQ.
   alerts. Matching dashboard cards. [More →](docs/dashboard.md)
 - **Auto-discovery:** scan the network, DHCP discovery, and APs found through a switch's
   LLDP neighbours, or add a device by IP.
-- **Wi-Fi manager:** list, add, edit and delete SSIDs. Change passwords, choose radios,
-  hide networks, set max clients, on one AP or on all of them at once.
+- **Wi-Fi manager:** list, add, edit and delete SSIDs from the Network panel or a dashboard
+  card. Change passwords, choose bands, hide networks, set max clients, on one AP or all of
+  them, and turn a network off or on for a while (e.g. guest Wi-Fi for 2 hours).
 - **Clients:** wireless and wired clients, per SSID, band and port, with signal and rates.
   Optional device trackers.
 - **Radios:** channel, width, TX/EIRP power, noise floor, utilisation.

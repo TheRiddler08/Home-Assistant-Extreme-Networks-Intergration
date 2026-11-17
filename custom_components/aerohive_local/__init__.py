@@ -62,7 +62,7 @@ from .const import (
     SERVICE_RUN_SHOW_COMMAND,
     SERVICE_SET_SSID_PASSWORD,
 )
-from . import websocket_api
+from . import websocket_api, wifi
 from .coordinator import AerohiveConfigEntry, AerohiveCoordinator
 from .frontend import async_register_frontend
 from .overview import OverviewCoordinator, is_overview
@@ -119,6 +119,17 @@ SET_PORT_SCHEMA = vol.Schema(
     }
 )
 DEVICE_ONLY_SCHEMA = vol.Schema({vol.Required(ATTR_DEVICE_ID): cv.string})
+SET_SSID_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_SSID): cv.string,
+        vol.Optional(ATTR_DEVICE_ID): cv.string,
+        vol.Optional("enabled"): cv.boolean,
+        vol.Optional("bands"): vol.All(cv.ensure_list, [vol.In(["2.4 GHz", "5 GHz"])]),
+        vol.Optional("hidden"): cv.boolean,
+        vol.Optional("max_clients"): vol.All(vol.Coerce(int), vol.Range(min=1, max=255)),
+        vol.Optional("duration"): cv.positive_time_period,
+    }
+)
 SET_POE_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_DEVICE_ID): cv.string,
@@ -309,7 +320,25 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         DOMAIN, "restore_config", restore_config, RESTORE_SCHEMA, supports_response=SupportsResponse.OPTIONAL
     )
 
+    async def set_ssid(call: ServiceCall) -> None:
+        entry_ids = None
+        if call.data.get(ATTR_DEVICE_ID):
+            entry_ids = [coordinator_for(call).config_entry.entry_id]
+        await wifi.async_update_network(
+            hass,
+            call.data[ATTR_SSID],
+            entry_ids=entry_ids,
+            enabled=call.data.get("enabled"),
+            bands=call.data.get("bands"),
+            hidden=call.data.get("hidden"),
+            max_clients=call.data.get("max_clients"),
+            duration=call.data.get("duration"),
+        )
+
+    hass.services.async_register(DOMAIN, "set_ssid", set_ssid, SET_SSID_SCHEMA)
+
     websocket_api.async_register(hass)
+    await wifi.async_setup_timers(hass)
     await async_register_frontend(hass)
     return True
 

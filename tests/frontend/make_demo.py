@@ -79,10 +79,16 @@ ap["stations"] = [
      "tx_rate": f"{[866, 400, 144, 72][i % 4]}M", "rx_rate": "65M", "connected": "00:10:23"}
     for i in range(7)
 ]
-ap["ssids"] = [{"name": "AP460C", "broadcasting": True, "hidden": False, "clients": 4}, {"name": "Guest Wifi", "broadcasting": True, "hidden": True, "clients": 3}]
+both = [r["name"] for r in ap["radios"]]
+ap["ssids"] = [
+    {"name": "AP460C", "broadcasting": True, "hidden": False, "clients": 4, "radios": both, "max_clients": 100, "security": "wpa2-aes-psk"},
+    {"name": "Guest Wifi", "broadcasting": True, "hidden": True, "clients": 3, "radios": both, "max_clients": 100, "security": "wpa2-aes-psk"},
+    {"name": "IoT", "broadcasting": True, "hidden": False, "clients": 0, "radios": both[:1], "max_clients": 100, "security": "wpa2-aes-psk"},
+]
 for radio in ap["radios"]:
     radio["ssids"] = ["AP460C", "Guest Wifi"]
 snap["devices"] = [switch, sr, ap, ap2]
+snap["wifi_timers"] = []
 out = Path(__file__).with_name("demo.json")
 out.write_text(json.dumps(snap, indent=1) + "\n")
 print("wrote", out)

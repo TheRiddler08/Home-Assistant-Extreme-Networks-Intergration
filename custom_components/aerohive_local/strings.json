@@ -591,6 +591,40 @@
           "description": "The device to refresh. Leave empty for all devices."
         }
       }
+    },
+    "set_ssid": {
+      "name": "Change a Wi-Fi network",
+      "description": "Turn a Wi-Fi network on or off (optionally for a while), choose its bands, hide it or limit its clients, on every access point that has it or on one.",
+      "fields": {
+        "ssid": {
+          "name": "Network",
+          "description": "The network name (SSID)."
+        },
+        "device_id": {
+          "name": "Access point",
+          "description": "Only this access point. Leave empty for every access point with the network."
+        },
+        "enabled": {
+          "name": "On",
+          "description": "Broadcast the network (on the chosen bands, or all) or stop broadcasting it."
+        },
+        "bands": {
+          "name": "Bands",
+          "description": "2.4 GHz, 5 GHz or both."
+        },
+        "hidden": {
+          "name": "Hidden",
+          "description": "Don't announce the network name."
+        },
+        "max_clients": {
+          "name": "Max clients",
+          "description": "Most devices allowed on the network per access point."
+        },
+        "duration": {
+          "name": "For",
+          "description": "Only for this long; afterwards the network goes back to how it was (also after a restart). Needs On."
+        }
+      }
     }
   },
   "issues": {

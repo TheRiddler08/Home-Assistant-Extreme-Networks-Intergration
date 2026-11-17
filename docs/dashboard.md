@@ -65,6 +65,12 @@ every device. Alerts from
 - **Reboot** on an ExtremeXOS switch with unsaved changes asks whether to save them first or
   reboot without them. It never decides for you.
 
+### Wi-Fi
+
+The **Wi-Fi** tab lists every network once, across all access points: turn it on or off,
+turn it off (or on) for 30 minutes to 24 hours, edit the password, bands, hidden name and max
+clients, add or delete networks. See [Wi-Fi networks](wifi.md#in-the-network-panel-easiest).
+
 ### Clients
 
 The **Clients** tab lists every Wi-Fi and wired client in one place. Search it by name, MAC
@@ -105,6 +111,16 @@ changes), Restore (after a configuration change after reboot) and Reboot buttons
 type: custom:aerohive-device-card
 device: AH-7c0680
 actions: false        # optional: hide the buttons
+```
+
+### Wi-Fi card
+
+Switches and timers for the Wi-Fi networks, e.g. guest Wi-Fi on for 2 hours.
+
+```yaml
+type: custom:aerohive-wifi-card
+networks: ["Guest Wifi"]   # optional: only these
+title: Guest Wi-Fi         # optional
 ```
 
 ### Network card

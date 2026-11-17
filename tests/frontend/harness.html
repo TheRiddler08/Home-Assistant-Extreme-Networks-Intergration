@@ -54,6 +54,47 @@
         return () => listeners.delete(cb);
       },
     },
+    user: { is_admin: params.get("admin") !== "0", name: "Tester" },
+    async callWS(msg) {
+      window.serviceCalls.push({ domain: "ws", service: msg.type.replace("aerohive_local/", ""), data: msg });
+      await new Promise((r) => setTimeout(r, 300));
+      const aps = snapshot.devices.filter((d) => d.online && d.radios && d.radios.length);
+      const targets = (msg.entry_ids ? aps.filter((d) => msg.entry_ids.includes(d.entry_id)) : aps);
+      const radiosFor = (d, bands) => d.radios.filter((r) => !bands || bands.includes(r.band)).map((r) => r.name);
+      const setRadios = (d, s, radios) => { s.radios = radios; s.broadcasting = radios.length > 0; for (const r of d.radios) r.ssids = d.ssids.filter((x) => x.radios.includes(r.name)).map((x) => x.name); };
+      snapshot.wifi_timers = snapshot.wifi_timers || [];
+      if (msg.type === "aerohive_local/wifi/update") {
+        if (msg.password && msg.password.length < 8) throw new Error("Wi-Fi keys need 8-63 characters");
+        const before = {};
+        for (const d of targets) {
+          const s = d.ssids.find((x) => x.name === msg.ssid);
+          if (!s) continue;
+          before[d.entry_id] = [...s.radios];
+          if (msg.enabled !== undefined) setRadios(d, s, msg.enabled ? radiosFor(d, msg.bands) : []);
+          else if (msg.bands) setRadios(d, s, radiosFor(d, msg.bands));
+          if (msg.hidden !== undefined) s.hidden = msg.hidden;
+          if (msg.max_clients !== undefined) s.max_clients = msg.max_clients;
+        }
+        if (msg.duration_minutes) {
+          snapshot.wifi_timers = snapshot.wifi_timers.filter((t) => t.ssid !== msg.ssid);
+          snapshot.wifi_timers.push({ ssid: msg.ssid, until: new Date(Date.now() + msg.duration_minutes * 60000).toISOString(), enabled: msg.enabled, restore: before });
+        } else if (msg.enabled !== undefined) snapshot.wifi_timers = snapshot.wifi_timers.filter((t) => t.ssid !== msg.ssid);
+      } else if (msg.type === "aerohive_local/wifi/create") {
+        for (const d of targets) {
+          const s = { name: msg.ssid, broadcasting: true, hidden: msg.hidden, clients: 0, radios: [], max_clients: 100, security: msg.password ? "wpa2-aes-psk" : null };
+          d.ssids.push(s);
+          setRadios(d, s, radiosFor(d, msg.bands));
+        }
+      } else if (msg.type === "aerohive_local/wifi/delete") {
+        for (const d of targets) { d.ssids = d.ssids.filter((x) => x.name !== msg.ssid); setRadios(d, { radios: [] }, []); }
+        snapshot.wifi_timers = snapshot.wifi_timers.filter((t) => t.ssid !== msg.ssid);
+      } else if (msg.type === "aerohive_local/wifi/timer_cancel") {
+        const timer = snapshot.wifi_timers.find((t) => t.ssid === msg.ssid);
+        if (timer && msg.restore) for (const d of aps) { const s = d.ssids.find((x) => x.name === msg.ssid); if (s && timer.restore[d.entry_id]) setRadios(d, s, timer.restore[d.entry_id]); }
+        snapshot.wifi_timers = snapshot.wifi_timers.filter((t) => t.ssid !== msg.ssid);
+      } else throw new Error(`unknown command ${msg.type}`);
+      setTimeout(push, 200);
+    },
     async callService(domain, service, data) {
       window.serviceCalls.push({ domain, service, data });
       await new Promise((r) => setTimeout(r, 400));
@@ -93,6 +134,7 @@
       ["aerohive-device-card", { device: "AH-Switch" }],
       ["aerohive-device-card", { device: "AH-7c0680" }],
       ["aerohive-switch-card", { device: "AH-Switch" }],
+      ["aerohive-wifi-card", {}],
     ];
     for (const [tag, config, cls] of cards) {
       const el = document.createElement(tag);
