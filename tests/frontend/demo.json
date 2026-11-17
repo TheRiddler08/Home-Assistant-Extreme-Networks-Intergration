@@ -1,0 +1,2174 @@
+{
+ "version": 1,
+ "generated": "2026-11-17T14:05:40.409001+00:00",
+ "devices": [
+  {
+   "entry_id": "01M7MX7S462RBEW4RP4CD8DWT8",
+   "device_id": "02a89eaeb6175c979e1004676dd6c0ed",
+   "name": "X450e-48p",
+   "host": "192.168.9.65",
+   "online": true,
+   "kind": "switch",
+   "cli": "exos",
+   "model": "X450e-48p",
+   "firmware": "ExtremeXOS 12.6.3.4",
+   "serial": "0905G-00001",
+   "mac": "00:04:96:aa:bb:01",
+   "ip": "192.168.8.20",
+   "uptime": 277200,
+   "boot_time": "2026-11-17T08:05:28+00:00",
+   "cpu": 2.0,
+   "memory": 60.3,
+   "temperature": 43.0,
+   "temperature_status": "Normal",
+   "fans": "Operational",
+   "fan_rpm": {
+    "Fan-1": 4800,
+    "Fan-2": 4830,
+    "Fan-3": 4790
+   },
+   "power_supplies": {
+    "PSU 1": "Powered On",
+    "PSU 2": "Empty"
+   },
+   "poe": {
+    "budget_w": 370.0,
+    "used_w": 31.0,
+    "remaining_w": null
+   },
+   "ports": [
+    {
+     "name": "1",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 1000,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 12956.7,
+     "tx_kbps": 1361.9,
+     "rx_bytes": 7091709584,
+     "tx_bytes": 2302595691,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:01:00:bb",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "2",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 100,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 36388.6,
+     "tx_kbps": 1936.2,
+     "rx_bytes": 56204715418,
+     "tx_bytes": 1797035739,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": true,
+      "power_w": 6.4,
+      "status": "delivering",
+      "class": "class3"
+     },
+     "neighbor": {
+      "name": "AH-7c0680",
+      "port": "eth0",
+      "address": "192.168.9.73",
+      "ap": true,
+      "network": false
+     },
+     "clients": [
+      {
+       "mac": "02:00:00:02:00:d9",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "3",
+     "label": "printer",
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 100,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 33075.0,
+     "tx_kbps": 1118.6,
+     "rx_bytes": 86859149977,
+     "tx_bytes": 4071378921,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:03:00:cb",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "4",
+     "label": "camera-drive",
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 100,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 39050.3,
+     "tx_kbps": 424.0,
+     "rx_bytes": 20867963147,
+     "tx_bytes": 5539829718,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": true,
+      "power_w": 5.2,
+      "status": "delivering",
+      "class": "class3"
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:04:00:3c",
+       "vlan": 30
+      }
+     ]
+    },
+    {
+     "name": "5",
+     "label": null,
+     "up": false,
+     "enabled": false,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "6",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": false,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "disabled",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "7",
+     "label": "nas",
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 1000,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 27281.7,
+     "tx_kbps": 932.0,
+     "rx_bytes": 88353650089,
+     "tx_bytes": 5102867205,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:07:00:31",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "8",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "9",
+     "label": "tv-lounge",
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 100,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 22576.9,
+     "tx_kbps": 5573.0,
+     "rx_bytes": 92327397220,
+     "tx_bytes": 6579688354,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:09:00:a0",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "10",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "11",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "12",
+     "label": "camera-yard",
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 1000,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 11994.2,
+     "tx_kbps": 7150.4,
+     "rx_bytes": 9639321147,
+     "tx_bytes": 6763098351,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": true,
+      "power_w": 9.7,
+      "status": "delivering",
+      "class": "class3"
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:0c:00:af",
+       "vlan": 30
+      }
+     ]
+    },
+    {
+     "name": "13",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "14",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "15",
+     "label": "office-pc",
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 1000,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 39207.1,
+     "tx_kbps": 1067.0,
+     "rx_bytes": 23271660328,
+     "tx_bytes": 7547862847,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:0f:00:4d",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "16",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 10,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 16870.8,
+     "tx_kbps": 8658.4,
+     "rx_bytes": 79707328442,
+     "tx_bytes": 7810768138,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:10:00:ae",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "17",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "18",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "19",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "20",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "21",
+     "label": "ap-upstairs",
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 1000,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 33599.5,
+     "tx_kbps": 8502.4,
+     "rx_bytes": 96526517353,
+     "tx_bytes": 2853512026,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": true,
+      "power_w": 4.2,
+      "status": "delivering",
+      "class": "class3"
+     },
+     "neighbor": {
+      "name": "ap-upstairs",
+      "port": "eth0",
+      "address": "192.168.9.74",
+      "ap": true,
+      "network": false
+     },
+     "clients": [
+      {
+       "mac": "02:00:00:15:00:9e",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "22",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 10,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 11387.4,
+     "tx_kbps": 3475.2,
+     "rx_bytes": 50117481822,
+     "tx_bytes": 6278933458,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": true,
+      "power_w": 5.5,
+      "status": "delivering",
+      "class": "class3"
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:16:00:3b",
+       "vlan": 1
+      },
+      {
+       "mac": "02:00:00:16:01:fc",
+       "vlan": 1
+      },
+      {
+       "mac": "02:00:00:16:02:1e",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "23",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "24",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "25",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "26",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "27",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "28",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "29",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "30",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 10,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 21979.8,
+     "tx_kbps": 7951.0,
+     "rx_bytes": 59354354969,
+     "tx_bytes": 9786743949,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:1e:00:d4",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "31",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 1000,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 27310.5,
+     "tx_kbps": 3427.1,
+     "rx_bytes": 18171939391,
+     "tx_bytes": 357416554,
+     "errors": 3,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:1f:00:4d",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "32",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "33",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "34",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "35",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "36",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "37",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 10,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 21386.0,
+     "tx_kbps": 5490.3,
+     "rx_bytes": 95029262438,
+     "tx_bytes": 3178351297,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:25:00:e9",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "38",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "39",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "40",
+     "label": null,
+     "up": false,
+     "enabled": false,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "41",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "42",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "43",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "44",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 10,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 2494.6,
+     "tx_kbps": 610.8,
+     "rx_bytes": 61027173194,
+     "tx_bytes": 698086885,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:2c:00:ae",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "45",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "46",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 1000,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 21467.1,
+     "tx_kbps": 8540.8,
+     "rx_bytes": 2636981472,
+     "tx_bytes": 9484084572,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:2e:00:c0",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "47",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 1000,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 38218.9,
+     "tx_kbps": 5422.5,
+     "rx_bytes": 14922366930,
+     "tx_bytes": 8495685091,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:2f:00:f5",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "48",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "49",
+     "label": "uplink-core",
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 1000,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": true,
+     "rx_kbps": 19356.0,
+     "tx_kbps": 777.5,
+     "rx_bytes": 99224140275,
+     "tx_bytes": 5433089498,
+     "errors": 0,
+     "poe": null,
+     "neighbor": {
+      "name": "core-switch",
+      "port": "1:24",
+      "address": "192.168.8.2",
+      "ap": false,
+      "network": true
+     },
+     "clients": [
+      {
+       "mac": "02:00:00:aa:00:00",
+       "vlan": 1
+      },
+      {
+       "mac": "02:00:00:aa:00:01",
+       "vlan": 1
+      },
+      {
+       "mac": "02:00:00:aa:00:02",
+       "vlan": 1
+      },
+      {
+       "mac": "02:00:00:aa:00:03",
+       "vlan": 1
+      },
+      {
+       "mac": "02:00:00:aa:00:04",
+       "vlan": 1
+      },
+      {
+       "mac": "02:00:00:aa:00:05",
+       "vlan": 1
+      },
+      {
+       "mac": "02:00:00:aa:00:06",
+       "vlan": 1
+      },
+      {
+       "mac": "02:00:00:aa:00:07",
+       "vlan": 1
+      },
+      {
+       "mac": "02:00:00:aa:00:08",
+       "vlan": 1
+      },
+      {
+       "mac": "02:00:00:aa:00:09",
+       "vlan": 1
+      },
+      {
+       "mac": "02:00:00:aa:00:0a",
+       "vlan": 1
+      },
+      {
+       "mac": "02:00:00:aa:00:0b",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "50",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": null,
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "51",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": false,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": null,
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "52",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": false,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": null,
+     "neighbor": null,
+     "clients": []
+    }
+   ],
+   "radios": [],
+   "ssids": [],
+   "stations": [],
+   "wired_clients": 19,
+   "vlans": [
+    {
+     "name": "Default",
+     "vid": 1,
+     "ip": "192.168.8.20",
+     "prefix": 24,
+     "active": 4,
+     "total": 52
+    },
+    {
+     "name": "cameras",
+     "vid": 30,
+     "ip": null,
+     "prefix": null,
+     "active": 1,
+     "total": 2
+    },
+    {
+     "name": "Mgmt",
+     "vid": 4095,
+     "ip": null,
+     "prefix": null,
+     "active": 0,
+     "total": 1
+    }
+   ],
+   "config": {
+    "unsaved": true,
+    "changed_after_reboot": false,
+    "change_summary": null,
+    "boot_problems": [],
+    "image_booted": "primary",
+    "config_booted": "primary.cfg",
+    "last_backup": "2026-11-17T14:05:40+00:00",
+    "backups": 1
+   },
+   "problems": [
+    {
+     "kind": "unsaved",
+     "text": "Unsaved configuration changes"
+    }
+   ],
+   "features": {
+    "port_names": true,
+    "poe": true,
+    "save": true,
+    "reboot_save_prompt": true
+   }
+  },
+  {
+   "entry_id": "SR2208P",
+   "device_id": "dev-sr",
+   "name": "AH-Switch",
+   "host": "192.168.9.66",
+   "online": true,
+   "kind": "switch",
+   "cli": "switch",
+   "model": "SR2208P",
+   "firmware": "1.0.1.28",
+   "serial": "SR00000000001",
+   "mac": "08:ea:44:00:00:01",
+   "ip": "192.168.9.66",
+   "uptime": 277200,
+   "boot_time": "2026-11-17T08:05:28+00:00",
+   "cpu": 2.0,
+   "memory": 60.3,
+   "temperature": null,
+   "temperature_status": null,
+   "fans": null,
+   "fan_rpm": {},
+   "power_supplies": {},
+   "poe": {
+    "budget_w": 125.0,
+    "used_w": 11.6,
+    "remaining_w": null
+   },
+   "ports": [
+    {
+     "name": "1/0/1",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 1000,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 12956.7,
+     "tx_kbps": 1361.9,
+     "rx_bytes": 7091709584,
+     "tx_bytes": 2302595691,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:01:00:bb",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "1/0/2",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 100,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 36388.6,
+     "tx_kbps": 1936.2,
+     "rx_bytes": 56204715418,
+     "tx_bytes": 1797035739,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": true,
+      "power_w": 6.4,
+      "status": "delivering",
+      "class": "class3"
+     },
+     "neighbor": {
+      "name": "AH-7c0680",
+      "port": "eth0",
+      "address": "192.168.9.73",
+      "ap": true,
+      "network": false
+     },
+     "clients": [
+      {
+       "mac": "02:00:00:02:00:d9",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "1/0/3",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 100,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 33075.0,
+     "tx_kbps": 1118.6,
+     "rx_bytes": 86859149977,
+     "tx_bytes": 4071378921,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:03:00:cb",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "1/0/4",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 100,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 39050.3,
+     "tx_kbps": 424.0,
+     "rx_bytes": 20867963147,
+     "tx_bytes": 5539829718,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": true,
+      "power_w": 5.2,
+      "status": "delivering",
+      "class": "class3"
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:04:00:3c",
+       "vlan": 30
+      }
+     ]
+    },
+    {
+     "name": "1/0/5",
+     "label": null,
+     "up": false,
+     "enabled": false,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "1/0/6",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": false,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "disabled",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "1/0/7",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 1000,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 27281.7,
+     "tx_kbps": 932.0,
+     "rx_bytes": 88353650089,
+     "tx_bytes": 5102867205,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:07:00:31",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "1/0/8",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": {
+      "enabled": true,
+      "delivering": false,
+      "power_w": 0.0,
+      "status": "searching",
+      "class": null
+     },
+     "neighbor": null,
+     "clients": []
+    },
+    {
+     "name": "1/0/9",
+     "label": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 100,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 22576.9,
+     "tx_kbps": 5573.0,
+     "rx_bytes": 92327397220,
+     "tx_bytes": 6579688354,
+     "errors": 0,
+     "poe": null,
+     "neighbor": null,
+     "clients": [
+      {
+       "mac": "02:00:00:09:00:a0",
+       "vlan": 1
+      }
+     ]
+    },
+    {
+     "name": "1/0/10",
+     "label": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": null,
+     "vlan": "Default",
+     "uplink": true,
+     "rx_kbps": 0.0,
+     "tx_kbps": 0.0,
+     "rx_bytes": 0,
+     "tx_bytes": 0,
+     "errors": 0,
+     "poe": null,
+     "neighbor": null,
+     "clients": []
+    }
+   ],
+   "radios": [],
+   "ssids": [],
+   "stations": [],
+   "wired_clients": 6,
+   "vlans": [],
+   "config": {
+    "unsaved": null,
+    "changed_after_reboot": true,
+    "change_summary": {
+     "added": 2,
+     "removed": 5,
+     "sample": [
+      "- interface 1/0/3",
+      "-  shutdown",
+      "- vlan 30",
+      "+ interface 1/0/3",
+      "+  no shutdown"
+     ]
+    },
+    "boot_problems": [],
+    "image_booted": null,
+    "config_booted": null,
+    "last_backup": "2026-11-17T14:05:40+00:00",
+    "backups": 1
+   },
+   "problems": [
+    {
+     "kind": "changed_after_reboot",
+     "text": "Configuration changed after a reboot"
+    }
+   ],
+   "features": {
+    "port_names": false,
+    "poe": true,
+    "save": true,
+    "reboot_save_prompt": false
+   }
+  },
+  {
+   "entry_id": "01M7MX7S0W3KPY4Y7Q4R0M9VBD",
+   "device_id": "6214fb5adfbbe21752a4eae93668c360",
+   "name": "AH-7c0680",
+   "host": "192.168.1.10",
+   "online": true,
+   "kind": "ap",
+   "cli": "hiveos",
+   "model": "AP460C",
+   "firmware": "IQ Engine 10.5r3 build-278650",
+   "serial": "01234567890123",
+   "mac": "bc:f3:10:7c:06:80",
+   "ip": "192.168.1.10",
+   "uptime": 11565,
+   "boot_time": "2026-11-17T10:52:55+00:00",
+   "cpu": 5.9,
+   "memory": 42.8,
+   "temperature": null,
+   "temperature_status": null,
+   "fans": null,
+   "fan_rpm": {},
+   "power_supplies": {},
+   "poe": null,
+   "ports": [],
+   "radios": [
+    {
+     "name": "wifi0",
+     "label": "wifi0 (2.4 GHz)",
+     "band": "2.4 GHz",
+     "up": true,
+     "channel": 6,
+     "width": 20,
+     "tx_power": 17.0,
+     "eirp": 21.0,
+     "noise": -95.0,
+     "utilization": 22.0,
+     "clients": 2,
+     "ssids": [
+      "AP460C",
+      "Guest Wifi"
+     ],
+     "rx_kbps": null,
+     "tx_kbps": null
+    },
+    {
+     "name": "wifi1",
+     "label": "wifi1 (5 GHz)",
+     "band": "5 GHz",
+     "up": true,
+     "channel": 36,
+     "width": 20,
+     "tx_power": null,
+     "eirp": null,
+     "noise": null,
+     "utilization": null,
+     "clients": 1,
+     "ssids": [
+      "AP460C",
+      "Guest Wifi"
+     ],
+     "rx_kbps": null,
+     "tx_kbps": null
+    }
+   ],
+   "ssids": [
+    {
+     "name": "AP460C",
+     "broadcasting": true,
+     "hidden": false,
+     "clients": 4
+    },
+    {
+     "name": "Guest Wifi",
+     "broadcasting": true,
+     "hidden": true,
+     "clients": 3
+    }
+   ],
+   "stations": [
+    {
+     "mac": "02:11:22:33:44:00",
+     "ip": "192.168.1.60",
+     "hostname": "Pixel-8",
+     "ssid": "AP460C",
+     "radio": "wifi0",
+     "signal": -40,
+     "tx_rate": "866M",
+     "rx_rate": "65M",
+     "connected": "00:10:23"
+    },
+    {
+     "mac": "02:11:22:33:44:01",
+     "ip": "192.168.1.61",
+     "hostname": "iPad",
+     "ssid": "Guest Wifi",
+     "radio": "wifi1",
+     "signal": -46,
+     "tx_rate": "400M",
+     "rx_rate": "65M",
+     "connected": "00:10:23"
+    },
+    {
+     "mac": "02:11:22:33:44:02",
+     "ip": "192.168.1.62",
+     "hostname": "MacBook-Air",
+     "ssid": "AP460C",
+     "radio": "wifi0",
+     "signal": -52,
+     "tx_rate": "144M",
+     "rx_rate": "65M",
+     "connected": "00:10:23"
+    },
+    {
+     "mac": "02:11:22:33:44:03",
+     "ip": "192.168.1.63",
+     "hostname": null,
+     "ssid": "Guest Wifi",
+     "radio": "wifi1",
+     "signal": -58,
+     "tx_rate": "72M",
+     "rx_rate": "65M",
+     "connected": "00:10:23"
+    },
+    {
+     "mac": "02:11:22:33:44:04",
+     "ip": "192.168.1.64",
+     "hostname": "Galaxy-Watch",
+     "ssid": "AP460C",
+     "radio": "wifi0",
+     "signal": -64,
+     "tx_rate": "866M",
+     "rx_rate": "65M",
+     "connected": "00:10:23"
+    },
+    {
+     "mac": "02:11:22:33:44:05",
+     "ip": "192.168.1.65",
+     "hostname": "living-room-speaker",
+     "ssid": "Guest Wifi",
+     "radio": "wifi1",
+     "signal": -70,
+     "tx_rate": "400M",
+     "rx_rate": "65M",
+     "connected": "00:10:23"
+    },
+    {
+     "mac": "02:11:22:33:44:06",
+     "ip": "192.168.1.66",
+     "hostname": "Pixel-8",
+     "ssid": "AP460C",
+     "radio": "wifi0",
+     "signal": -76,
+     "tx_rate": "144M",
+     "rx_rate": "65M",
+     "connected": "00:10:23"
+    }
+   ],
+   "wired_clients": 0,
+   "vlans": [],
+   "config": {
+    "unsaved": null,
+    "changed_after_reboot": false,
+    "change_summary": null,
+    "boot_problems": [],
+    "image_booted": null,
+    "config_booted": null,
+    "last_backup": "2026-11-17T14:05:40+00:00",
+    "backups": 1
+   },
+   "problems": [],
+   "features": {
+    "port_names": false,
+    "poe": false,
+    "save": true,
+    "reboot_save_prompt": false
+   }
+  },
+  {
+   "entry_id": "AP2",
+   "device_id": "dev-ap2",
+   "name": "ap-upstairs",
+   "host": "192.168.9.74",
+   "online": false,
+   "kind": "ap",
+   "cli": "hiveos",
+   "model": "AP460C",
+   "firmware": "IQ Engine 10.5r3 build-278650",
+   "serial": "01234567890123",
+   "mac": "bc:f3:10:7c:06:80",
+   "ip": "192.168.9.74",
+   "uptime": 11565,
+   "boot_time": "2026-11-17T10:52:55+00:00",
+   "cpu": 5.9,
+   "memory": 42.8,
+   "temperature": null,
+   "temperature_status": null,
+   "fans": null,
+   "fan_rpm": {},
+   "power_supplies": {},
+   "poe": null,
+   "ports": [],
+   "radios": [
+    {
+     "name": "wifi0",
+     "label": "wifi0 (2.4 GHz)",
+     "band": "2.4 GHz",
+     "up": true,
+     "channel": 6,
+     "width": 20,
+     "tx_power": 17.0,
+     "eirp": 21.0,
+     "noise": -95.0,
+     "utilization": 22.0,
+     "clients": 2,
+     "ssids": [
+      "AP460C"
+     ],
+     "rx_kbps": null,
+     "tx_kbps": null
+    },
+    {
+     "name": "wifi1",
+     "label": "wifi1 (5 GHz)",
+     "band": "5 GHz",
+     "up": true,
+     "channel": 36,
+     "width": 20,
+     "tx_power": null,
+     "eirp": null,
+     "noise": null,
+     "utilization": null,
+     "clients": 1,
+     "ssids": [
+      "AP460C"
+     ],
+     "rx_kbps": null,
+     "tx_kbps": null
+    }
+   ],
+   "ssids": [
+    {
+     "name": "AP460C",
+     "broadcasting": true,
+     "hidden": false,
+     "clients": 3
+    }
+   ],
+   "stations": [
+    {
+     "mac": "e8:b1:fc:5a:1b:2c",
+     "ip": "192.168.1.50",
+     "hostname": null,
+     "ssid": "AP460C",
+     "radio": "wifi0",
+     "signal": -45,
+     "tx_rate": "72M",
+     "rx_rate": "65M",
+     "connected": "00:10:23"
+    },
+    {
+     "mac": "a4:c3:f0:aa:00:01",
+     "ip": null,
+     "hostname": null,
+     "ssid": "AP460C",
+     "radio": "wifi0",
+     "signal": -71,
+     "tx_rate": "24M",
+     "rx_rate": "12M",
+     "connected": "00:00:05"
+    },
+    {
+     "mac": "3c:22:fb:11:22:33",
+     "ip": "192.168.1.61",
+     "hostname": null,
+     "ssid": "AP460C",
+     "radio": "wifi1",
+     "signal": -52,
+     "tx_rate": "866M",
+     "rx_rate": "780M",
+     "connected": "01:02:03"
+    }
+   ],
+   "wired_clients": 0,
+   "vlans": [],
+   "config": {
+    "unsaved": null,
+    "changed_after_reboot": false,
+    "change_summary": null,
+    "boot_problems": [],
+    "image_booted": null,
+    "config_booted": null,
+    "last_backup": "2026-11-17T14:05:40+00:00",
+    "backups": 1
+   },
+   "problems": [],
+   "features": {
+    "port_names": false,
+    "poe": false,
+    "save": true,
+    "reboot_save_prompt": false
+   }
+  }
+ ]
+}

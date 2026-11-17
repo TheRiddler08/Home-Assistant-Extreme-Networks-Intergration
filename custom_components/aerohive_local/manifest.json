@@ -2,7 +2,11 @@
   "domain": "aerohive_local",
   "name": "Aerohive / Extreme Networks (Local SSH)",
   "after_dependencies": [
-    "dhcp"
+    "dhcp",
+    "frontend",
+    "http",
+    "panel_custom",
+    "websocket_api"
   ],
   "codeowners": [
     "@TheRiddler08"

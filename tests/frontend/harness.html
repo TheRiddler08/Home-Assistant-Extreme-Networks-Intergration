@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Network panel harness</title>
+<!--
+  Development harness for the Network panel and cards, outside Home Assistant.
+  Serve the repository root (python3 -m http.server) and open
+  /tests/frontend/harness.html?view=panel|cards&theme=light|dark&path=<entry_id>
+  The fake `hass` streams tests/frontend/demo.json and applies actions to it.
+-->
+<style>
+  /* A subset of Home Assistant's theme variables (default light and dark themes). */
+  :root {
+    --primary-color: #009ac7; --text-primary-color: #fff; --primary-text-color: #141414; --secondary-text-color: #5e5e5e;
+    --primary-background-color: #fafafa; --card-background-color: #fff; --secondary-background-color: #e5e5e5;
+    --divider-color: rgba(0, 0, 0, 0.12); --success-color: #43a047; --warning-color: #ffa600; --error-color: #db4437;
+    --app-header-background-color: #fafafa; --app-header-text-color: #141414; --ha-card-border-radius: 12px;
+    --ha-card-border-color: #e0e0e0; --app-header-border-bottom: 1px solid #e0e0e0;
+  }
+  :root[data-theme="dark"] {
+    --primary-color: #009ac7; --primary-text-color: #e1e1e1; --secondary-text-color: #9b9b9b;
+    --primary-background-color: #111111; --card-background-color: #1c1c1c; --secondary-background-color: #282828;
+    --divider-color: rgba(225, 225, 225, 0.12); --app-header-background-color: #111111; --app-header-text-color: #e1e1e1;
+    --ha-card-border-color: rgba(225, 225, 225, 0.12); --app-header-border-bottom: 1px solid rgba(225, 225, 225, 0.12);
+  }
+  html, body { margin: 0; height: 100%; background: var(--primary-background-color); font-family: Roboto, "Segoe UI", system-ui, sans-serif; }
+  aerohive-network-panel { height: 100vh; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); gap: 16px; padding: 16px; align-items: start; }
+  .cards .wide { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="module">
+  import "../../custom_components/aerohive_local/frontend/aerohive-network.js";
+
+  const params = new URLSearchParams(location.search);
+  if (params.get("theme") === "dark") document.documentElement.dataset.theme = "dark";
+  const snapshot = await (await fetch("demo.json")).json();
+  const listeners = new Set();
+  const push = () => { snapshot.generated = new Date().toISOString(); for (const cb of listeners) cb(structuredClone(snapshot)); };
+  window.serviceCalls = [];
+
+  const device = (id) => snapshot.devices.find((d) => d.device_id === id);
+  const port = (d, name) => d.ports.find((p) => p.name === name);
+  const hass = {
+    connection: {
+      async subscribeMessage(cb, msg) {
+        if (msg.type !== "aerohive_local/subscribe") throw new Error("unknown command");
+        listeners.add(cb);
+        setTimeout(() => cb(structuredClone(snapshot)), 50);
+        return () => listeners.delete(cb);
+      },
+    },
+    async callService(domain, service, data) {
+      window.serviceCalls.push({ domain, service, data });
+      await new Promise((r) => setTimeout(r, 400));
+      const d = device(data.device_id);
+      if (service === "set_port") {
+        const p = port(d, data.port);
+        if (p.uplink && !data.enabled && !data.force) throw new Error(`${data.port} is an uplink port`);
+        p.enabled = data.enabled; if (!data.enabled) { p.up = false; p.speed = null; }
+      } else if (service === "set_poe") {
+        const p = port(d, data.port); p.poe.enabled = data.enabled; p.poe.delivering = data.enabled && p.up; if (!data.enabled) p.poe.power_w = 0;
+      } else if (service === "set_port_description") {
+        if (/\s/.test(data.description)) throw new Error("Port names can be up to 15 letters, digits, '-', '_' or '.', without spaces");
+        port(d, data.port).label = data.description || null;
+      } else if (service === "save_config") {
+        d.config.unsaved = false; d.problems = d.problems.filter((p) => p.kind !== "unsaved");
+      } else if (service === "accept_config" || service === "restore_config") {
+        d.config.changed_after_reboot = false; d.problems = d.problems.filter((p) => p.kind !== "changed_after_reboot");
+      }
+      setTimeout(push, 300);
+    },
+  };
+  window.hass = hass;
+
+  const root = document.getElementById("root");
+  if ((params.get("view") || "panel") === "panel") {
+    const panel = document.createElement("aerohive-network-panel");
+    panel.hass = hass;
+    panel.narrow = innerWidth < 870;
+    if (params.get("path")) panel.route = { prefix: "/aerohive-network", path: `/${params.get("path")}` };
+    root.appendChild(panel);
+  } else {
+    root.className = "cards";
+    const cards = [
+      ["aerohive-switch-card", { device: "X450e-48p", legend: true }, "wide"],
+      ["aerohive-network-card", {}],
+      ["aerohive-device-card", { device: "AH-Switch" }],
+      ["aerohive-device-card", { device: "AH-7c0680" }],
+      ["aerohive-switch-card", { device: "AH-Switch" }],
+    ];
+    for (const [tag, config, cls] of cards) {
+      const el = document.createElement(tag);
+      el.setConfig(config);
+      el.hass = hass;
+      if (cls) el.className = cls;
+      root.appendChild(el);
+    }
+  }
+  window.harnessReady = true;
+</script>
+</body>
+</html>

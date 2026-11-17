@@ -1,0 +1,114 @@
+// Browser smoke test of the Network panel and cards against the harness.
+//
+//   npm install --no-save playwright && npx playwright install chromium
+//   node tests/frontend/smoke.mjs
+//
+// Serves the repository, opens tests/frontend/harness.html, clicks through the
+// panel and checks the actions sent, that nothing throws, and that the page
+// never scrolls sideways on a phone.
+
+import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import { extname, join, normalize, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { chromium } = require("playwright");
+
+const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+const types = { ".html": "text/html", ".js": "text/javascript", ".json": "application/json" };
+const server = createServer(async (req, res) => {
+  const path = normalize(decodeURIComponent(new URL(req.url, "http://x").pathname)).replace(/^([/\\])+/, "");
+  const file = join(root, path);
+  if (!file.startsWith(root)) return res.writeHead(403).end();
+  try {
+    const body = await readFile(file);
+    res.writeHead(200, { "Content-Type": types[extname(file)] || "application/octet-stream" }).end(body);
+  } catch {
+    res.writeHead(404).end();
+  }
+});
+await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
+const base = `http://127.0.0.1:${server.address().port}/tests/frontend/harness.html`;
+
+const failures = [];
+const check = (cond, message) => {
+  if (!cond) failures.push(message);
+};
+
+const browser = await chromium.launch();
+async function open(query, viewport = { width: 1280, height: 900 }) {
+  const page = await browser.newPage({ viewport });
+  page.on("pageerror", (err) => failures.push(`${query}: ${err.message}`));
+  page.on("console", (msg) => msg.type() === "error" && failures.push(`${query}: console error ${msg.text()}`));
+  await page.goto(base + query);
+  await page.waitForFunction(() => window.harnessReady);
+  await page.waitForTimeout(300);
+  return page;
+}
+
+// Overview: one tile per device, problems counted.
+let page = await open("?view=panel");
+const panel = () => page.locator("aerohive-network-panel");
+check((await panel().locator(".tile").count()) === 4, "overview shows 4 device tiles");
+check((await panel().locator(".summary .bad .big").textContent()).trim() === "3", "overview counts 3 problems");
+await panel().locator(".tile").first().click();
+await page.waitForTimeout(200);
+check((await panel().locator(".faceplate .port").count()) === 52, "switch faceplate has 52 ports");
+
+// Port dialog: PoE off, rename, uplink needs confirmation, reboot asks about unsaved changes.
+await panel().locator('.faceplate [data-port="4"]').click();
+await panel().locator('[data-toggle="poe"]').evaluate((el) => el.click());
+await page.waitForTimeout(1000);
+await panel().locator("#port-name").fill("cam-drive");
+await panel().locator('[data-action="rename"]').click();
+await page.waitForTimeout(1000);
+check((await panel().locator('.faceplate [data-port="4"]').getAttribute("title")).includes("cam-drive"), "rename shows on the faceplate");
+await panel().locator('[data-action="close"]').first().click();
+await panel().locator('.faceplate [data-port="49"]').click();
+await panel().locator('[data-toggle="port"]').evaluate((el) => el.click());
+check((await panel().locator('[role="alertdialog"]').count()) === 1, "turning off an uplink asks first");
+await panel().locator('[data-action="close"]').first().click(); // cancel -> back to the port
+check((await panel().locator('[data-toggle="port"]').isChecked()) === true, "cancelled uplink stays on");
+await panel().locator('[data-action="close"]').first().click();
+await panel().locator('.detail-head [data-action="reboot"]').click();
+check((await panel().locator('input[data-choice="save"]').count()) === 2, "reboot offers save / discard with unsaved changes");
+await panel().locator('input[data-choice="save"][value="discard"]').check();
+await panel().locator('[data-action="reboot-confirm"]').click();
+await page.waitForTimeout(800);
+const calls = await page.evaluate(() => window.serviceCalls.map((c) => [c.service, c.data]));
+check(JSON.stringify(calls.map((c) => c[0])) === JSON.stringify(["set_poe", "set_port_description", "reboot"]), `actions sent: ${JSON.stringify(calls)}`);
+check(calls[2] && calls[2][1].save_changes === false && calls[2][1].confirm === true, "reboot without saving sends save_changes: false");
+await page.close();
+
+// Restore flow on the SR switch.
+page = await open("?view=panel&path=SR2208P");
+await panel().locator('.banner [data-action="restore"]').click();
+await panel().locator('[data-action="restore-confirm"]').click();
+await page.waitForTimeout(1000);
+check((await panel().locator(".banner.err").count()) === 0, "restoring clears the changed-after-reboot banner");
+await page.close();
+
+// Clients search, cards, phone width.
+page = await open("?view=panel&path=clients");
+await panel().locator("#client-search").fill("pixel");
+await page.waitForTimeout(100);
+check((await panel().locator("#client-results tr").count()) === 2, "client search finds 2 Pixels");
+await page.close();
+page = await open("?view=cards");
+check((await page.locator("aerohive-switch-card").first().locator(".port").count()) === 52, "switch card renders the faceplate");
+await page.close();
+for (const query of ["?view=panel", "?view=panel&path=X450e-48p", "?view=cards"]) {
+  page = await open(query, { width: 360, height: 780 });
+  check(!(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), `${query}: no sideways scroll at 360 px`);
+  await page.close();
+}
+
+await browser.close();
+server.close();
+if (failures.length) {
+  console.error(`FAILED (${failures.length}):\n- ${failures.join("\n- ")}`);
+  process.exit(1);
+}
+console.log("frontend smoke test passed");

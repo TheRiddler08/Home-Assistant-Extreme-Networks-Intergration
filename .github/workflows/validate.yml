@@ -15,6 +15,18 @@ jobs:
       - run: pip install -r requirements_test.txt
       - run: pytest -q
 
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --check custom_components/aerohive_local/frontend/aerohive-network.js
+      - run: npm install --no-save --no-package-lock playwright@1.63.0
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/frontend/smoke.mjs
+
   hassfest:
     runs-on: ubuntu-latest
     steps:

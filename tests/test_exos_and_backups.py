@@ -23,12 +23,12 @@ from homeassistant.helpers import (  # noqa: E402
     issue_registry as ir,
 )
 from homeassistant.util import dt as dt_util  # noqa: E402
-from pytest_homeassistant_custom_component.common import MockConfigEntry  # noqa: E402
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed  # noqa: E402
 
 from custom_components.aerohive_local import backup as backup_mod  # noqa: E402
 from custom_components.aerohive_local.const import CONF_TRACKED_CLIENTS, DOMAIN  # noqa: E402
 
-from .test_init import USER_INPUT, FakeClient, fake_client  # noqa: E402, F401
+from .test_init import USER_INPUT, FakeClient, entry, fake_client  # noqa: E402, F401
 
 EXOS_MAC = "00:04:96:aa:bb:01"
 EXOS_ERROR = "                   ^\n% Invalid input detected at '^' marker."
@@ -497,3 +497,54 @@ def test_diagnostics_redactor() -> None:
     assert out["stations"][0] == {"mac": "**REDACTED**", "ip": "**REDACTED**", "hostname": "**REDACTED**", "signal": -50}
     assert out["lldp"]["chassis_id"] == "**REDACTED**" and out["lldp"]["port_id"] == "1:24"
     assert out["empty_mac"] is None
+
+
+# --------------------------------------------------------------------------
+# Network panel: WebSocket snapshots
+# --------------------------------------------------------------------------
+
+
+async def test_websocket_snapshot_and_subscribe(hass: HomeAssistant, hass_ws_client, entry: MockConfigEntry, exos_entry: MockConfigEntry) -> None:  # noqa: F811
+    import json
+
+    from custom_components.aerohive_local.websocket_api import SIGNAL_SNAPSHOT
+    from homeassistant.helpers.dispatcher import async_dispatcher_send
+
+    client = await hass_ws_client(hass)
+    await client.send_json({"id": 1, "type": "aerohive_local/snapshot"})
+    msg = await client.receive_json()
+    assert msg["success"]
+    snap = msg["result"]
+    kinds = {d["name"]: d["kind"] for d in snap["devices"]}
+    assert kinds == {"X450e-48p": "switch", "AH-7c0680": "ap"}
+    switch = snap["devices"][0]
+    assert switch["name"] == "X450e-48p" and switch["online"] and switch["device_id"]
+    ports = {p["name"]: p for p in switch["ports"]}
+    assert len(ports) == 10 and ports["4"]["label"] == "camera"
+    assert ports["1"]["up"] and ports["1"]["speed"] == 1000
+    assert ports["5"]["enabled"] is False and ports["50"]["present"] is False
+    assert ports["4"]["poe"]["power_w"] == 15.2 and ports["4"]["poe"]["delivering"]
+    assert ports["2"]["neighbor"]["name"] == "AH-7c0680" and ports["2"]["neighbor"]["ap"]
+    assert ports["49"]["uplink"]
+    assert switch["vlans"][0]["ip"] == "192.168.8.20" and switch["ip"] == "192.168.8.20"
+    assert switch["features"]["port_names"] and switch["config"]["backups"] == 1
+    ap = snap["devices"][1]
+    assert ap["radios"] and ap["ssids"] and not ap["ports"]
+    assert "password" not in json.dumps(snap).lower()
+    if out := os.environ.get("AEROHIVE_SNAPSHOT_OUT"):
+        with open(out, "w", encoding="utf-8") as handle:
+            json.dump(snap, handle, indent=1)
+
+    await client.send_json({"id": 2, "type": "aerohive_local/subscribe"})
+    assert (await client.receive_json())["success"]
+    first = await client.receive_json()
+    assert first["type"] == "event" and len(first["event"]["devices"]) == 2
+    # Updates are coalesced into one event.
+    with patch("custom_components.aerohive_local.websocket_api.COALESCE_SECONDS", 0):
+        async_dispatcher_send(hass, SIGNAL_SNAPSHOT)
+        async_dispatcher_send(hass, SIGNAL_SNAPSHOT)
+        await hass.async_block_till_done()
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=2))
+    await hass.async_block_till_done()
+    update = await client.receive_json()
+    assert update["id"] == 2 and update["event"]["devices"]

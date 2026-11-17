@@ -568,6 +568,16 @@
           "description": "Must be on to reboot."
         }
       }
+    },
+    "accept_config": {
+      "name": "Accept current configuration",
+      "description": "Use the device's current configuration as the new known-good backup and clear the 'configuration changed after reboot' alert.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The device with the alert."
+        }
+      }
     }
   },
   "issues": {

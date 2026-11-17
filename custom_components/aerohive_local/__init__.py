@@ -34,6 +34,7 @@ from homeassistant.helpers import (
 from homeassistant.helpers import (
     issue_registry as ir,
 )
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
 
 from .client import AerohiveClient
@@ -59,7 +60,9 @@ from .const import (
     SERVICE_RUN_SHOW_COMMAND,
     SERVICE_SET_SSID_PASSWORD,
 )
+from . import websocket_api
 from .coordinator import AerohiveConfigEntry, AerohiveCoordinator
+from .frontend import async_register_frontend
 from .overview import OverviewCoordinator, is_overview
 
 _LOGGER = logging.getLogger(__name__)
@@ -276,9 +279,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         DOMAIN, "list_backups", list_backups, DEVICE_ONLY_SCHEMA, supports_response=SupportsResponse.ONLY
     )
     hass.services.async_register(DOMAIN, "save_config", save_config, DEVICE_ONLY_SCHEMA)
+
+    async def accept_config(call: ServiceCall) -> ServiceResponse:
+        return await coordinator_for(call).async_accept_config()
+
+    hass.services.async_register(
+        DOMAIN, "accept_config", accept_config, DEVICE_ONLY_SCHEMA, supports_response=SupportsResponse.OPTIONAL
+    )
     hass.services.async_register(
         DOMAIN, "restore_config", restore_config, RESTORE_SCHEMA, supports_response=SupportsResponse.OPTIONAL
     )
+
+    websocket_api.async_register(hass)
+    await async_register_frontend(hass)
     return True
 
 
@@ -312,6 +325,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: AerohiveConfigEntry) -> 
         _enable_integration_disabled_entities(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    # Keep the Network panel live: every update (and unload) pushes a new snapshot.
+    entry.async_on_unload(
+        coordinator.async_add_listener(lambda: async_dispatcher_send(hass, websocket_api.SIGNAL_SNAPSHOT))
+    )
+    entry.async_on_unload(lambda: async_dispatcher_send(hass, websocket_api.SIGNAL_SNAPSHOT))
+    async_dispatcher_send(hass, websocket_api.SIGNAL_SNAPSHOT)
     _ensure_overview_entry(hass)
     return True
 

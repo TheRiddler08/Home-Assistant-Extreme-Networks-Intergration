@@ -176,6 +176,14 @@ backup_config:
         device:
           integration: aerohive_local
 
+accept_config:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+
 list_backups:
   fields:
     device_id:

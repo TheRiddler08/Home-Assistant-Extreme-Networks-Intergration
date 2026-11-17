@@ -41,6 +41,9 @@
     },
     "reboot": {
       "service": "mdi:restart"
+    },
+    "accept_config": {
+      "service": "mdi:check-decagram"
     }
   }
 }

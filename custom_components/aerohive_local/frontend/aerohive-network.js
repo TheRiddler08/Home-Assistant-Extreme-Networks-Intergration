@@ -1,0 +1,1851 @@
+/*
+ * Aerohive / Extreme Networks (Local SSH): Network panel and dashboard cards.
+ *
+ * One module, no build step, no external libraries. It defines:
+ *   <aerohive-network-panel>          the "Network" sidebar panel
+ *   custom:aerohive-switch-card        a switch faceplate with port controls
+ *   custom:aerohive-device-card        status of one device (AP, switch, router)
+ *   custom:aerohive-network-card       all devices at a glance
+ *
+ * Data comes from the integration's WebSocket subscription
+ * (aerohive_local/subscribe). Changes go through the integration's actions,
+ * so they get the same validation and safety checks as everywhere else.
+ */
+
+const DOMAIN = "aerohive_local";
+const PANEL_PATH = "aerohive-network";
+
+/* ------------------------------------------------------------------ */
+/* Data: one shared WebSocket subscription per Home Assistant connection */
+/* ------------------------------------------------------------------ */
+
+class NetworkStore {
+  constructor(connection) {
+    this.connection = connection;
+    this.data = null;
+    this.error = null;
+    this.listeners = new Set();
+    this._unsub = null;
+    this._starting = false;
+    this._stopTimer = null;
+  }
+
+  subscribe(listener) {
+    this.listeners.add(listener);
+    clearTimeout(this._stopTimer);
+    if (this.data || this.error) listener(this.data);
+    if (!this._unsub && !this._starting) this._start();
+    return () => {
+      this.listeners.delete(listener);
+      if (!this.listeners.size) {
+        this._stopTimer = setTimeout(() => this._stop(), 10000);
+      }
+    };
+  }
+
+  async _start() {
+    this._starting = true;
+    try {
+      this._unsub = await this.connection.subscribeMessage(
+        (snapshot) => {
+          this.data = snapshot;
+          this.error = null;
+          this._emit();
+        },
+        { type: `${DOMAIN}/subscribe` },
+      );
+    } catch (err) {
+      this.error = (err && (err.message || err.code)) || String(err);
+      this._emit();
+    } finally {
+      this._starting = false;
+    }
+  }
+
+  _stop() {
+    if (this.listeners.size || !this._unsub) return;
+    try {
+      this._unsub();
+    } catch (_err) {
+      /* connection already gone */
+    }
+    this._unsub = null;
+    this.data = null;
+  }
+
+  _emit() {
+    for (const listener of this.listeners) listener(this.data);
+  }
+}
+
+const stores = new WeakMap();
+function getStore(hass) {
+  const connection = hass.connection;
+  let store = stores.get(connection);
+  if (!store) {
+    store = new NetworkStore(connection);
+    stores.set(connection, store);
+  }
+  return store;
+}
+
+/* ------------------------------------------------------------------ */
+/* Formatting helpers                                                   */
+/* ------------------------------------------------------------------ */
+
+const esc = (value) =>
+  String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+function fmtRate(kbps) {
+  if (kbps == null) return "–";
+  if (kbps >= 1e6) return `${(kbps / 1e6).toFixed(2)} Gbit/s`;
+  if (kbps >= 1000) return `${(kbps / 1000).toFixed(1)} Mbit/s`;
+  return `${Math.round(kbps)} kbit/s`;
+}
+
+function fmtBytes(bytes) {
+  if (bytes == null) return "–";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let value = Number(bytes);
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 100 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
+function fmtUptime(seconds) {
+  if (seconds == null) return "–";
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function fmtSpeed(mbps) {
+  if (!mbps) return "";
+  return mbps >= 1000 ? `${mbps / 1000} Gbit/s` : `${mbps} Mbit/s`;
+}
+
+function fmtAgo(iso) {
+  if (!iso) return "never";
+  const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 90) return "just now";
+  if (seconds < 5400) return `${Math.round(seconds / 60)} min ago`;
+  if (seconds < 129600) return `${Math.round(seconds / 3600)} h ago`;
+  return `${Math.round(seconds / 86400)} days ago`;
+}
+
+function fmtPct(value) {
+  return value == null ? "–" : `${Math.round(value)}%`;
+}
+
+const natKey = (name) => (String(name).match(/\d+/g) || []).map(Number);
+function natCompare(a, b) {
+  const ka = natKey(a);
+  const kb = natKey(b);
+  for (let i = 0; i < Math.max(ka.length, kb.length); i += 1) {
+    const diff = (ka[i] ?? -1) - (kb[i] ?? -1);
+    if (diff) return diff;
+  }
+  return String(a).localeCompare(String(b));
+}
+const portNumber = (name) => {
+  const match = String(name).match(/(\d+)$/);
+  return match ? match[1] : String(name);
+};
+
+function findDevice(data, ref) {
+  if (!data || !data.devices) return null;
+  if (!ref) return null;
+  const key = String(ref).toLowerCase();
+  return (
+    data.devices.find((d) =>
+      [d.entry_id, d.device_id, d.name, d.host].some((v) => v && String(v).toLowerCase() === key),
+    ) || null
+  );
+}
+
+/** MAC -> friendly name, from the wireless client lists of every AP. */
+function clientNames(data) {
+  const names = new Map();
+  for (const device of data?.devices || []) {
+    for (const sta of device.stations || []) {
+      if (sta.hostname) names.set(sta.mac, sta.hostname);
+    }
+  }
+  return names;
+}
+
+/* ------------------------------------------------------------------ */
+/* Icons (inline, 24x24 line icons)                                     */
+/* ------------------------------------------------------------------ */
+
+const ICON_PATHS = {
+  switch: '<rect x="2.5" y="7" width="19" height="10" rx="2"/><path d="M6 11h1M9 11h1M12 11h1M15 11h1M6 14h1M9 14h1M12 14h1M15 14h1M18.5 12.5h.01"/>',
+  ap: '<circle cx="12" cy="13" r="1.6"/><path d="M8.5 9.5a5 5 0 0 1 7 0M6 7a8.5 8.5 0 0 1 12 0M12 15v5M8 20h8"/>',
+  router: '<rect x="3" y="12" width="18" height="7" rx="2"/><path d="M7 15.5h.01M10.5 15.5h.01M7 12 5.5 5M17 12l1.5-7"/>',
+  unknown: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17h.01"/>',
+  bolt: '<path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H13z"/>',
+  up: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+  warn: '<path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4.5M12 17h.01"/>',
+  save: '<path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M7 3v5h8V3M7 21v-7h10v7"/>',
+  backup: '<path d="M3 5h18v4H3zM5 9v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/>',
+  reboot: '<path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/>',
+  back: '<path d="M15 5l-7 7 7 7"/>',
+  close: '<path d="M6 6l12 12M18 6 6 18"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  check: '<path d="m5 12 5 5 9-10"/>',
+  restore: '<path d="M4 12a8 8 0 1 0 2.3-5.7M4 4v5h5M12 8v4l3 2"/>',
+  cycle: '<path d="M21 12a9 9 0 0 1-15.5 6.2M3 12a9 9 0 0 1 15.5-6.2M18.5 2v4h-4M5.5 22v-4h4"/>',
+  clients: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18.5 20a6.5 6.5 0 0 0-3-5.5"/>',
+  wifi: '<path d="M2 8.5a15 15 0 0 1 20 0M5 12a10.5 10.5 0 0 1 14 0M8.5 15.5a5.5 5.5 0 0 1 7 0M12 19h.01"/>',
+};
+
+const icon = (name, cls = "") =>
+  `<svg class="icon ${cls}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name] || ICON_PATHS.unknown}</svg>`;
+
+/* ------------------------------------------------------------------ */
+/* Styles                                                               */
+/* ------------------------------------------------------------------ */
+
+const BASE_CSS = `
+:host {
+  --ah-text: var(--primary-text-color, #1c1f23);
+  --ah-muted: var(--secondary-text-color, #5d6570);
+  --ah-card: var(--card-background-color, var(--ha-card-background, #ffffff));
+  --ah-bg: var(--primary-background-color, #f3f4f6);
+  --ah-line: var(--divider-color, rgba(0, 0, 0, 0.12));
+  --ah-accent: var(--primary-color, #0b78d0);
+  --ah-ok: var(--success-color, #2f9e55);
+  --ah-warn: var(--warning-color, #d68a00);
+  --ah-err: var(--error-color, #d93a2f);
+  --ah-poe: #e8a600;
+  --ah-radius: var(--ha-card-border-radius, 12px);
+  --ah-port-fast: var(--ah-ok);
+  --ah-port-slow: #c9a227;
+  --ah-port-down: color-mix(in srgb, var(--ah-text) 10%, var(--ah-card));
+  --ah-face: color-mix(in srgb, var(--ah-text) 7%, var(--ah-card));
+  color: var(--ah-text);
+  font-family: var(--paper-font-body1_-_font-family, var(--ha-font-family-body, Roboto, "Segoe UI", system-ui, sans-serif));
+  font-size: 14px;
+  line-height: 1.4;
+}
+* { box-sizing: border-box; }
+.icon { width: 18px; height: 18px; flex: none; }
+button { font: inherit; color: inherit; }
+.muted { color: var(--ah-muted); }
+.num { font-variant-numeric: tabular-nums; }
+.row { display: flex; align-items: center; gap: 8px; }
+.grow { flex: 1; min-width: 0; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px;
+  border-radius: 18px; border: 1px solid var(--ah-line); background: var(--ah-card);
+  cursor: pointer; font-weight: 500; white-space: nowrap;
+}
+.btn:hover:not(:disabled) { background: color-mix(in srgb, var(--ah-accent) 8%, var(--ah-card)); }
+.btn:focus-visible, .port:focus-visible, .tile:focus-visible, .tab:focus-visible, .icon-btn:focus-visible {
+  outline: 2px solid var(--ah-accent); outline-offset: 2px;
+}
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn.primary { background: var(--ah-accent); border-color: var(--ah-accent); color: var(--text-primary-color, #fff); }
+.btn.primary:hover:not(:disabled) { background: color-mix(in srgb, #000 12%, var(--ah-accent)); }
+.btn.danger { color: var(--ah-err); }
+.btn.attention { border-color: var(--ah-warn); color: var(--ah-warn); }
+.icon-btn {
+  display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 50%;
+  border: 0; background: transparent; cursor: pointer; color: var(--ah-muted);
+}
+.icon-btn:hover { background: color-mix(in srgb, var(--ah-text) 8%, transparent); color: var(--ah-text); }
+
+.card {
+  background: var(--ah-card); border-radius: var(--ah-radius);
+  border: var(--ha-card-border-width, 1px) solid var(--ha-card-border-color, var(--ah-line));
+  box-shadow: var(--ha-card-box-shadow, none);
+}
+.section-title { font-size: 13px; font-weight: 600; color: var(--ah-muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 10px; }
+
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ah-muted); flex: none; }
+.dot.ok { background: var(--ah-ok); }
+.dot.err { background: var(--ah-err); }
+.dot.warn { background: var(--ah-warn); }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 10px; font-size: 12px;
+  background: color-mix(in srgb, var(--ah-text) 8%, transparent); color: var(--ah-muted); white-space: nowrap;
+}
+.chip.err { background: color-mix(in srgb, var(--ah-err) 14%, transparent); color: var(--ah-err); }
+.chip.warn { background: color-mix(in srgb, var(--ah-warn) 16%, transparent); color: color-mix(in srgb, var(--ah-warn) 75%, var(--ah-text)); }
+.chip.ok { background: color-mix(in srgb, var(--ah-ok) 14%, transparent); color: color-mix(in srgb, var(--ah-ok) 80%, var(--ah-text)); }
+.chip .icon { width: 13px; height: 13px; }
+
+/* Faceplate */
+.faceplate {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 18px; padding: 12px 14px;
+  background: var(--ah-face); border-radius: 10px; border: 1px solid var(--ah-line);
+}
+.fp-slot { font-size: 11px; color: var(--ah-muted); writing-mode: vertical-rl; transform: rotate(180deg); align-self: center; }
+.fp-block { display: flex; gap: 4px; }
+.fp-block.extra { padding-left: 14px; border-left: 1px dashed var(--ah-line); }
+.fp-col { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.fp-num { font-size: 10px; line-height: 12px; height: 12px; color: var(--ah-muted); font-variant-numeric: tabular-nums; }
+.port {
+  position: relative; width: 30px; height: 24px; border-radius: 4px; padding: 0; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--ah-text) 18%, transparent);
+  background: var(--ah-port-down); transition: transform 0.08s, box-shadow 0.08s;
+}
+.port::after {
+  content: ""; position: absolute; left: 50%; width: 10px; height: 4px; transform: translateX(-50%);
+  background: color-mix(in srgb, #000 28%, transparent); border-radius: 1px;
+}
+.fp-col .port:first-of-type::after { bottom: 2px; }
+.fp-col .port:last-of-type::after { top: 2px; }
+.port:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18); }
+.port.s-fast { background: var(--ah-port-fast); border-color: transparent; }
+.port.s-up { background: color-mix(in srgb, var(--ah-port-fast) 55%, var(--ah-port-slow)); border-color: transparent; }
+.port.s-slow { background: var(--ah-port-slow); border-color: transparent; }
+.port.s-off {
+  background: repeating-linear-gradient(135deg, var(--ah-port-down) 0 4px, color-mix(in srgb, var(--ah-text) 18%, var(--ah-card)) 4px 6px);
+}
+.port.s-np { background: transparent; border-style: dashed; }
+.port.s-np::after { display: none; }
+.port.sel { outline: 2px solid var(--ah-accent); outline-offset: 2px; }
+.port.dim { opacity: 0.3; }
+.port .badge {
+  position: absolute; display: grid; place-items: center; width: 13px; height: 13px; border-radius: 50%;
+  border: 1.5px solid var(--ah-face); color: #fff;
+}
+.port .badge .icon { width: 9px; height: 9px; stroke-width: 3; }
+.port .b-poe { right: -6px; top: -6px; background: var(--ah-poe); }
+.port .b-up { left: -6px; top: -6px; background: var(--ah-accent); }
+.port .b-err { right: -6px; bottom: -6px; background: var(--ah-err); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 12px; color: var(--ah-muted); }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend i { display: inline-block; width: 14px; height: 11px; border-radius: 2px; border: 1px solid var(--ah-line); }
+
+.mini-fp { display: flex; flex-wrap: wrap; gap: 2px 6px; }
+.mini-fp .blk { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, 7px); gap: 2px; }
+.mini-fp b { width: 7px; height: 7px; border-radius: 1.5px; background: var(--ah-port-down); }
+.mini-fp b.s-fast { background: var(--ah-port-fast); }
+.mini-fp b.s-up { background: color-mix(in srgb, var(--ah-port-fast) 55%, var(--ah-port-slow)); }
+.mini-fp b.s-slow { background: var(--ah-port-slow); }
+.mini-fp b.s-off { background: color-mix(in srgb, var(--ah-text) 30%, var(--ah-card)); }
+.mini-fp b.s-np { background: transparent; outline: 1px dashed var(--ah-line); outline-offset: -1px; }
+
+/* Meters */
+.meter { height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--ah-text) 10%, transparent); overflow: hidden; }
+.meter > i { display: block; height: 100%; background: var(--ah-accent); border-radius: 3px; }
+.meter > i.warn { background: var(--ah-warn); }
+.meter > i.err { background: var(--ah-err); }
+
+/* Key/value lists */
+.kv { display: grid; grid-template-columns: minmax(96px, auto) 1fr; gap: 6px 14px; margin: 0; }
+.kv dt { color: var(--ah-muted); }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+
+/* Toggle */
+.toggle { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+.toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.toggle .track {
+  position: relative; width: 36px; height: 20px; border-radius: 10px; flex: none;
+  background: color-mix(in srgb, var(--ah-text) 25%, transparent); transition: background 0.15s;
+}
+.toggle .track::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); transition: transform 0.15s;
+}
+.toggle input:checked + .track { background: var(--ah-accent); }
+.toggle input:checked + .track::after { transform: translateX(16px); }
+.toggle input:focus-visible + .track { outline: 2px solid var(--ah-accent); outline-offset: 2px; }
+.toggle input:disabled + .track { opacity: 0.45; }
+
+/* Dialog */
+.scrim {
+  position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, 0.42);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.dialog {
+  width: min(460px, 100%); max-height: calc(100vh - 32px); overflow: auto; background: var(--ah-card);
+  border-radius: 16px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3); padding: 20px;
+}
+.dialog h2 { margin: 0; font-size: 20px; font-weight: 500; }
+.dialog .dlg-head { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
+.dialog .dlg-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.dialog section { padding: 14px 0; border-top: 1px solid var(--ah-line); }
+.dialog section:first-of-type { border-top: 0; padding-top: 4px; }
+.controls { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; }
+.field { display: flex; gap: 8px; align-items: center; }
+.field input[type="text"] {
+  flex: 1; min-width: 0; height: 36px; padding: 0 10px; border-radius: 8px; font: inherit; color: var(--ah-text);
+  border: 1px solid var(--ah-line); background: var(--ah-bg);
+}
+.field input[type="text"]:focus { outline: 2px solid var(--ah-accent); outline-offset: -1px; }
+.choice { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--ah-line); border-radius: 10px; cursor: pointer; margin-top: 8px; }
+.choice input { margin-top: 3px; accent-color: var(--ah-accent); }
+.client-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.client-list li { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
+.mono { font-family: var(--code-font-family, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12.5px; }
+
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 20; max-width: calc(100% - 32px);
+  background: #323232; color: #fff; padding: 12px 18px; border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+.toast.err { background: var(--ah-err); }
+.empty { padding: 32px 16px; text-align: center; color: var(--ah-muted); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+`;
+
+/* ------------------------------------------------------------------ */
+/* Shared rendering                                                     */
+/* ------------------------------------------------------------------ */
+
+function portState(port) {
+  if (port.present === false) return "s-np";
+  if (port.enabled === false) return "s-off";
+  if (!port.up) return "s-down";
+  if (!port.speed || port.speed >= 1000) return "s-fast";
+  if (port.speed >= 100) return "s-up";
+  return "s-slow";
+}
+
+function portStatusText(port) {
+  if (port.present === false) return "Not present";
+  if (port.enabled === false) return "Disabled";
+  if (!port.up) return "No link";
+  return ["Up", fmtSpeed(port.speed), port.duplex].filter(Boolean).join(" · ");
+}
+
+function portTitle(port) {
+  const parts = [`Port ${port.name}${port.label ? ` (${port.label})` : ""}: ${portStatusText(port)}`];
+  if (port.poe && port.poe.delivering) parts.push(`PoE ${port.poe.power_w ?? 0} W`);
+  if (port.neighbor && port.neighbor.name) parts.push(`→ ${port.neighbor.name}`);
+  if (port.uplink) parts.push("uplink");
+  return parts.join(", ");
+}
+
+/** Ports grouped like the front of a switch: stack members, blocks of 12, uplinks apart. */
+function faceplateLayout(ports) {
+  const bySlot = new Map();
+  for (const port of [...ports].sort((a, b) => natCompare(a.name, b.name))) {
+    const slot = String(port.name).includes(":") ? String(port.name).split(":")[0] : "";
+    if (!bySlot.has(slot)) bySlot.set(slot, []);
+    bySlot.get(slot).push(port);
+  }
+  const rows = [];
+  for (const [slot, list] of bySlot) {
+    const count = list.length;
+    let main = count > 8 ? Math.floor(count / 8) * 8 : count;
+    if (count - main > 8) main = count;
+    const blockSize = main >= 24 ? 12 : main || 1;
+    const blocks = [];
+    for (let i = 0; i < main; i += blockSize) blocks.push({ ports: list.slice(i, i + blockSize), extra: false });
+    if (count > main) blocks.push({ ports: list.slice(main), extra: true });
+    rows.push({ slot, blocks });
+  }
+  return rows;
+}
+
+function columns(ports) {
+  const cols = [];
+  for (let i = 0; i < ports.length; i += 2) cols.push([ports[i], ports[i + 1]]);
+  return cols;
+}
+
+function renderFaceplate(device, { selected = null, filter = null } = {}) {
+  const ports = device.ports || [];
+  if (!ports.length) return `<div class="empty">No ports reported yet.</div>`;
+  return faceplateLayout(ports)
+    .map(
+      (row) => `
+      <div class="faceplate" role="group" aria-label="${esc(row.slot ? `Switch ${row.slot} ports` : "Switch ports")}">
+        ${row.slot ? `<span class="fp-slot">Slot ${esc(row.slot)}</span>` : ""}
+        ${row.blocks
+          .map(
+            (block) => `
+          <div class="fp-block ${block.extra ? "extra" : ""}">
+            ${columns(block.ports)
+              .map(
+                ([top, bottom]) => `
+              <div class="fp-col">
+                <span class="fp-num">${esc(portNumber(top.name))}</span>
+                ${renderPort(top, selected, filter)}
+                ${bottom ? renderPort(bottom, selected, filter) : '<span style="height:24px"></span>'}
+                <span class="fp-num">${bottom ? esc(portNumber(bottom.name)) : ""}</span>
+              </div>`,
+              )
+              .join("")}
+          </div>`,
+          )
+          .join("")}
+      </div>`,
+    )
+    .join("");
+}
+
+function renderPort(port, selected, filter) {
+  const classes = ["port", portState(port)];
+  if (selected === port.name) classes.push("sel");
+  if (filter && !filter(port)) classes.push("dim");
+  const badges = [
+    port.poe && port.poe.delivering ? `<span class="badge b-poe">${icon("bolt")}</span>` : "",
+    port.uplink ? `<span class="badge b-up">${icon("up")}</span>` : "",
+  ].join("");
+  return `<button class="${classes.join(" ")}" data-port="${esc(port.name)}" title="${esc(portTitle(port))}" aria-label="${esc(portTitle(port))}">${badges}</button>`;
+}
+
+function renderLegend() {
+  return `<div class="legend" aria-hidden="true">
+    <span><i style="background:var(--ah-port-fast)"></i>1 Gbit/s+</span>
+    <span><i style="background:color-mix(in srgb, var(--ah-port-fast) 55%, var(--ah-port-slow))"></i>100 Mbit/s</span>
+    <span><i style="background:var(--ah-port-slow)"></i>10 Mbit/s</span>
+    <span><i style="background:var(--ah-port-down)"></i>No link</span>
+    <span><i style="background:repeating-linear-gradient(135deg,var(--ah-port-down) 0 3px,color-mix(in srgb,var(--ah-text) 18%,var(--ah-card)) 3px 5px)"></i>Disabled</span>
+    <span><i style="background:var(--ah-poe);border-radius:50%;width:11px"></i>PoE</span>
+    <span><i style="background:var(--ah-accent);border-radius:50%;width:11px"></i>Uplink</span>
+  </div>`;
+}
+
+function renderMiniFaceplate(device) {
+  const ports = [...(device.ports || [])].sort((a, b) => natCompare(a.name, b.name));
+  if (!ports.length) return "";
+  const blocks = [];
+  for (let i = 0; i < ports.length; i += 12) blocks.push(ports.slice(i, i + 12));
+  return `<div class="mini-fp" aria-hidden="true">${blocks
+    .map((b) => `<div class="blk">${b.map((p) => `<b class="${portState(p)}"></b>`).join("")}</div>`)
+    .join("")}</div>`;
+}
+
+function deviceIcon(device) {
+  return icon({ switch: "switch", ap: "ap", router: "router" }[device.kind] || "unknown");
+}
+
+function deviceSummary(device) {
+  if (!device.online) return "Offline";
+  if (device.kind === "switch" || device.kind === "router") {
+    const ports = device.ports || [];
+    const up = ports.filter((p) => p.up).length;
+    const parts = [`${up}/${ports.length} ports up`];
+    if (device.poe && device.poe.used_w != null) parts.push(`${device.poe.used_w} W PoE`);
+    if (device.kind === "router" && device.stations?.length) parts.push(`${device.stations.length} Wi-Fi clients`);
+    return parts.join(" · ");
+  }
+  const clients = (device.stations || []).length;
+  const ssids = (device.ssids || []).filter((s) => s.broadcasting).length;
+  return `${clients} client${clients === 1 ? "" : "s"} · ${ssids} SSID${ssids === 1 ? "" : "s"} broadcasting`;
+}
+
+function problemChips(device, max = 3) {
+  const problems = device.online ? device.problems || [] : [{ kind: "offline", text: "Offline" }];
+  const shown = problems.slice(0, max).map((p) => {
+    const cls = p.kind === "unsaved" ? "warn" : "err";
+    return `<span class="chip ${cls}">${icon("warn")}${esc(p.text)}</span>`;
+  });
+  if (problems.length > max) shown.push(`<span class="chip">+${problems.length - max}</span>`);
+  return shown.join("");
+}
+
+function meterClass(value, warn = 70, err = 90) {
+  if (value == null) return "";
+  if (value >= err) return "err";
+  if (value >= warn) return "warn";
+  return "";
+}
+
+/* ------------------------------------------------------------------ */
+/* Base element: data subscription, actions, dialogs, toasts            */
+/* ------------------------------------------------------------------ */
+
+class AerohiveBase extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._data = null;
+    this._unsubStore = null;
+    this._dialog = null; // {type, ...}
+    this._busy = new Set();
+    this._toastTimer = null;
+    this.shadowRoot.addEventListener("click", (ev) => this._onClick(ev));
+    this.shadowRoot.addEventListener("change", (ev) => this._onChange(ev));
+    this.shadowRoot.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && this._dialog) this._closeDialog();
+      if (ev.key === "Enter" && ev.target.matches && ev.target.matches("input[data-enter]")) {
+        ev.preventDefault();
+        this._handleAction(ev.target.dataset.enter, ev.target);
+      }
+    });
+  }
+
+  set hass(hass) {
+    const first = !this._hass;
+    this._hass = hass;
+    if (first || (this._store && this._store.connection !== hass.connection)) this._connectStore();
+    this._onHass();
+  }
+
+  get hass() {
+    return this._hass;
+  }
+
+  connectedCallback() {
+    if (this._hass && !this._unsubStore) this._connectStore();
+    this._render();
+  }
+
+  disconnectedCallback() {
+    if (this._unsubStore) this._unsubStore();
+    this._unsubStore = null;
+  }
+
+  _connectStore() {
+    if (this._unsubStore) this._unsubStore();
+    this._store = getStore(this._hass);
+    this._unsubStore = this._store.subscribe((data) => {
+      this._data = data;
+      this._onData();
+    });
+  }
+
+  _onHass() {}
+
+  _onData() {
+    // A change only shows once the device has been read again: keep its control busy until then.
+    if (this._held && this._held.size) {
+      for (const key of this._held) this._busy.delete(key);
+      this._held.clear();
+    }
+    this._render();
+  }
+
+  /* Rendering keeps an input that has focus (e.g. renaming a port) intact. */
+  _dialogHasFocus() {
+    const active = this.shadowRoot.activeElement;
+    return Boolean(active && active.closest && active.closest(".dialog") && active.matches("input[type=text]"));
+  }
+
+  _renderDialogInto(host) {
+    if (!host) return;
+    if (this._dialogHasFocus()) return;
+    // Keep keyboard focus on the same control across re-renders.
+    const active = this.shadowRoot.activeElement;
+    let keep = null;
+    if (active && host.contains(active)) {
+      for (const attr of ["data-toggle", "data-action", "data-choice"]) {
+        if (active.hasAttribute(attr)) {
+          keep = `[${attr}="${active.getAttribute(attr)}"]${active.value && attr === "data-choice" ? `[value="${active.value}"]` : ""}`;
+          break;
+        }
+      }
+    }
+    host.innerHTML = this._dialog ? `<div class="scrim" data-action="scrim">${this._dialogHtml()}</div>` : "";
+    const wanted = (this._dialog && this._dialog.focus) || keep;
+    if (this._dialog) this._dialog.focus = null;
+    if (wanted) {
+      const el = host.querySelector(wanted);
+      if (el) el.focus();
+    }
+  }
+
+  _dialogHtml() {
+    const d = this._dialog;
+    if (!d) return "";
+    const device = findDevice(this._data, d.device);
+    if (!device && d.type !== "confirm") return "";
+    if (d.type === "port") return this._portDialog(device, d);
+    if (d.type === "reboot") return this._rebootDialog(device);
+    if (d.type === "restore") return this._restoreDialog(device);
+    if (d.type === "confirm") return this._confirmDialog(d);
+    return "";
+  }
+
+  _openDialog(dialog) {
+    if (!this._dialog) this._lastFocus = this.shadowRoot.activeElement;
+    this._dialog = { focus: '.dialog [data-action="close"]', ...dialog };
+    this._render();
+  }
+
+  _closeDialog() {
+    this._dialog = null;
+    this._render();
+    if (this._lastFocus && this._lastFocus.isConnected) this._lastFocus.focus();
+  }
+
+  _toast(message, error = false) {
+    clearTimeout(this._toastTimer);
+    let el = this.shadowRoot.querySelector(".toast");
+    if (!el) {
+      el = document.createElement("div");
+      el.setAttribute("role", "status");
+      this.shadowRoot.appendChild(el);
+    }
+    el.className = `toast ${error ? "err" : ""}`;
+    el.textContent = message;
+    this._toastTimer = setTimeout(() => el.remove(), error ? 7000 : 3500);
+  }
+
+  async _call(service, data, { busyKey = service, success = null, hold = false } = {}) {
+    if (this._busy.has(busyKey)) return false;
+    this._busy.add(busyKey);
+    this._render();
+    let ok = false;
+    try {
+      await this._hass.callService(DOMAIN, service, data);
+      if (success) this._toast(success);
+      ok = true;
+    } catch (err) {
+      this._toast((err && err.message) || String(err), true);
+    }
+    if (ok && hold) {
+      this._held = this._held || new Set();
+      this._held.add(busyKey);
+      setTimeout(() => {
+        if (this._held && this._held.delete(busyKey)) {
+          this._busy.delete(busyKey);
+          this._render();
+        }
+      }, 8000);
+    } else {
+      this._busy.delete(busyKey);
+    }
+    this._render();
+    return ok;
+  }
+
+  _isBusy(key) {
+    return this._busy.has(key);
+  }
+
+  /* ---------------- dialogs ---------------- */
+
+  _portDialog(device, d) {
+    const port = (device.ports || []).find((p) => p.name === d.port);
+    if (!port) return "";
+    const names = clientNames(this._data);
+    const key = `${device.entry_id}:${port.name}`;
+    const busy = (what) => this._isBusy(`${what}:${key}`);
+    const poe = port.poe;
+    const neighbor = port.neighbor;
+    const clients = port.clients || [];
+    const status = portStatusText(port);
+    return `
+      <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+        <div class="dlg-head">
+          <div class="grow">
+            <h2 id="dlg-title">Port ${esc(port.name)}${port.label ? ` <span class="chip">${esc(port.label)}</span>` : ""}</h2>
+            <div class="muted">${esc(device.name)} · ${esc(status)}${port.vlan ? ` · VLAN ${esc(port.vlan)}` : ""}</div>
+          </div>
+          <button class="icon-btn" data-action="close" aria-label="Close">${icon("close")}</button>
+        </div>
+        <section>
+          <div class="controls">
+            <label class="toggle">
+              <input type="checkbox" data-toggle="port" ${port.enabled !== false ? "checked" : ""} ${busy("port") || port.present === false ? "disabled" : ""}>
+              <span class="track"></span><span>Port ${port.enabled !== false ? "on" : "off"}</span>
+            </label>
+            ${
+              poe
+                ? `<label class="toggle">
+                    <input type="checkbox" data-toggle="poe" ${poe.enabled !== false ? "checked" : ""} ${busy("poe") ? "disabled" : ""}>
+                    <span class="track"></span><span>PoE ${poe.enabled !== false ? "on" : "off"}</span>
+                  </label>
+                  <button class="btn" data-action="poe-cycle" ${busy("cycle") || poe.enabled === false ? "disabled" : ""}>${icon("cycle")}${busy("cycle") ? "Restarting…" : "Restart PoE device"}</button>`
+                : ""
+            }
+          </div>
+          ${port.uplink ? `<p class="muted" style="margin:10px 0 0">${icon("up")} Uplink port: turning it off can disconnect Home Assistant from the switch.</p>` : ""}
+        </section>
+        ${
+          device.features && device.features.port_names
+            ? `<section>
+                <label class="section-title" for="port-name">Port name</label>
+                <div class="field">
+                  <input type="text" id="port-name" maxlength="15" value="${esc(port.label || "")}" placeholder="e.g. camera-1" data-enter="rename" autocomplete="off" spellcheck="false">
+                  <button class="btn" data-action="rename" ${busy("rename") ? "disabled" : ""}>${icon("edit")}Save</button>
+                </div>
+                <div class="muted" style="font-size:12px;margin-top:6px">Up to 15 letters, digits, - _ or . (no spaces). Leave empty to clear.</div>
+              </section>`
+            : ""
+        }
+        <section>
+          <dl class="kv">
+            ${neighbor ? `<dt>Connected to</dt><dd><strong>${esc(neighbor.name || "Unknown")}</strong>${neighbor.port ? ` <span class="muted">port ${esc(neighbor.port)}</span>` : ""}${neighbor.address ? `<br><span class="mono">${esc(neighbor.address)}</span>` : ""}</dd>` : ""}
+            ${poe ? `<dt>PoE</dt><dd>${poe.delivering ? `<strong>${esc(poe.power_w ?? 0)} W</strong>` : esc(poe.status || "Off")}${poe.class ? ` <span class="muted">${esc(poe.class)}</span>` : ""}</dd>` : ""}
+            <dt>Traffic</dt><dd class="num">↓ ${fmtRate(port.rx_kbps)} &nbsp; ↑ ${fmtRate(port.tx_kbps)}</dd>
+            <dt>Total</dt><dd class="num">↓ ${fmtBytes(port.rx_bytes)} &nbsp; ↑ ${fmtBytes(port.tx_bytes)}</dd>
+            ${port.errors ? `<dt>Errors</dt><dd class="num" style="color:var(--ah-err)">${esc(port.errors)}</dd>` : ""}
+          </dl>
+        </section>
+        <section>
+          <div class="section-title">Devices on this port (${clients.length})</div>
+          ${
+            clients.length
+              ? `<ul class="client-list">${clients
+                  .slice(0, 50)
+                  .map(
+                    (c) =>
+                      `<li><span>${names.get(c.mac) ? `${esc(names.get(c.mac))} <span class="muted mono">${esc(c.mac)}</span>` : `<span class="mono">${esc(c.mac)}</span>`}</span><span class="muted">${c.vlan != null ? `VLAN ${esc(c.vlan)}` : ""}</span></li>`,
+                  )
+                  .join("")}</ul>${clients.length > 50 ? `<div class="muted">and ${clients.length - 50} more</div>` : ""}`
+              : `<div class="muted">None learned.</div>`
+          }
+        </section>
+      </div>`;
+  }
+
+  _rebootDialog(device) {
+    const unsaved = device.config && device.config.unsaved;
+    const busy = this._isBusy(`reboot:${device.entry_id}`);
+    const choice = this._dialog.save ?? "save";
+    return `
+      <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+        <div class="dlg-head"><h2 id="dlg-title" class="grow">Reboot ${esc(device.name)}?</h2>
+          <button class="icon-btn" data-action="close" aria-label="Close">${icon("close")}</button></div>
+        <p class="muted" style="margin:0">The device is unreachable for a few minutes, and everything connected through it loses its connection.</p>
+        ${
+          unsaved
+            ? `<p style="margin:14px 0 0"><span class="chip warn">${icon("warn")}Unsaved changes</span></p>
+               <label class="choice"><input type="radio" name="save" value="save" ${choice === "save" ? "checked" : ""} data-choice="save">
+                 <span><strong>Save, then reboot</strong><br><span class="muted">Keep the changes.</span></span></label>
+               <label class="choice"><input type="radio" name="save" value="discard" ${choice === "discard" ? "checked" : ""} data-choice="save">
+                 <span><strong>Reboot without saving</strong><br><span class="muted">The changes are lost; the switch starts with its saved configuration.</span></span></label>`
+            : ""
+        }
+        <div class="dlg-actions">
+          <button class="btn" data-action="close">Cancel</button>
+          <button class="btn primary" data-action="reboot-confirm" ${busy ? "disabled" : ""}>${icon("reboot")}${busy ? "Rebooting…" : "Reboot"}</button>
+        </div>
+      </div>`;
+  }
+
+  _restoreDialog(device) {
+    const busy = this._isBusy(`restore:${device.entry_id}`);
+    const summary = device.config && device.config.change_summary;
+    return `
+      <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+        <div class="dlg-head"><h2 id="dlg-title" class="grow">Restore the last good configuration?</h2>
+          <button class="icon-btn" data-action="close" aria-label="Close">${icon("close")}</button></div>
+        <p class="muted" style="margin:0">The latest backup of ${esc(device.name)} is sent back to it line by line, then saved on the device.
+          ${summary ? `It differs from the current configuration by ${esc(summary.added)} added and ${esc(summary.removed)} removed lines.` : ""}</p>
+        ${
+          summary && summary.sample && summary.sample.length
+            ? `<pre class="mono" style="background:var(--ah-bg);padding:10px;border-radius:8px;overflow:auto;max-height:180px;margin:12px 0 0">${esc(summary.sample.join("\n"))}</pre>`
+            : ""
+        }
+        <div class="dlg-actions">
+          <button class="btn" data-action="close">Cancel</button>
+          <button class="btn primary" data-action="restore-confirm" ${busy ? "disabled" : ""}>${icon("restore")}${busy ? "Restoring…" : "Restore and save"}</button>
+        </div>
+      </div>`;
+  }
+
+  _confirmDialog(d) {
+    return `
+      <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dlg-title">
+        <h2 id="dlg-title">${esc(d.title)}</h2>
+        <p class="muted">${esc(d.text)}</p>
+        <div class="dlg-actions">
+          <button class="btn" data-action="close">Cancel</button>
+          <button class="btn primary ${d.danger ? "danger" : ""}" data-action="confirm-yes">${esc(d.confirm || "OK")}</button>
+        </div>
+      </div>`;
+  }
+
+  /* ---------------- events ---------------- */
+
+  _onClick(ev) {
+    const portEl = ev.target.closest("[data-port]");
+    if (portEl && !portEl.closest(".dialog")) {
+      const device = portEl.closest("[data-device]")?.dataset.device || this._defaultDevice();
+      this._onPortClick(device, portEl.dataset.port);
+      return;
+    }
+    const actionEl = ev.target.closest("[data-action]");
+    if (!actionEl) return;
+    const action = actionEl.dataset.action;
+    if (action === "scrim") {
+      if (ev.target === actionEl) this._closeDialog();
+      return;
+    }
+    this._handleAction(action, actionEl);
+  }
+
+  _onPortClick(deviceRef, port) {
+    this._openDialog({ type: "port", device: deviceRef, port });
+  }
+
+  _defaultDevice() {
+    return null;
+  }
+
+  _onChange(ev) {
+    const target = ev.target;
+    if (target.dataset.choice && this._dialog) {
+      this._dialog[target.dataset.choice] = target.value;
+      return;
+    }
+    if (!target.dataset.toggle || !this._dialog || this._dialog.type !== "port") return;
+    const device = findDevice(this._data, this._dialog.device);
+    const port = device && device.ports.find((p) => p.name === this._dialog.port);
+    if (!port) return;
+    const key = `${device.entry_id}:${port.name}`;
+    if (target.dataset.toggle === "port") {
+      const enabled = target.checked;
+      if (!enabled && port.uplink) {
+        target.checked = true;
+        this._dialog = {
+          type: "confirm",
+          title: `Turn off uplink port ${port.name}?`,
+          text: `Port ${port.name} leads to another switch or router. Turning it off can cut Home Assistant off from ${device.name}, and you may have to turn it back on from the console.`,
+          confirm: "Turn off",
+          danger: true,
+          onYes: () => this._call("set_port", { device_id: device.device_id, port: port.name, enabled: false, force: true }, { busyKey: `port:${key}`, hold: true }),
+          back: { type: "port", device: this._dialog.device, port: port.name },
+          focus: '.dialog [data-action="close"]',
+        };
+        this._render();
+        return;
+      }
+      this._call("set_port", { device_id: device.device_id, port: port.name, enabled }, { busyKey: `port:${key}`, hold: true });
+    } else if (target.dataset.toggle === "poe") {
+      this._call("set_poe", { device_id: device.device_id, port: port.name, enabled: target.checked }, { busyKey: `poe:${key}`, hold: true });
+    }
+  }
+
+  _handleAction(action, el) {
+    const dialog = this._dialog;
+    const device = dialog ? findDevice(this._data, dialog.device) : findDevice(this._data, el.closest("[data-device]")?.dataset.device);
+    switch (action) {
+      case "close":
+        if (dialog && dialog.back) {
+          this._dialog = dialog.back;
+          this._render();
+        } else this._closeDialog();
+        break;
+      case "confirm-yes": {
+        const back = dialog.back;
+        this._dialog = back || null;
+        this._render();
+        dialog.onYes();
+        break;
+      }
+      case "poe-cycle": {
+        const key = `${device.entry_id}:${dialog.port}`;
+        this._call("power_cycle_poe", { device_id: device.device_id, port: dialog.port }, { busyKey: `cycle:${key}`, success: `PoE on port ${dialog.port} restarted` });
+        break;
+      }
+      case "rename": {
+        const input = this.shadowRoot.querySelector("#port-name");
+        const key = `${device.entry_id}:${dialog.port}`;
+        const description = (input ? input.value : "").trim();
+        if (input) input.blur();
+        this._call("set_port_description", { device_id: device.device_id, port: dialog.port, description }, { busyKey: `rename:${key}`, hold: true, success: description ? `Port ${dialog.port} renamed to ${description}` : `Name of port ${dialog.port} cleared` });
+        break;
+      }
+      case "save":
+        this._call("save_config", { device_id: device.device_id }, { busyKey: `save:${device.entry_id}`, success: `Configuration of ${device.name} saved` });
+        break;
+      case "backup":
+        this._call("backup_config", { device_id: device.device_id }, { busyKey: `backup:${device.entry_id}`, success: `Backup of ${device.name} taken` });
+        break;
+      case "accept":
+        this._openDialog({
+          type: "confirm",
+          device: device.entry_id,
+          title: "Keep the current configuration?",
+          text: `The configuration ${device.name} is running now becomes the new known-good backup, and the alert is cleared. Do this if the change was intended.`,
+          confirm: "Keep current",
+          onYes: () => this._call("accept_config", { device_id: device.device_id }, { busyKey: `accept:${device.entry_id}`, success: "Current configuration accepted" }),
+        });
+        break;
+      case "restore":
+        this._openDialog({ type: "restore", device: device.entry_id });
+        break;
+      case "restore-confirm":
+        this._call("restore_config", { device_id: device.device_id, confirm: true, save: true }, { busyKey: `restore:${device.entry_id}`, success: `Configuration of ${device.name} restored` }).then(
+          (ok) => ok && this._closeDialog(),
+        );
+        break;
+      case "reboot":
+        this._openDialog({ type: "reboot", device: device.entry_id, save: "save" });
+        break;
+      case "reboot-confirm": {
+        const data = { device_id: device.device_id, confirm: true };
+        if (device.config && device.config.unsaved) data.save_changes = (dialog.save ?? "save") === "save";
+        this._call("reboot", data, { busyKey: `reboot:${device.entry_id}`, success: `${device.name} is rebooting` }).then((ok) => ok && this._closeDialog());
+        break;
+      }
+      default:
+        this._onAction(action, el, device);
+    }
+  }
+
+  _onAction() {}
+
+  _render() {}
+}
+
+/* ------------------------------------------------------------------ */
+/* Device detail (used by the panel)                                    */
+/* ------------------------------------------------------------------ */
+
+function deviceActions(base, device) {
+  const id = device.entry_id;
+  const cfg = device.config || {};
+  const busy = (k) => base._isBusy(`${k}:${id}`);
+  return `
+    <div class="actions">
+      <button class="btn ${cfg.unsaved ? "attention" : ""}" data-action="save" ${busy("save") || !device.online ? "disabled" : ""}>${icon("save")}${busy("save") ? "Saving…" : "Save configuration"}</button>
+      <button class="btn" data-action="backup" ${busy("backup") || !device.online || cfg.changed_after_reboot ? "disabled" : ""}>${icon("backup")}${busy("backup") ? "Backing up…" : "Back up now"}</button>
+      <button class="btn danger" data-action="reboot" ${!device.online ? "disabled" : ""}>${icon("reboot")}Reboot</button>
+    </div>`;
+}
+
+function deviceBanners(device) {
+  const cfg = device.config || {};
+  const out = [];
+  if (!device.online) {
+    out.push(`<div class="banner err">${icon("warn")}<div class="grow"><strong>${esc(device.name)} is offline.</strong> Home Assistant can't reach it over SSH right now.</div></div>`);
+  }
+  if (cfg.changed_after_reboot) {
+    const s = cfg.change_summary;
+    out.push(`<div class="banner err">${icon("warn")}<div class="grow"><strong>Configuration changed after a reboot.</strong>
+      This is what a power cut does to unsaved or damaged configurations${s ? ` (${esc(s.added)} lines added, ${esc(s.removed)} removed)` : ""}.
+      <div class="banner-actions"><button class="btn primary" data-action="restore">${icon("restore")}Restore last backup</button>
+      <button class="btn" data-action="accept">${icon("check")}Keep current</button></div></div></div>`);
+  }
+  for (const problem of cfg.boot_problems || []) {
+    out.push(`<div class="banner err">${icon("warn")}<div class="grow"><strong>Boot problem:</strong> ${esc(problem)}. See <em>Recovering an ExtremeXOS switch by hand</em> in the backups documentation.</div></div>`);
+  }
+  if (cfg.unsaved) {
+    out.push(`<div class="banner warn">${icon("save")}<div class="grow"><strong>Unsaved changes.</strong> They are lost if the switch loses power. <div class="banner-actions"><button class="btn primary" data-action="save">${icon("save")}Save now</button></div></div></div>`);
+  }
+  for (const problem of (device.problems || []).filter((p) => p.kind === "hardware")) {
+    out.push(`<div class="banner err">${icon("warn")}<div class="grow"><strong>Hardware:</strong> ${esc(problem.text)}</div></div>`);
+  }
+  return out.join("");
+}
+
+function healthTiles(device) {
+  const tiles = [];
+  const add = (label, value, extra = "") => tiles.push(`<div class="stat"><div class="stat-label">${esc(label)}</div><div class="stat-value num">${value}</div>${extra}</div>`);
+  add("Uptime", esc(fmtUptime(device.uptime)));
+  if (device.cpu != null) add("CPU", fmtPct(device.cpu), `<div class="meter"><i class="${meterClass(device.cpu)}" style="width:${Math.min(100, device.cpu)}%"></i></div>`);
+  if (device.memory != null) add("Memory", fmtPct(device.memory), `<div class="meter"><i class="${meterClass(device.memory, 80, 92)}" style="width:${Math.min(100, device.memory)}%"></i></div>`);
+  if (device.temperature != null) {
+    const status = device.temperature_status || "";
+    add("Temperature", `${esc(device.temperature)} °C`, status && status !== "Normal" ? `<span class="chip err">${esc(status)}</span>` : "");
+  }
+  if (device.poe && device.poe.budget_w) {
+    const pct = (100 * (device.poe.used_w || 0)) / device.poe.budget_w;
+    add("PoE", `${esc(device.poe.used_w ?? 0)} <span class="muted">/ ${esc(device.poe.budget_w)} W</span>`, `<div class="meter"><i class="${meterClass(pct, 75, 90)}" style="width:${Math.min(100, pct)}%"></i></div>`);
+  }
+  const rpm = Object.values(device.fan_rpm || {});
+  if (device.fans) add("Fans", esc(device.fans), rpm.length ? `<div class="muted num" style="font-size:12px">${rpm.map((r) => `${r}`).join(" · ")} rpm</div>` : "");
+  const psus = Object.entries(device.power_supplies || {});
+  if (psus.length) add("Power supplies", psus.map(([n, s]) => `<div style="font-size:13px"><span class="muted">${esc(n)}</span> ${esc(s)}</div>`).join(""));
+  return `<div class="stats">${tiles.join("")}</div>`;
+}
+
+function infoList(device) {
+  const cfg = device.config || {};
+  const rows = [
+    ["Model", device.model],
+    ["Firmware", device.firmware],
+    ["IP address", device.ip || device.host],
+    ["MAC address", device.mac],
+    ["Serial number", device.serial],
+    ["Booted image", cfg.image_booted],
+    ["Booted config", cfg.config_booted],
+    ["Last backup", cfg.last_backup ? `${fmtAgo(cfg.last_backup)} (${cfg.backups} kept)` : "None yet"],
+  ].filter(([, v]) => v != null && v !== "");
+  return `<dl class="kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Panel                                                                */
+/* ------------------------------------------------------------------ */
+
+const PANEL_CSS = `
+:host { display: block; height: 100%; overflow-y: auto; background: var(--ah-bg); }
+.toolbar {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 4px;
+  height: var(--header-height, 56px); padding: 0 12px 0 4px;
+  background: var(--app-header-background-color, var(--ah-card)); color: var(--app-header-text-color, var(--ah-text));
+  border-bottom: var(--app-header-border-bottom, 1px solid var(--ah-line));
+}
+.toolbar .title { font-size: 20px; font-weight: 400; margin-left: 8px; }
+.tabs { display: flex; gap: 2px; margin-left: auto; }
+.tab {
+  height: 36px; padding: 0 14px; border: 0; border-radius: 18px; background: transparent; cursor: pointer; color: inherit; opacity: 0.75; font-weight: 500;
+}
+.tab[aria-selected="true"] { background: color-mix(in srgb, var(--ah-accent) 16%, transparent); color: var(--ah-accent); opacity: 1; }
+.content { max-width: 1240px; margin: 0 auto; padding: 20px 16px 48px; }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.summary .card { padding: 14px 16px; }
+.summary .big { font-size: 26px; font-weight: 500; line-height: 1.2; }
+.summary .label { font-size: 13px; color: var(--ah-muted); display: flex; align-items: center; gap: 6px; }
+.summary .bad .big { color: var(--ah-err); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.tile { display: flex; flex-direction: column; gap: 10px; padding: 16px; text-align: left; cursor: pointer; width: 100%; }
+.tile:hover { border-color: color-mix(in srgb, var(--ah-accent) 50%, var(--ah-line)); }
+.tile-head { display: flex; align-items: center; gap: 12px; }
+.avatar {
+  display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; flex: none;
+  background: color-mix(in srgb, var(--ah-accent) 14%, transparent); color: var(--ah-accent);
+}
+.avatar .icon { width: 22px; height: 22px; }
+.avatar.off { background: color-mix(in srgb, var(--ah-text) 10%, transparent); color: var(--ah-muted); }
+.tile-name { font-size: 16px; font-weight: 500; }
+.tile-sub { font-size: 13px; color: var(--ah-muted); }
+.tile-stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--ah-muted); }
+.tile-stats b { color: var(--ah-text); font-weight: 500; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; margin-bottom: 16px; }
+.detail-head h1 { margin: 0; font-size: 26px; font-weight: 400; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.banner { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; margin-bottom: 12px; }
+.banner > .icon { margin-top: 2px; }
+.banner.err { background: color-mix(in srgb, var(--ah-err) 11%, var(--ah-card)); border: 1px solid color-mix(in srgb, var(--ah-err) 35%, transparent); }
+.banner.err > .icon { color: var(--ah-err); }
+.banner.warn { background: color-mix(in srgb, var(--ah-warn) 12%, var(--ah-card)); border: 1px solid color-mix(in srgb, var(--ah-warn) 40%, transparent); }
+.banner.warn > .icon { color: var(--ah-warn); }
+.banner-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+.panel-card { padding: 16px; margin-bottom: 16px; }
+.fp-scroll { overflow-x: auto; padding: 8px 6px 4px; margin: -8px -6px 0; }
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 14px 18px; }
+.stat-label { font-size: 12px; color: var(--ah-muted); }
+.stat-value { font-size: 18px; font-weight: 500; margin-bottom: 4px; }
+.filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.filter { height: 30px; padding: 0 12px; border-radius: 15px; border: 1px solid var(--ah-line); background: transparent; cursor: pointer; font-size: 13px; color: var(--ah-muted); }
+.filter[aria-pressed="true"] { background: color-mix(in srgb, var(--ah-accent) 14%, transparent); border-color: transparent; color: var(--ah-accent); font-weight: 500; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th { text-align: left; font-weight: 500; color: var(--ah-muted); font-size: 12px; padding: 8px 10px; border-bottom: 1px solid var(--ah-line); white-space: nowrap; }
+td { padding: 9px 10px; border-bottom: 1px solid var(--ah-line); vertical-align: middle; }
+tr:last-child td { border-bottom: 0; }
+tbody tr.click { cursor: pointer; }
+tbody tr.click:hover { background: color-mix(in srgb, var(--ah-accent) 6%, transparent); }
+.table-wrap { overflow-x: auto; }
+.radios { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.radio { padding: 14px; border: 1px solid var(--ah-line); border-radius: 10px; }
+.search { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border-radius: 20px; border: 1px solid var(--ah-line); background: var(--ah-card); margin-bottom: 14px; max-width: 420px; }
+.search input { border: 0; outline: 0; background: transparent; font: inherit; color: var(--ah-text); flex: 1; min-width: 0; }
+.search:focus-within { border-color: var(--ah-accent); }
+.signal { display: inline-flex; gap: 2px; align-items: flex-end; height: 12px; margin-right: 6px; }
+.signal i { width: 3px; background: color-mix(in srgb, var(--ah-text) 18%, transparent); border-radius: 1px; }
+.signal i.on { background: var(--ah-ok); }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  .content { padding: 16px 16px 40px; }
+  .toolbar .title { font-size: 18px; }
+  .tab { padding: 0 10px; }
+  .detail-head h1 { font-size: 22px; }
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .hide-sm { display: none; }
+  .port { width: 26px; height: 22px; }
+}
+`;
+
+function signalBars(dbm) {
+  if (dbm == null) return "";
+  const level = dbm >= -55 ? 4 : dbm >= -65 ? 3 : dbm >= -75 ? 2 : 1;
+  return `<span class="signal" aria-hidden="true">${[4, 7, 10, 12].map((h, i) => `<i class="${i < level ? "on" : ""}" style="height:${h}px"></i>`).join("")}</span>`;
+}
+
+class AerohiveNetworkPanel extends AerohiveBase {
+  constructor() {
+    super();
+    this._path = "";
+    this._tab = "devices";
+    this._portFilter = "all";
+    this._search = "";
+    this._popstate = () => this._syncFromLocation();
+    rowKeyboard(this.shadowRoot);
+    this.shadowRoot.innerHTML = `<style>${BASE_CSS}${PANEL_CSS}</style>
+      <div class="toolbar"><span class="menu"></span><span class="title">Network</span>
+        <div class="tabs" role="tablist">
+          <button class="tab" role="tab" data-action="tab" data-tab="devices">Devices</button>
+          <button class="tab" role="tab" data-action="tab" data-tab="clients">Clients</button>
+        </div></div>
+      <div class="content" id="content"></div><div id="dialog"></div>`;
+    this.shadowRoot.addEventListener("input", (ev) => {
+      if (ev.target.id === "client-search") {
+        this._search = ev.target.value;
+        this._renderContent();
+      }
+    });
+  }
+
+  set narrow(value) {
+    this._narrow = value;
+    this._renderMenu();
+  }
+
+  set panel(value) {
+    this._panel = value;
+  }
+
+  set route(route) {
+    this._route = route;
+    if (route && typeof route.path === "string") this._setPath(route.path);
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener("popstate", this._popstate);
+    if (!this._route) this._syncFromLocation();
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    window.removeEventListener("popstate", this._popstate);
+  }
+
+  _syncFromLocation() {
+    const path = window.location.pathname;
+    const index = path.indexOf(`/${PANEL_PATH}`);
+    if (index >= 0) this._setPath(path.slice(index + PANEL_PATH.length + 1));
+  }
+
+  _setPath(path) {
+    const clean = (path || "").replace(/^\/+|\/+$/g, "");
+    if (clean === this._path) return;
+    this._path = clean;
+    this._tab = clean === "clients" ? "clients" : "devices";
+    this._render();
+  }
+
+  _navigate(path) {
+    const url = `/${PANEL_PATH}${path ? `/${path}` : ""}`;
+    if (window.location.pathname.includes(`/${PANEL_PATH}`)) {
+      window.history.pushState(null, "", url);
+      window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
+    }
+    this._setPath(path);
+    const content = this.shadowRoot.getElementById("content");
+    if (content) content.scrollIntoView({ block: "start" });
+  }
+
+  _onHass() {
+    this._renderMenu();
+  }
+
+  _renderMenu() {
+    const holder = this.shadowRoot.querySelector(".menu");
+    if (!holder || !this._hass) return;
+    if (customElements.get("ha-menu-button")) {
+      let button = holder.querySelector("ha-menu-button");
+      if (!button) {
+        button = document.createElement("ha-menu-button");
+        holder.appendChild(button);
+      }
+      button.hass = this._hass;
+      button.narrow = this._narrow;
+    }
+  }
+
+  _defaultDevice() {
+    return this._path && this._path !== "clients" ? this._path : null;
+  }
+
+  _render() {
+    if (!this.shadowRoot.getElementById("content")) return;
+    for (const tab of this.shadowRoot.querySelectorAll(".tab")) {
+      tab.setAttribute("aria-selected", String(tab.dataset.tab === this._tab));
+    }
+    this._renderContent();
+    this._renderDialogInto(this.shadowRoot.getElementById("dialog"));
+  }
+
+  _renderContent() {
+    const content = this.shadowRoot.getElementById("content");
+    if (!content) return;
+    if (content.contains(this.shadowRoot.activeElement) && this.shadowRoot.activeElement.id === "client-search") {
+      // Only the results change while typing.
+      const results = content.querySelector("#client-results");
+      if (results) results.innerHTML = this._clientRows();
+      return;
+    }
+    if (this._store && this._store.error) {
+      content.innerHTML = `<div class="card empty"><p><strong>Can't load the network data.</strong></p><p>${esc(this._store.error)}</p><p>Restart Home Assistant after updating the integration.</p></div>`;
+      return;
+    }
+    if (!this._data) {
+      content.innerHTML = `<div class="empty">Loading…</div>`;
+      return;
+    }
+    if (!this._data.devices.length) {
+      content.innerHTML = `<div class="card empty"><p><strong>No devices yet.</strong></p><p>Add an access point or switch under Settings → Devices &amp; services → Add integration → Aerohive / Extreme Networks (Local SSH).</p></div>`;
+      return;
+    }
+    if (this._tab === "clients") content.innerHTML = this._clientsView();
+    else if (this._path) {
+      const device = findDevice(this._data, this._path);
+      content.innerHTML = device ? this._deviceView(device) : `<div class="card empty">This device isn't loaded. <button class="btn" data-action="home">Back to all devices</button></div>`;
+    } else content.innerHTML = this._overview();
+  }
+
+  /* ---------------- overview ---------------- */
+
+  _overview() {
+    const devices = this._data.devices;
+    const online = devices.filter((d) => d.online).length;
+    const wireless = devices.reduce((n, d) => n + (d.stations || []).length, 0);
+    const wired = devices.reduce((n, d) => n + (d.wired_clients || 0), 0);
+    const poeUsed = devices.reduce((n, d) => n + ((d.poe && d.poe.used_w) || 0), 0);
+    const poeBudget = devices.reduce((n, d) => n + ((d.poe && d.poe.budget_w) || 0), 0);
+    const problems = devices.reduce((n, d) => n + (d.online ? (d.problems || []).length : 1), 0);
+    return `
+      <div class="summary">
+        <div class="card"><div class="label">${icon("switch")}Devices online</div><div class="big num">${online}<span class="muted" style="font-size:16px"> / ${devices.length}</span></div></div>
+        <div class="card"><div class="label">${icon("wifi")}Wi-Fi clients</div><div class="big num">${wireless}</div></div>
+        <div class="card"><div class="label">${icon("clients")}Wired clients</div><div class="big num">${wired}</div></div>
+        ${poeBudget ? `<div class="card"><div class="label">${icon("bolt")}PoE power</div><div class="big num">${Math.round(poeUsed * 10) / 10}<span class="muted" style="font-size:16px"> / ${poeBudget} W</span></div></div>` : ""}
+        <div class="card ${problems ? "bad" : ""}"><div class="label">${icon("warn")}Problems</div><div class="big num">${problems}</div></div>
+      </div>
+      <div class="grid">${devices.map((d) => this._tile(d)).join("")}</div>`;
+  }
+
+  _tile(device) {
+    const stats = device.online
+      ? [
+          `Up <b class="num">${esc(fmtUptime(device.uptime))}</b>`,
+          device.cpu != null ? `CPU <b class="num">${fmtPct(device.cpu)}</b>` : "",
+          device.memory != null ? `Memory <b class="num">${fmtPct(device.memory)}</b>` : "",
+          device.temperature != null ? `<b class="num">${esc(device.temperature)} °C</b>` : "",
+        ].filter(Boolean)
+      : [];
+    return `
+      <button class="card tile" data-action="open" data-open="${esc(device.entry_id)}" aria-label="${esc(`${device.name}: ${deviceSummary(device)}`)}">
+        <div class="tile-head">
+          <span class="avatar ${device.online ? "" : "off"}">${deviceIcon(device)}</span>
+          <div class="grow">
+            <div class="tile-name ellipsis">${esc(device.name)}</div>
+            <div class="tile-sub ellipsis">${esc([device.model, device.ip || device.host].filter(Boolean).join(" · "))}</div>
+          </div>
+          <span class="dot ${device.online ? ((device.problems || []).length ? "warn" : "ok") : "err"}"></span>
+        </div>
+        ${device.kind === "switch" ? renderMiniFaceplate(device) : ""}
+        <div class="tile-sub">${esc(deviceSummary(device))}</div>
+        ${stats.length ? `<div class="tile-stats">${stats.join("")}</div>` : ""}
+        ${(device.problems || []).length || !device.online ? `<div class="chips">${problemChips(device)}</div>` : ""}
+      </button>`;
+  }
+
+  /* ---------------- device ---------------- */
+
+  _deviceView(device) {
+    const isSwitch = device.ports && device.ports.length;
+    return `
+      <div data-device="${esc(device.entry_id)}">
+        <div class="detail-head">
+          <button class="icon-btn" data-action="home" aria-label="All devices">${icon("back")}</button>
+          <span class="avatar ${device.online ? "" : "off"}">${deviceIcon(device)}</span>
+          <div class="grow" style="min-width:180px">
+            <h1 class="ellipsis">${esc(device.name)}</h1>
+            <div class="muted">${esc([device.model, device.firmware].filter(Boolean).join(" · "))}</div>
+          </div>
+          ${deviceActions(this, device)}
+        </div>
+        ${deviceBanners(device)}
+        ${isSwitch ? this._faceplateCard(device) : ""}
+        <div class="layout">
+          <div>
+            ${isSwitch ? this._portsCard(device) : ""}
+            ${device.radios && device.radios.length ? this._radiosCard(device) : ""}
+            ${device.ssids && device.ssids.length ? this._ssidsCard(device) : ""}
+            ${device.stations && device.stations.length ? this._stationsCard(device) : ""}
+            ${device.vlans && device.vlans.length ? this._vlansCard(device) : ""}
+          </div>
+          <div>
+            <div class="card panel-card"><div class="section-title">Health</div>${healthTiles(device)}</div>
+            <div class="card panel-card"><div class="section-title">Device</div>${infoList(device)}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  _portFilterFn() {
+    switch (this._portFilter) {
+      case "up":
+        return (p) => p.up;
+      case "poe":
+        return (p) => p.poe && p.poe.delivering;
+      case "issues":
+        return (p) => p.enabled === false || p.errors;
+      default:
+        return null;
+    }
+  }
+
+  _faceplateCard(device) {
+    const selected = this._dialog && this._dialog.type === "port" ? this._dialog.port : null;
+    const ports = device.ports || [];
+    const up = ports.filter((p) => p.up).length;
+    return `
+      <div class="card panel-card">
+        <div class="row" style="margin-bottom:10px"><div class="section-title grow" style="margin:0">Front panel</div>
+          <span class="muted num" style="font-size:13px">${up} of ${ports.length} connected · select a port to manage it</span></div>
+        <div class="fp-scroll">${renderFaceplate(device, { selected, filter: this._portFilterFn() })}</div>
+        ${renderLegend()}
+      </div>`;
+  }
+
+  _portsCard(device) {
+    const filter = this._portFilterFn();
+    const ports = [...device.ports].sort((a, b) => natCompare(a.name, b.name));
+    const shown = filter ? ports.filter(filter) : ports.filter((p) => p.present !== false);
+    const names = clientNames(this._data);
+    const filters = [
+      ["all", "All"],
+      ["up", `Connected (${ports.filter((p) => p.up).length})`],
+      ...(device.features && device.features.poe ? [["poe", `PoE (${ports.filter((p) => p.poe && p.poe.delivering).length})`]] : []),
+      ["issues", "Disabled / errors"],
+    ];
+    return `
+      <div class="card panel-card">
+        <div class="section-title">Ports</div>
+        <div class="filters" role="group" aria-label="Filter ports">
+          ${filters.map(([key, label]) => `<button class="filter" data-action="port-filter" data-filter="${key}" aria-pressed="${this._portFilter === key}">${esc(label)}</button>`).join("")}
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Port</th><th>Status</th><th class="hide-sm">Connected to</th>${device.features && device.features.poe ? "<th>PoE</th>" : ""}<th class="hide-sm">Traffic</th></tr></thead>
+          <tbody>${
+            shown.length
+              ? shown
+                  .map((p) => {
+                    const neighbor = p.neighbor && p.neighbor.name ? p.neighbor.name : p.clients && p.clients.length === 1 ? names.get(p.clients[0].mac) || p.clients[0].mac : p.clients && p.clients.length ? `${p.clients.length} devices` : "";
+                    return `<tr class="click" data-port="${esc(p.name)}" tabindex="0">
+                      <td><strong>${esc(p.name)}</strong>${p.label ? ` <span class="muted">${esc(p.label)}</span>` : ""}${p.uplink ? ` <span class="chip">uplink</span>` : ""}</td>
+                      <td><span class="row"><span class="dot ${p.up ? "ok" : ""}" style="${p.up ? "" : "opacity:.5"}"></span>${esc(portStatusText(p))}</span></td>
+                      <td class="hide-sm ellipsis" style="max-width:220px">${esc(neighbor)}</td>
+                      ${device.features && device.features.poe ? `<td class="num">${p.poe ? (p.poe.delivering ? `${esc(p.poe.power_w ?? 0)} W` : `<span class="muted">${p.poe.enabled === false ? "Off" : "–"}</span>`) : ""}</td>` : ""}
+                      <td class="hide-sm num muted">${p.up && p.rx_kbps != null ? `↓ ${fmtRate(p.rx_kbps)} ↑ ${fmtRate(p.tx_kbps)}` : ""}</td>
+                    </tr>`;
+                  })
+                  .join("")
+              : `<tr><td colspan="5" class="muted">No ports match.</td></tr>`
+          }</tbody></table></div>
+      </div>`;
+  }
+
+  _radiosCard(device) {
+    return `<div class="card panel-card"><div class="section-title">Radios</div><div class="radios">${device.radios
+      .map(
+        (r) => `<div class="radio">
+          <div class="row" style="margin-bottom:8px"><span class="dot ${r.up ? "ok" : "err"}"></span><strong class="grow">${esc(r.band || r.name)}</strong><span class="muted">${esc(r.name)}</span></div>
+          <dl class="kv">
+            <dt>Channel</dt><dd class="num">${esc(r.channel ?? "–")}${r.width ? ` <span class="muted">${esc(r.width)} MHz</span>` : ""}</dd>
+            <dt>Power</dt><dd class="num">${r.tx_power != null ? `${esc(r.tx_power)} dBm` : "–"}</dd>
+            <dt>Clients</dt><dd class="num">${esc(r.clients)}</dd>
+            ${r.utilization != null ? `<dt>Busy</dt><dd><div class="row"><div class="meter grow"><i class="${meterClass(r.utilization, 50, 75)}" style="width:${Math.min(100, r.utilization)}%"></i></div><span class="num">${fmtPct(r.utilization)}</span></div></dd>` : ""}
+            ${r.noise != null ? `<dt>Noise</dt><dd class="num">${esc(r.noise)} dBm</dd>` : ""}
+            <dt>SSIDs</dt><dd>${r.ssids.length ? r.ssids.map((s) => `<span class="chip">${esc(s)}</span>`).join(" ") : '<span class="muted">none</span>'}</dd>
+          </dl></div>`,
+      )
+      .join("")}</div></div>`;
+  }
+
+  _ssidsCard(device) {
+    return `<div class="card panel-card"><div class="section-title">Wi-Fi networks</div><div class="table-wrap"><table>
+      <thead><tr><th>SSID</th><th>Status</th><th>Clients</th></tr></thead>
+      <tbody>${device.ssids
+        .map(
+          (s) => `<tr><td><strong>${esc(s.name)}</strong>${s.hidden ? ' <span class="chip">hidden</span>' : ""}</td>
+            <td><span class="row"><span class="dot ${s.broadcasting ? "ok" : ""}"></span>${s.broadcasting ? "Broadcasting" : "Off"}</span></td>
+            <td class="num">${esc(s.clients)}</td></tr>`,
+        )
+        .join("")}</tbody></table></div>
+      <div class="muted" style="font-size:12px;margin-top:10px">Add networks or change passwords in the integration's options (Settings → Devices &amp; services → Aerohive → Configure).</div></div>`;
+  }
+
+  _stationsCard(device) {
+    const rows = [...device.stations].sort((a, b) => (b.signal ?? -999) - (a.signal ?? -999));
+    return `<div class="card panel-card"><div class="section-title">Wi-Fi clients (${rows.length})</div><div class="table-wrap"><table>
+      <thead><tr><th>Client</th><th>SSID</th><th>Signal</th><th class="hide-sm">Rate</th></tr></thead>
+      <tbody>${rows
+        .map(
+          (s) => `<tr><td>${s.hostname ? `${esc(s.hostname)}<br>` : ""}<span class="mono muted">${esc(s.mac)}</span>${s.ip ? ` <span class="muted">${esc(s.ip)}</span>` : ""}</td>
+            <td>${esc(s.ssid || "")}</td><td class="num">${signalBars(s.signal)}${s.signal != null ? `${esc(s.signal)} dBm` : "–"}</td>
+            <td class="hide-sm num muted">${esc(s.tx_rate || "")}</td></tr>`,
+        )
+        .join("")}</tbody></table></div></div>`;
+  }
+
+  _vlansCard(device) {
+    return `<div class="card panel-card"><div class="section-title">VLANs</div><div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>ID</th><th>IP address</th><th>Ports</th></tr></thead>
+      <tbody>${device.vlans
+        .map((v) => `<tr><td><strong>${esc(v.name)}</strong></td><td class="num">${esc(v.vid)}</td><td class="mono">${v.ip ? `${esc(v.ip)}/${esc(v.prefix)}` : '<span class="muted">–</span>'}</td><td class="num">${esc(v.active ?? "–")} <span class="muted">/ ${esc(v.total ?? "–")} active</span></td></tr>`)
+        .join("")}</tbody></table></div></div>`;
+  }
+
+  /* ---------------- clients ---------------- */
+
+  _allClients() {
+    const devices = this._data.devices;
+    const wirelessMacs = new Set();
+    const names = clientNames(this._data);
+    const rows = [];
+    for (const d of devices) {
+      for (const s of d.stations || []) {
+        wirelessMacs.add(s.mac);
+        rows.push({ mac: s.mac, name: s.hostname, ip: s.ip, where: `${d.name} · ${s.ssid || s.radio || "Wi-Fi"}`, signal: s.signal, kind: "wifi", device: d.entry_id });
+      }
+    }
+    for (const d of devices) {
+      for (const p of d.ports || []) {
+        if (p.uplink) continue;
+        for (const c of p.clients || []) {
+          if (wirelessMacs.has(c.mac)) continue;
+          rows.push({ mac: c.mac, name: names.get(c.mac) || (p.neighbor && p.clients.length === 1 ? p.neighbor.name : null), ip: null, where: `${d.name} · port ${p.name}${p.label ? ` (${p.label})` : ""}`, vlan: c.vlan, kind: "wired", device: d.entry_id, port: p.name });
+        }
+      }
+    }
+    return rows;
+  }
+
+  _clientRows() {
+    const query = this._search.trim().toLowerCase();
+    const rows = this._allClients().filter((r) => !query || [r.mac, r.name, r.ip, r.where].some((v) => v && String(v).toLowerCase().includes(query)));
+    if (!rows.length) return `<tr><td colspan="4" class="muted">${query ? "No clients match." : "No clients."}</td></tr>`;
+    return rows
+      .sort((a, b) => (a.name || "~" + a.mac).localeCompare(b.name || "~" + b.mac))
+      .map(
+        (r) => `<tr class="${r.port ? "click" : ""}" ${r.port ? `data-client-port="${esc(r.port)}" data-client-device="${esc(r.device)}" tabindex="0"` : ""}>
+          <td>${r.name ? `${esc(r.name)}<br>` : ""}<span class="mono muted">${esc(r.mac)}</span></td>
+          <td><span class="chip">${r.kind === "wifi" ? `${icon("wifi")}Wi-Fi` : `${icon("switch")}Wired`}</span></td>
+          <td>${esc(r.where)}</td>
+          <td class="num hide-sm">${r.kind === "wifi" ? `${signalBars(r.signal)}${r.signal != null ? `${esc(r.signal)} dBm` : ""}` : r.vlan != null ? `VLAN ${esc(r.vlan)}` : ""}${r.ip ? `<br><span class="muted">${esc(r.ip)}</span>` : ""}</td>
+        </tr>`,
+      )
+      .join("");
+  }
+
+  _clientsView() {
+    const total = this._allClients().length;
+    return `
+      <label class="search">${icon("search")}<input id="client-search" type="search" placeholder="Search ${total} clients by name, MAC, IP or port" value="${esc(this._search)}" aria-label="Search clients"></label>
+      <div class="card"><div class="table-wrap"><table>
+        <thead><tr><th>Client</th><th>Type</th><th>Connected to</th><th class="hide-sm">Details</th></tr></thead>
+        <tbody id="client-results">${this._clientRows()}</tbody>
+      </table></div></div>`;
+  }
+
+  /* ---------------- events ---------------- */
+
+  _onClick(ev) {
+    const clientRow = ev.target.closest("[data-client-port]");
+    if (clientRow) {
+      this._navigate(clientRow.dataset.clientDevice);
+      this._openDialog({ type: "port", device: clientRow.dataset.clientDevice, port: clientRow.dataset.clientPort });
+      return;
+    }
+    super._onClick(ev);
+  }
+
+  _onAction(action, el) {
+    if (action === "tab") {
+      this._navigate(el.dataset.tab === "clients" ? "clients" : "");
+    } else if (action === "open") {
+      this._navigate(el.dataset.open);
+    } else if (action === "home") {
+      this._navigate("");
+    } else if (action === "port-filter") {
+      this._portFilter = el.dataset.filter;
+      this._render();
+    }
+  }
+}
+
+/* Keyboard: Enter/Space on table rows opens the port. */
+function rowKeyboard(root) {
+  root.addEventListener("keydown", (ev) => {
+    if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches && ev.target.matches("tr[tabindex]")) {
+      ev.preventDefault();
+      ev.target.click();
+    }
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Dashboard cards                                                      */
+/* ------------------------------------------------------------------ */
+
+const CARD_CSS = `
+:host { display: block; }
+ha-card, .ha-card { display: block; padding: 16px; overflow: hidden; }
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.head .avatar { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: color-mix(in srgb, var(--ah-accent) 14%, transparent); color: var(--ah-accent); flex: none; }
+.head .avatar.off { background: color-mix(in srgb, var(--ah-text) 10%, transparent); color: var(--ah-muted); }
+.name { font-size: 16px; font-weight: 500; }
+.sub { font-size: 13px; color: var(--ah-muted); }
+.fp-scroll { overflow-x: auto; padding: 8px 6px 4px; margin: -8px -6px 0; }
+.foot { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; font-size: 13px; color: var(--ah-muted); }
+.foot b { color: var(--ah-text); font-weight: 500; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.dev-list { display: grid; gap: 2px; }
+.dev { display: flex; align-items: center; gap: 12px; padding: 8px; margin: 0 -8px; border-radius: 10px; border: 0; background: transparent; text-align: left; cursor: pointer; width: calc(100% + 16px); }
+.dev:hover { background: color-mix(in srgb, var(--ah-text) 6%, transparent); }
+.dev .avatar { width: 32px; height: 32px; }
+.totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.totals div { padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--ah-text) 5%, transparent); }
+.totals b { display: block; font-size: 20px; font-weight: 500; }
+.totals span { font-size: 12px; color: var(--ah-muted); }
+.totals .bad b { color: var(--ah-err); }
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 12px 16px; }
+.stat-label { font-size: 12px; color: var(--ah-muted); }
+.stat-value { font-size: 17px; font-weight: 500; margin-bottom: 4px; }
+`;
+
+class AerohiveCardBase extends AerohiveBase {
+  constructor() {
+    super();
+    this.shadowRoot.innerHTML = `<style>${BASE_CSS}${CARD_CSS}</style><div id="card"></div><div id="dialog"></div>`;
+    rowKeyboard(this.shadowRoot);
+  }
+
+  setConfig(config) {
+    this._config = { ...config };
+    this._render();
+  }
+
+  getCardSize() {
+    return 4;
+  }
+
+  _wrap(inner) {
+    const tag = customElements.get("ha-card") ? "ha-card" : "div";
+    return `<${tag} class="ha-card ${tag === "div" ? "card" : ""}">${inner}</${tag}>`;
+  }
+
+  _device() {
+    return findDevice(this._data, this._config && this._config.device);
+  }
+
+  _defaultDevice() {
+    const device = this._device();
+    return device ? device.entry_id : null;
+  }
+
+  _render() {
+    const host = this.shadowRoot.getElementById("card");
+    if (!host || !this._config) return;
+    let inner;
+    if (this._store && this._store.error) inner = `<div class="empty">Can't load network data: ${esc(this._store.error)}</div>`;
+    else if (!this._data) inner = `<div class="empty">Loading…</div>`;
+    else inner = this._cardHtml();
+    host.innerHTML = this._wrap(inner);
+    this._renderDialogInto(this.shadowRoot.getElementById("dialog"));
+  }
+
+  _openPanel(entryId) {
+    const url = `/${PANEL_PATH}${entryId ? `/${entryId}` : ""}`;
+    window.history.pushState(null, "", url);
+    window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
+  }
+
+  _onAction(action, el) {
+    if (action === "open-panel") this._openPanel(el.dataset.open);
+  }
+
+  _missing() {
+    return `<div class="empty">${this._config.device ? `Device “${esc(this._config.device)}” not found.` : "Choose a device in the card settings."}</div>`;
+  }
+
+  _head(device) {
+    return `<div class="head" data-device="${esc(device.entry_id)}">
+      <span class="avatar ${device.online ? "" : "off"}">${deviceIcon(device)}</span>
+      <div class="grow"><div class="name ellipsis">${esc(this._config.title || device.name)}</div>
+        <div class="sub ellipsis">${esc(deviceSummary(device))}</div></div>
+      <button class="icon-btn" data-action="open-panel" data-open="${esc(device.entry_id)}" aria-label="Open in the Network panel" title="Open in the Network panel">${icon("back", "flip")}</button>
+    </div>`;
+  }
+}
+
+const FLIP_CSS = `.flip { transform: scaleX(-1); }`;
+
+class AerohiveSwitchCard extends AerohiveCardBase {
+  static getStubConfig(hass) {
+    const store = hass ? stores.get(hass.connection) : null;
+    const device = store && store.data ? store.data.devices.find((d) => d.kind === "switch") : null;
+    return { device: device ? device.name : "" };
+  }
+
+  static getConfigElement() {
+    return document.createElement("aerohive-card-editor");
+  }
+
+  getCardSize() {
+    return 3;
+  }
+
+  /* Sections dashboards: a faceplate needs the full width. */
+  getGridOptions() {
+    return { columns: "full", min_columns: 6 };
+  }
+
+  _cardHtml() {
+    const device = this._device();
+    if (!device) return this._missing();
+    const selected = this._dialog && this._dialog.type === "port" ? this._dialog.port : null;
+    const cfg = device.config || {};
+    const foot = [
+      device.poe && device.poe.budget_w ? `PoE <b class="num">${esc(device.poe.used_w ?? 0)} / ${esc(device.poe.budget_w)} W</b>` : "",
+      device.temperature != null ? `<b class="num">${esc(device.temperature)} °C</b>` : "",
+      device.wired_clients ? `<b class="num">${esc(device.wired_clients)}</b> wired clients` : "",
+      cfg.last_backup ? `Backup ${esc(fmtAgo(cfg.last_backup))}` : "",
+    ].filter(Boolean);
+    return `<style>${FLIP_CSS}</style>${this._head(device)}
+      <div class="fp-scroll" data-device="${esc(device.entry_id)}">${renderFaceplate(device, { selected })}</div>
+      ${this._config.legend ? renderLegend() : ""}
+      ${foot.length ? `<div class="foot">${foot.map((f) => `<span>${f}</span>`).join("")}</div>` : ""}
+      ${(device.problems || []).length || !device.online ? `<div class="chips">${problemChips(device)}</div>` : ""}`;
+  }
+}
+
+class AerohiveDeviceCard extends AerohiveCardBase {
+  static getStubConfig(hass) {
+    const store = hass ? stores.get(hass.connection) : null;
+    const device = store && store.data ? store.data.devices[0] : null;
+    return { device: device ? device.name : "" };
+  }
+
+  static getConfigElement() {
+    return document.createElement("aerohive-card-editor");
+  }
+
+  _cardHtml() {
+    const device = this._device();
+    if (!device) return this._missing();
+    const cfg = device.config || {};
+    const actions = this._config.actions !== false;
+    return `<style>${FLIP_CSS}</style>${this._head(device)}
+      ${(device.problems || []).length || !device.online ? `<div class="chips" style="margin:0 0 12px">${problemChips(device, 4)}</div>` : ""}
+      ${healthTiles(device)}
+      ${device.radios && device.radios.length ? `<div class="foot">${device.radios.map((r) => `<span><span class="dot ${r.up ? "ok" : "err"}" style="display:inline-block;margin-right:4px"></span>${esc(r.band || r.name)} ch <b class="num">${esc(r.channel ?? "–")}</b> · <b class="num">${esc(r.clients)}</b> clients</span>`).join("")}</div>` : ""}
+      <div class="foot"><span>${cfg.last_backup ? `Last backup <b>${esc(fmtAgo(cfg.last_backup))}</b>` : "No backup yet"}</span></div>
+      ${
+        actions
+          ? `<div class="actions" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px" data-device="${esc(device.entry_id)}">
+              ${cfg.unsaved ? `<button class="btn attention" data-action="save" ${this._isBusy(`save:${device.entry_id}`) ? "disabled" : ""}>${icon("save")}Save configuration</button>` : ""}
+              ${cfg.changed_after_reboot ? `<button class="btn primary" data-action="restore">${icon("restore")}Restore last backup</button>` : ""}
+              <button class="btn danger" data-action="reboot" ${device.online ? "" : "disabled"}>${icon("reboot")}Reboot</button>
+            </div>`
+          : ""
+      }`;
+  }
+}
+
+class AerohiveNetworkCard extends AerohiveCardBase {
+  static getStubConfig() {
+    return {};
+  }
+
+  _cardHtml() {
+    const devices = this._data.devices || [];
+    const online = devices.filter((d) => d.online).length;
+    const wireless = devices.reduce((n, d) => n + (d.stations || []).length, 0);
+    const wired = devices.reduce((n, d) => n + (d.wired_clients || 0), 0);
+    const problems = devices.reduce((n, d) => n + (d.online ? (d.problems || []).length : 1), 0);
+    return `<style>${FLIP_CSS}</style>
+      <div class="head"><span class="avatar">${icon("switch")}</span><div class="grow"><div class="name">${esc(this._config.title || "Network")}</div>
+        <div class="sub">${online} of ${devices.length} devices online</div></div>
+        <button class="icon-btn" data-action="open-panel" data-open="" aria-label="Open the Network panel" title="Open the Network panel">${icon("back", "flip")}</button></div>
+      <div class="totals">
+        <div><b class="num">${wireless}</b><span>Wi-Fi clients</span></div>
+        <div><b class="num">${wired}</b><span>Wired clients</span></div>
+        <div class="${problems ? "bad" : ""}"><b class="num">${problems}</b><span>Problems</span></div>
+      </div>
+      <div class="dev-list">${devices
+        .map(
+          (d) => `<button class="dev" data-action="open-panel" data-open="${esc(d.entry_id)}">
+            <span class="avatar ${d.online ? "" : "off"}" style="display:grid;place-items:center;border-radius:9px;background:color-mix(in srgb, var(--ah-accent) 12%, transparent);color:var(--ah-accent)">${deviceIcon(d)}</span>
+            <span class="grow"><span class="name ellipsis" style="display:block;font-size:14px">${esc(d.name)}</span><span class="sub ellipsis" style="display:block">${esc(deviceSummary(d))}</span></span>
+            <span class="dot ${d.online ? ((d.problems || []).length ? "warn" : "ok") : "err"}"></span>
+          </button>`,
+        )
+        .join("")}</div>`;
+  }
+}
+
+/* Card editor: pick the device (and a title). */
+class AerohiveCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = { ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (!this._unsub) {
+      this._unsub = getStore(hass).subscribe((data) => {
+        this._data = data;
+        this._render();
+      });
+    }
+  }
+
+  disconnectedCallback() {
+    if (this._unsub) this._unsub();
+    this._unsub = null;
+  }
+
+  _render() {
+    if (!this._config) return;
+    if (!this.shadowRoot) {
+      this.attachShadow({ mode: "open" });
+      this.shadowRoot.addEventListener("change", (ev) => {
+        const key = ev.target.dataset.key;
+        if (!key) return;
+        const value = ev.target.type === "checkbox" ? ev.target.checked : ev.target.value;
+        this._config = { ...this._config, [key]: value };
+        if (value === "" || value === undefined) delete this._config[key];
+        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true }));
+      });
+    }
+    const devices = (this._data && this._data.devices) || [];
+    this.shadowRoot.innerHTML = `<style>${BASE_CSS}
+      label { display: grid; gap: 4px; margin-bottom: 12px; font-size: 13px; color: var(--ah-muted); }
+      select, input[type=text] { height: 40px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--ah-line); background: var(--ah-card); color: var(--ah-text); font: inherit; }
+      .check { display: flex; align-items: center; gap: 8px; }</style>
+      <label>Device<select data-key="device">
+        <option value="">Choose…</option>
+        ${devices.map((d) => `<option value="${esc(d.name)}" ${this._config.device === d.name ? "selected" : ""}>${esc(d.name)} (${esc(d.model || d.kind)})</option>`).join("")}
+      </select></label>
+      <label>Title (optional)<input type="text" data-key="title" value="${esc(this._config.title || "")}"></label>
+      <label class="check"><input type="checkbox" data-key="legend" ${this._config.legend ? "checked" : ""}>Show colour legend (switch card)</label>`;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Registration                                                         */
+/* ------------------------------------------------------------------ */
+
+const ELEMENTS = {
+  "aerohive-network-panel": AerohiveNetworkPanel,
+  "aerohive-switch-card": AerohiveSwitchCard,
+  "aerohive-device-card": AerohiveDeviceCard,
+  "aerohive-network-card": AerohiveNetworkCard,
+  "aerohive-card-editor": AerohiveCardEditor,
+};
+for (const [tag, cls] of Object.entries(ELEMENTS)) {
+  if (!customElements.get(tag)) customElements.define(tag, cls);
+}
+
+window.customCards = window.customCards || [];
+for (const card of [
+  { type: "aerohive-switch-card", name: "Aerohive switch", description: "Switch faceplate with live port status, PoE and port controls." },
+  { type: "aerohive-device-card", name: "Aerohive device", description: "Health, configuration status and actions for one access point, router or switch." },
+  { type: "aerohive-network-card", name: "Aerohive network", description: "Every Aerohive / Extreme Networks device at a glance." },
+]) {
+  if (!window.customCards.some((c) => c.type === card.type)) window.customCards.push({ ...card, preview: true, documentationURL: "https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/blob/main/docs/dashboard.md" });
+}
