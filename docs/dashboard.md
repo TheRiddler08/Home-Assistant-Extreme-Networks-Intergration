@@ -33,14 +33,15 @@ Select a port, on the front panel or in the table, to manage it:
 
 ![Port dialog](images/panel-port-dialog.png)
 
-- **Port on / off.** Turning off an uplink asks first, because it can cut Home Assistant off
-  from the switch.
+- **Port on / off.** The switch flips at once and the command is sent straight away; if
+  you change your mind, flip it back and the latest choice is sent. Turning off an uplink
+  asks first, because it can cut Home Assistant off from the switch.
 - **PoE on / off** and **Restart PoE device** (power-cycles a camera or access point).
 - **Port name** (ExtremeXOS display string, up to 15 characters, no spaces).
 - The LLDP neighbour with its address, PoE draw and class, traffic, and the devices learned
   on the port, named when an access point knows their hostname.
 
-Changes are saved on the switch straight away, like every change made from Home Assistant.
+Changes are saved on the switch a couple of seconds after the last one, in the background.
 
 ### Access points
 
@@ -52,7 +53,9 @@ the client list with signal strength. To add networks or change passwords, use t
 
 ![Configuration alert](images/panel-alert.png)
 
-Every device page has **Save configuration**, **Back up now** and **Reboot**. Alerts from
+Every device page has **Refresh** (read everything from the device now), **Save
+configuration**, **Back up now** and **Reboot**. The refresh button in the top bar refreshes
+every device. Alerts from
 [power-loss protection](backups.md) show at the top with what to do:
 
 - **Configuration changed after a reboot:** *Restore last backup* sends the last known-good
@@ -91,6 +94,8 @@ legend: true          # optional: colour legend under the ports
 title: Garage switch  # optional
 ```
 
+Each card's header also has a refresh button.
+
 ### Device card
 
 Health, radios, last backup and problems for one device, with Save (when there are unsaved
@@ -118,7 +123,7 @@ The arrow in each card's header opens that device in the Network panel.
 - **Who can use it:** the panel is visible to every user, as the integration's entities are.
   To hide it for a user, long-press the sidebar title and remove *Network*.
 - **Live updates:** the panel and cards update after each poll (the scan interval in the
-  integration's options), and right after a change.
+  integration's options), right after a change, and when you press Refresh.
 - **Browser cache:** after updating the integration, reload the page if the panel looks
   outdated. The module URL includes the version, so this is rarely needed.
 - **Entities:** the panel doesn't replace them. Automations, history and other dashboard

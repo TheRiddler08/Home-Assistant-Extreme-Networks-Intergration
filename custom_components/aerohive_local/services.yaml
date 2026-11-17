@@ -119,6 +119,13 @@ set_port:
       selector:
         boolean:
 
+refresh:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: aerohive_local
+
 set_poe:
   fields:
     device_id:

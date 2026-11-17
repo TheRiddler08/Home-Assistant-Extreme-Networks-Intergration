@@ -2,7 +2,7 @@
 
 - ``aerohive_local/snapshot``: one snapshot of every device.
 - ``aerohive_local/subscribe``: a snapshot now, and again whenever a device
-  updates (coalesced, at most one per second).
+  updates (coalesced, at most four per second).
 
 Changes are made through the integration's actions (``aerohive_local.set_port``
 and others), so the same validation and safety checks apply as everywhere else.
@@ -22,7 +22,7 @@ from .const import DOMAIN
 from .snapshot import network_snapshot
 
 SIGNAL_SNAPSHOT = f"{DOMAIN}_snapshot_changed"
-COALESCE_SECONDS = 1.0
+COALESCE_SECONDS = 0.25
 
 
 @callback

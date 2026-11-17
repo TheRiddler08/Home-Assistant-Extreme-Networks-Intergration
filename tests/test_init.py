@@ -97,6 +97,9 @@ class FakeClient:
                 raise AerohiveCommandError(command, error)
         return outputs
 
+    async def async_set_dialect(self, dialect: str) -> None:
+        self.dialect = dialect
+
     async def reboot(self, command: str = "reboot", *, save: bool = False) -> None:
         self.commands.append(f"{command} (save)" if save else command)
 
@@ -112,6 +115,8 @@ def fake_client(tmp_path):
         patch("custom_components.aerohive_local.entity.CONTROL_DEBOUNCE_SECONDS", 0.05),
         # Each test gets its own backup folder (an absolute path wins over the config dir).
         patch("custom_components.aerohive_local.coordinator.BACKUP_ROOT", str(tmp_path / "backups")),
+        # Save before the action returns (the background save has its own test).
+        patch("custom_components.aerohive_local.coordinator.SAVE_DELAY_SECONDS", 0),
     ):
         yield
 

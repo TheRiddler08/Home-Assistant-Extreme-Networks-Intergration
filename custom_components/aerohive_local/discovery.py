@@ -45,6 +45,17 @@ AEROHIVE_OUIS: frozenset[str] = frozenset(
         "f09ce9",  # Aerohive Networks
     }
 )
+_EXTREME_OUIS = frozenset({"000496", "00e02b", "809562", "b87cf2", "bcf310"})
+
+
+def oui_vendor(mac: str | None) -> str | None:
+    """'Extreme Networks' / 'Aerohive' for a known MAC prefix."""
+    if not is_aerohive_mac(mac):
+        return None
+    prefix = re.sub(r"[^0-9a-fA-F]", "", mac or "").lower()[:6]
+    return "Extreme Networks" if prefix in _EXTREME_OUIS else "Aerohive"
+
+
 HOSTNAME_RE = re.compile(r"^ah-[0-9a-f]{6}", re.IGNORECASE)
 
 SCAN_PORT = 22
@@ -60,6 +71,11 @@ class ScanResult:
     banner: str | None = None
     mac: str | None = None
     hostname: str | None = None
+    # Filled in from devices already set up (LLDP neighbours, MAC tables, Wi-Fi clients):
+    name: str | None = None  # LLDP system name
+    model: str | None = None
+    seen_on: str | None = None  # "X450e-48p port 12"
+    configured: bool = False
 
     @property
     def mac_match(self) -> bool:
@@ -67,22 +83,37 @@ class ScanResult:
 
     @property
     def hostname_match(self) -> bool:
-        return bool(self.hostname and HOSTNAME_RE.match(self.hostname))
+        return any(n and HOSTNAME_RE.match(n) for n in (self.hostname, self.name))
 
     @property
     def likely_aerohive(self) -> bool:
-        return self.mac_match or self.hostname_match
+        return self.mac_match or self.hostname_match or bool(self.model and re.search(r"aerohive|extreme", self.model, re.I))
+
+    @property
+    def ssh_software(self) -> str | None:
+        """'SSH-2.0-OpenSSH_7.4' -> 'OpenSSH_7.4'."""
+        if not self.banner or not self.banner.startswith("SSH-"):
+            return None
+        return self.banner.split("-", 2)[-1].strip() or None
 
     @property
     def label(self) -> str:
+        """'192.168.1.10 · AH-7c0680 · AP460C · bc:f3:10:7c:06:80 (Aerohive) · on X450e-48p port 2'."""
         parts = [self.host]
-        if self.hostname:
-            parts.append(self.hostname)
-        if self.mac_match:
-            parts.append("Aerohive/Extreme MAC")
-        elif self.mac:
-            parts.append(self.mac)
-        return " – ".join(parts)
+        name = self.name or self.hostname
+        if name:
+            parts.append(name)
+        if self.model:
+            parts.append(self.model)
+        if self.mac:
+            vendor = oui_vendor(self.mac)
+            parts.append(f"{self.mac} ({vendor})" if vendor else self.mac)
+        if self.seen_on:
+            parts.append(f"on {self.seen_on}")
+        if not self.mac and not name and self.ssh_software:
+            parts.append(self.ssh_software)
+        label = " · ".join(parts)
+        return f"{label} (already added)" if self.configured else label
 
 
 def is_aerohive_mac(mac: str | None) -> bool:

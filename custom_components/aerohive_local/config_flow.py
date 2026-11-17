@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -49,9 +50,10 @@ from .const import (
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
 )
-from .discovery import ScanResult, async_scan, narrow_network, scan_targets
+from .discovery import ScanResult, async_scan, narrow_network, oui_vendor, scan_targets
 from .entity import radio_label
 from .parsers import (
+    dialect_from_version,
     normalize_mac,
     parse_exos_show_switch,
     parse_show_interface,
@@ -91,11 +93,73 @@ def _user_schema(defaults: Mapping[str, Any]) -> vol.Schema:
     )
 
 
+def _short_model(neighbor: Any) -> str | None:
+    """A short model name from an LLDP neighbour ('Aerohive SR2208P', 'EC-200', 'ExtremeXOS 12.6.3.4')."""
+    raw = getattr(neighbor, "raw", {}) or {}
+    if raw.get("med_model_name"):
+        return " ".join(v for v in (raw.get("med_manufacturer_name"), raw["med_model_name"]) if v)
+    text = (getattr(neighbor, "system_description", None) or "").strip()
+    if not text:
+        return None
+    if m := re.search(r"ExtremeXOS(?: \(\S+\))? version (\S+)", text):
+        return f"ExtremeXOS {m.group(1)}"
+    return re.split(r"[,:;]", text)[0][:40].strip() or None
+
+
+def network_knowledge(hass: HomeAssistant) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
+    """What the devices already set up know about others: (by IP, by MAC) -> name/model/seen_on.
+
+    From LLDP neighbours, switch MAC tables and access point client lists.
+    """
+    from .coordinator import AerohiveCoordinator  # noqa: PLC0415 - avoid an import cycle
+
+    by_ip: dict[str, dict[str, str]] = {}
+    by_mac: dict[str, dict[str, str]] = {}
+
+    def add(target: dict[str, dict[str, str]], key: str | None, **info: str | None) -> None:
+        if not key:
+            return
+        entry = target.setdefault(key, {})
+        for k, v in info.items():
+            if v and k not in entry:
+                entry[k] = v
+
+    for config_entry in hass.config_entries.async_entries(DOMAIN):
+        coordinator = getattr(config_entry, "runtime_data", None)
+        if not isinstance(coordinator, AerohiveCoordinator) or coordinator.data is None:
+            continue
+        data = coordinator.data
+        device = data.hostname or config_entry.title
+        for port, neighbor in data.lldp.items():
+            info = {"name": neighbor.system_name, "model": _short_model(neighbor), "seen_on": f"{device} port {port}"}
+            add(by_ip, neighbor.management_address, **info)
+            add(by_mac, normalize_mac(neighbor.chassis_id), **info)
+        uplinks = data.uplink_ports()
+        for fdb in data.fdb:
+            if fdb.port and fdb.port not in uplinks:
+                add(by_mac, fdb.mac, seen_on=f"{device} port {fdb.port}")
+        for station in data.stations.values():
+            ssid = data.station_ssid(station)
+            add(by_mac, station.mac, name=station.hostname, seen_on=f"{device} Wi-Fi" + (f" ({ssid})" if ssid else ""))
+            add(by_ip, station.ip, name=station.hostname, seen_on=f"{device} Wi-Fi" + (f" ({ssid})" if ssid else ""))
+    return by_ip, by_mac
+
+
+def _details_text(**details: str | None) -> str:
+    """Markdown lines for the discovery form ('- **MAC address:** ...')."""
+    labels = {"model": "Model", "mac": "MAC address", "vendor": "Made by", "hostname": "Hostname", "seen_on": "Connected to"}
+    lines = [f"- **{labels[k]}:** {v}" for k, v in details.items() if v and k in labels]
+    return "\n".join(lines)
+
+
 async def _probe(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Connect, read identity, disconnect. Raises AerohiveError subclasses."""
     client = await async_create_client(hass, data)
     try:
-        version = parse_show_version(await client.run("show version"))
+        version_out = await client.run("show version")
+        if (detected := dialect_from_version(version_out)) and detected != client.dialect:
+            await client.async_set_dialect(detected)
+        version = parse_show_version(version_out)
         mac, platform = version.mac, version.platform
         if client.dialect == DIALECT_EXOS:
             info = parse_exos_show_switch(await client.run(commands.EXOS_SHOW_SWITCH))
@@ -132,6 +196,7 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
         self._scan_task: asyncio.Task[list[ScanResult]] | None = None
         self._found: list[ScanResult] = []
         self._discovered_host: str | None = None
+        self._details: str | None = None
 
     def _defaults(self, extra: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Pre-fill the username (and port) from an existing entry."""
@@ -224,6 +289,14 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             if result := await self._async_finish(user_input, errors):
                 return result
+        by_ip, by_mac = network_knowledge(self.hass)
+        configured = {e.data.get(CONF_HOST) for e in self._async_current_entries(include_ignore=False)}
+        for result in self._found:
+            known = {**by_mac.get(normalize_mac(result.mac) or "", {}), **by_ip.get(result.host, {})}
+            result.name = result.name or known.get("name")
+            result.model = result.model or known.get("model")
+            result.seen_on = result.seen_on or known.get("seen_on")
+            result.configured = result.host in configured
         likely = [r for r in self._found if r.likely_aerohive]
         options = [SelectOptionDict(value=r.host, label=r.label) for r in (likely or self._found)]
         if likely:
@@ -258,6 +331,11 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
         self._discovered_host = host
         name = discovery_info.hostname or host
         self.context["title_placeholders"] = {"name": name, "host": host}
+        known = network_knowledge(self.hass)[1].get(mac or "", {})
+        self._details = _details_text(
+            model=known.get("model"), mac=mac, vendor=oui_vendor(mac), hostname=discovery_info.hostname,
+            seen_on=known.get("seen_on"),
+        )
         return await self.async_step_discovery_confirm()
 
     async def async_step_integration_discovery(self, discovery_info: dict[str, Any]) -> ConfigFlowResult:
@@ -269,6 +347,9 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
         self._async_abort_entries_match({CONF_HOST: host})
         self._discovered_host = host
         self.context["title_placeholders"] = {"name": discovery_info.get("name") or host, "host": host}
+        self._details = _details_text(
+            model=discovery_info.get("model"), mac=mac, vendor=oui_vendor(mac), seen_on=discovery_info.get("seen_on"),
+        )
         return await self.async_step_discovery_confirm()
 
     async def async_step_discovery_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -284,6 +365,7 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={
                 "host": self._discovered_host,
                 "name": self.context.get("title_placeholders", {}).get("name", self._discovered_host),
+                "details": self._details or "",
             },
         )
 

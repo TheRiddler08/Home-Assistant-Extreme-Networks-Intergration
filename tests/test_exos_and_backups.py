@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 import os
 from typing import Any
@@ -548,3 +549,136 @@ async def test_websocket_snapshot_and_subscribe(hass: HomeAssistant, hass_ws_cli
     await hass.async_block_till_done()
     update = await client.receive_json()
     assert update["id"] == 2 and update["event"]["devices"]
+
+
+async def test_controls_show_new_state_instantly_and_save_once(hass: HomeAssistant, exos_entry: MockConfigEntry) -> None:
+    """A change shows at once, can be undone straight away, and a burst is saved once in the background."""
+    client = _client()
+    coordinator = exos_entry.runtime_data
+    port5 = _x(hass, "switch", "port_5")
+    assert hass.states.get(port5).state == "off"
+    client.commands.clear()
+    with (
+        patch("custom_components.aerohive_local.coordinator.SAVE_DELAY_SECONDS", 0.3),
+        patch.object(coordinator, "async_request_refresh") as refresh,
+    ):
+        await hass.services.async_call("switch", "turn_on", {"entity_id": port5}, blocking=True)
+        # No poll has run, yet the switch shows the state the device accepted.
+        assert hass.states.get(port5).state == "on"
+        assert coordinator.data.port_enabled("5") is True
+        assert _config_cmds(client) == ["enable ports 5"]
+        # Turning it straight back off sends the command (it used to be skipped as "already off").
+        await hass.services.async_call("switch", "turn_off", {"entity_id": port5}, blocking=True)
+        assert hass.states.get(port5).state == "off"
+        assert _config_cmds(client) == ["enable ports 5", "disable ports 5"]
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=1))
+        await asyncio.sleep(0.5)
+        await hass.async_block_till_done()
+        assert _config_cmds(client) == ["enable ports 5", "disable ports 5", "save configuration"]
+        assert refresh.called
+
+    # A poll that was already running when a change was made doesn't undo it on screen.
+    original_run = client.run
+
+    async def run(command: str, **kwargs: Any) -> str:
+        if command == "show ports no-refresh":
+            coordinator._set_overrides({("port", "3"): False})  # noqa: SLF001 - user turns port 3 off mid-poll
+        return await original_run(command, **kwargs)
+
+    with patch.object(client, "run", run):
+        await coordinator.async_refresh()
+    assert coordinator.data.port_enabled("3") is False
+    # The next poll reads the device's real state again.
+    await coordinator.async_refresh()
+    assert coordinator.data.port_enabled("3") is True
+
+
+async def test_failed_background_save_is_reported_and_retried(hass: HomeAssistant, exos_entry: MockConfigEntry) -> None:
+    client = _client()
+    coordinator = exos_entry.runtime_data
+    client.responses["save configuration"] = "Error: Unable to save configuration."
+    with patch("custom_components.aerohive_local.coordinator.SAVE_DELAY_SECONDS", 0.05):
+        await hass.services.async_call("switch", "turn_on", {"entity_id": _x(hass, "switch", "port_5")}, blocking=True)
+        await asyncio.sleep(0.2)
+        await hass.async_block_till_done()
+        await coordinator.async_refresh()
+        assert coordinator.data.save_error and "Unable to save" in coordinator.data.save_error
+        client.responses["save configuration"] = ""
+        client.commands.clear()
+        await coordinator.async_refresh()  # retries the save
+        await asyncio.sleep(0.1)
+        await hass.async_block_till_done()
+    assert "save configuration" in client.commands
+    await coordinator.async_refresh()
+    assert coordinator.data.save_error is None
+
+
+async def test_refresh_now_reads_everything(hass: HomeAssistant, entry: MockConfigEntry, exos_entry: MockConfigEntry) -> None:  # noqa: F811
+    switch_client = _client()
+    switch_client.commands.clear()
+    await hass.services.async_call("button", "press", {"entity_id": _x(hass, "button", "refresh")}, blocking=True)
+    # Also the slow data (LLDP, health, VLANs) and the configuration, not just the fast poll.
+    for command in ("show switch", "show lldp neighbors", "show temperature", "show vlan", "show configuration"):
+        assert command in switch_client.commands, command
+    # The action without a device refreshes every device.
+    ap_client = FakeClient.instances[0]
+    ap_client.commands.clear()
+    switch_client.commands.clear()
+    await hass.services.async_call(DOMAIN, "refresh", {}, blocking=True)
+    assert "show version" in ap_client.commands and "show switch" in switch_client.commands
+    # A device that can't be reached says so, and the button stays usable to retry.
+    from custom_components.aerohive_local.client import AerohiveConnectionError
+
+    switch_client.fail_with = AerohiveConnectionError("unreachable")
+    with pytest.raises(HomeAssistantError, match="Could not read"):
+        await hass.services.async_call("button", "press", {"entity_id": _x(hass, "button", "refresh")}, blocking=True)
+    assert hass.states.get(_x(hass, "button", "refresh")).state != "unavailable"
+
+
+async def test_switch_with_unrecognised_prompt_is_still_a_switch(hass: HomeAssistant) -> None:
+    """The prompt decides the CLI first; if it fooled us, 'show version' sets it right."""
+    from custom_components.aerohive_local.snapshot import device_kind
+
+    original_init = FakeClient.__init__
+
+    def init(self, *args: Any, **kwargs: Any) -> None:
+        original_init(self, *args, **kwargs)
+        self.hostname = "X450e-48p"
+        self.dialect = "hiveos"  # e.g. a prompt that looked like an access point's
+        self.config_unsaved = False
+        self.responses = _exos_responses()
+
+    with patch.object(FakeClient, "__init__", init):
+        entry = MockConfigEntry(domain=DOMAIN, unique_id=EXOS_MAC, title="X450e-48p", minor_version=3, data=USER_INPUT)
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    data = entry.runtime_data.data
+    assert data.cli == "exos" and data.is_switch and device_kind(data) == "switch"
+    assert len(data.ports()) == 10
+    assert _x(hass, "switch", "port_5")
+
+
+def test_unrecognised_device_is_not_called_an_access_point() -> None:
+    from custom_components.aerohive_local.coordinator import AerohiveData
+    from custom_components.aerohive_local.snapshot import device_kind
+
+    assert device_kind(AerohiveData()) == "unknown"
+
+
+async def test_scan_shows_what_other_devices_know(hass: HomeAssistant, exos_entry: MockConfigEntry) -> None:
+    """Found devices are labelled with LLDP names and the switch port they're on."""
+    from custom_components.aerohive_local.discovery import ScanResult
+
+    from .test_discovery_and_switch import _scan_flow
+
+    found = [
+        ScanResult(host="192.168.9.73", banner="SSH-2.0-OpenSSH_5.2"),  # the AP behind port 2 (LLDP)
+        ScanResult(host="192.168.8.61", banner="SSH-2.0-dropbear", mac="b8:a4:4f:00:d3:de"),  # learned on port 4
+        ScanResult(host="192.168.9.65", banner="SSH-2.0-OpenSSH_5.2"),  # the switch itself, already added
+    ]
+    result = await _scan_flow(hass, found)
+    labels = {o["value"]: o["label"] for o in result["data_schema"].schema["host"].config["options"]}
+    assert labels["192.168.9.73"].startswith("192.168.9.73 · AH-7c0680") and "on X450e-48p port 2" in labels["192.168.9.73"]
+    assert "on X450e-48p port 4" in labels["192.168.8.61"] and "b8:a4:4f:00:d3:de" in labels["192.168.8.61"]
+    assert "(already added)" in labels["192.168.9.65"]

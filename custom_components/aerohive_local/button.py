@@ -27,6 +27,7 @@ async def async_setup_entry(
 
     def factory(data: AerohiveData) -> Iterable[tuple[str, Callable[[], Entity]]]:
         yield "reboot", lambda: AerohiveRebootButton(coordinator)
+        yield "refresh", lambda: AerohiveRefreshButton(coordinator)
         for key, icon, action in (
             ("save_config", "mdi:content-save", "async_save_config"),
             ("backup_config", "mdi:content-save-cog", "async_backup_config"),
@@ -84,3 +85,20 @@ class AerohiveActionButton(AerohiveEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         await getattr(self.coordinator, self._action)()
+
+
+class AerohiveRefreshButton(AerohiveEntity, ButtonEntity):
+    """Read everything from the device now (also LLDP, health and the configuration)."""
+
+    _attr_translation_key = "refresh"
+    _attr_icon = "mdi:refresh"
+
+    def __init__(self, coordinator: AerohiveCoordinator) -> None:
+        super().__init__(coordinator, "refresh")
+
+    @property
+    def available(self) -> bool:
+        return True  # also the way to retry right away when the device was unreachable
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_refresh_now()

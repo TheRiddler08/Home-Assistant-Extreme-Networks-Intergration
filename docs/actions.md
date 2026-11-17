@@ -80,6 +80,18 @@ data:
   enabled: false
 ```
 
+## `aerohive_local.refresh`
+
+Read everything from a device right away, including what's normally read every 15
+minutes (LLDP neighbours, temperature, fans, VLANs, the configuration). Leave out
+`device_id` to refresh every device.
+
+```yaml
+action: aerohive_local.refresh
+data:
+  device_id: <switch>    # optional
+```
+
 ## `aerohive_local.set_poe`
 
 Turn PoE on or off for one port (and save).

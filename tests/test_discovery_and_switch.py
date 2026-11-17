@@ -341,7 +341,10 @@ async def test_switch_entities(hass: HomeAssistant, switch_entry: MockConfigEntr
 async def test_switch_lldp_offers_unconfigured_ap(hass: HomeAssistant, switch_entry: MockConfigEntry) -> None:
     calls = switch_entry.discovery_calls  # type: ignore[attr-defined]
     assert len(calls) == 1
-    assert calls[0].kwargs["data"] == {CONF_HOST: "192.168.9.73", "mac": "80:95:62:11:22:00", "name": "AH-112200"}
+    assert calls[0].kwargs["data"] == {
+        CONF_HOST: "192.168.9.73", "mac": "80:95:62:11:22:00", "name": "AH-112200",
+        "model": None, "seen_on": "AH-Switch port 1/0/2",
+    }  # fmt: skip
 
 
 async def test_switch_poe_and_port_control(hass: HomeAssistant, switch_entry: MockConfigEntry) -> None:
@@ -400,11 +403,17 @@ async def test_integration_discovery_from_lldp(hass: HomeAssistant) -> None:
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": config_entries.SOURCE_INTEGRATION_DISCOVERY},
-        data={CONF_HOST: "192.168.9.73", "mac": "80:95:62:11:22:00", "name": "AH-112200"},
+        data={
+            CONF_HOST: "192.168.9.73", "mac": "80:95:62:11:22:00", "name": "AH-112200",
+            "model": "AP230", "seen_on": "AH-Switch port 1/0/2",
+        },  # fmt: skip
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "discovery_confirm"
     assert result["description_placeholders"]["name"] == "AH-112200"
+    details = result["description_placeholders"]["details"]
+    assert "**Model:** AP230" in details and "**MAC address:** 80:95:62:11:22:00" in details
+    assert "**Made by:** Extreme Networks" in details and "**Connected to:** AH-Switch port 1/0/2" in details
 
 
 async def test_config_flow_switch_uses_burned_in_mac(hass: HomeAssistant) -> None:

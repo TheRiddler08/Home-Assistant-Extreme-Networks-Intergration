@@ -237,6 +237,8 @@ const BASE_CSS = `
 }
 * { box-sizing: border-box; }
 .icon { width: 18px; height: 18px; flex: none; }
+.spin { animation: ah-spin 0.9s linear infinite; }
+@keyframes ah-spin { to { transform: rotate(360deg); } }
 button { font: inherit; color: inherit; }
 .muted { color: var(--ah-muted); }
 .num { font-variant-numeric: tabular-nums; }
@@ -527,6 +529,7 @@ function deviceIcon(device) {
 
 function deviceSummary(device) {
   if (!device.online) return "Offline";
+  if (device.kind === "unknown") return "Connected, but the device type wasn't recognised";
   if (device.kind === "switch" || device.kind === "router") {
     const ports = device.ports || [];
     const up = ports.filter((p) => p.up).length;
@@ -569,6 +572,7 @@ class AerohiveBase extends HTMLElement {
     this._unsubStore = null;
     this._dialog = null; // {type, ...}
     this._busy = new Set();
+    this._optimistic = new Map(); // "entry:port:field" -> {value, until}: what the user just chose
     this._toastTimer = null;
     this.shadowRoot.addEventListener("click", (ev) => this._onClick(ev));
     this.shadowRoot.addEventListener("change", (ev) => this._onChange(ev));
@@ -605,21 +609,55 @@ class AerohiveBase extends HTMLElement {
   _connectStore() {
     if (this._unsubStore) this._unsubStore();
     this._store = getStore(this._hass);
-    this._unsubStore = this._store.subscribe((data) => {
-      this._data = data;
-      this._onData();
-    });
+    this._unsubStore = this._store.subscribe((data) => this._onData(data));
   }
 
   _onHass() {}
 
-  _onData() {
+  _onData(data) {
     // A change only shows once the device has been read again: keep its control busy until then.
     if (this._held && this._held.size) {
       for (const key of this._held) this._busy.delete(key);
       this._held.clear();
     }
+    this._data = this._withOptimistic(data);
     this._render();
+  }
+
+  /* Show what the user just chose until the device reports it (or 15 s pass). */
+  _setOptimistic(device, port, field, value) {
+    this._optimistic.set(`${device.entry_id}\u0000${port}\u0000${field}`, { value, until: Date.now() + 15000 });
+    this._data = this._withOptimistic(this._store ? this._store.data : this._data);
+    this._render();
+  }
+
+  _clearOptimistic(device, port, field) {
+    this._optimistic.delete(`${device.entry_id}\u0000${port}\u0000${field}`);
+    this._data = this._withOptimistic(this._store ? this._store.data : this._data);
+    this._render();
+  }
+
+  _withOptimistic(data) {
+    if (!data || !this._optimistic.size) return data;
+    const now = Date.now();
+    const copy = { ...data, devices: data.devices.map((d) => ({ ...d, ports: (d.ports || []).map((p) => ({ ...p, poe: p.poe ? { ...p.poe } : p.poe })) })) };
+    for (const [key, entry] of [...this._optimistic]) {
+      const [entryId, portName, field] = key.split("\u0000");
+      const port = copy.devices.find((d) => d.entry_id === entryId)?.ports.find((p) => p.name === portName);
+      const real = port ? (field === "poe" ? port.poe && port.poe.enabled : port.enabled) : undefined;
+      if (!port || entry.until < now || real === entry.value) {
+        this._optimistic.delete(key);
+        continue;
+      }
+      if (field === "poe" && port.poe) {
+        port.poe.enabled = entry.value;
+        if (!entry.value) port.poe.delivering = false;
+      } else if (field === "port") {
+        port.enabled = entry.value;
+        if (!entry.value) port.up = false;
+      }
+    }
+    return copy;
   }
 
   /* Rendering keeps an input that has focus (e.g. renaming a port) intact. */
@@ -744,13 +782,13 @@ class AerohiveBase extends HTMLElement {
         <section>
           <div class="controls">
             <label class="toggle">
-              <input type="checkbox" data-toggle="port" ${port.enabled !== false ? "checked" : ""} ${busy("port") || port.present === false ? "disabled" : ""}>
+              <input type="checkbox" data-toggle="port" ${port.enabled !== false ? "checked" : ""} ${port.present === false ? "disabled" : ""}>
               <span class="track"></span><span>Port ${port.enabled !== false ? "on" : "off"}</span>
             </label>
             ${
               poe
                 ? `<label class="toggle">
-                    <input type="checkbox" data-toggle="poe" ${poe.enabled !== false ? "checked" : ""} ${busy("poe") ? "disabled" : ""}>
+                    <input type="checkbox" data-toggle="poe" ${poe.enabled !== false ? "checked" : ""}>
                     <span class="track"></span><span>PoE ${poe.enabled !== false ? "on" : "off"}</span>
                   </label>
                   <button class="btn" data-action="poe-cycle" ${busy("cycle") || poe.enabled === false ? "disabled" : ""}>${icon("cycle")}${busy("cycle") ? "Restarting…" : "Restart PoE device"}</button>`
@@ -903,16 +941,36 @@ class AerohiveBase extends HTMLElement {
           text: `Port ${port.name} leads to another switch or router. Turning it off can cut Home Assistant off from ${device.name}, and you may have to turn it back on from the console.`,
           confirm: "Turn off",
           danger: true,
-          onYes: () => this._call("set_port", { device_id: device.device_id, port: port.name, enabled: false, force: true }, { busyKey: `port:${key}`, hold: true }),
+          onYes: () => this._toggle(device, port, "port", false, "set_port", { force: true }),
           back: { type: "port", device: this._dialog.device, port: port.name },
           focus: '.dialog [data-action="close"]',
         };
         this._render();
         return;
       }
-      this._call("set_port", { device_id: device.device_id, port: port.name, enabled }, { busyKey: `port:${key}`, hold: true });
+      this._toggle(device, port, "port", enabled, "set_port");
     } else if (target.dataset.toggle === "poe") {
-      this._call("set_poe", { device_id: device.device_id, port: port.name, enabled: target.checked }, { busyKey: `poe:${key}`, hold: true });
+      this._toggle(device, port, "poe", target.checked, "set_poe");
+    }
+  }
+
+  /* Flip at once; Home Assistant updates the real state within a second or two. */
+  async _toggle(device, port, field, value, service, extra = {}) {
+    const key = `${field}:${device.entry_id}:${port.name}`;
+    this._setOptimistic(device, port.name, field, value);
+    this._queued = this._queued || new Map();
+    if (this._busy.has(key)) {
+      // A command for this switch is still running: send the latest choice right after it.
+      this._queued.set(key, { value, service, extra });
+      return;
+    }
+    const ok = await this._call(service, { device_id: device.device_id, port: port.name, enabled: value, ...extra }, { busyKey: key });
+    const next = this._queued.get(key);
+    this._queued.delete(key);
+    if (next && next.value !== value) {
+      this._toggle(device, port, field, next.value, next.service, next.extra);
+    } else if (!ok) {
+      this._clearOptimistic(device, port.name, field);
     }
   }
 
@@ -946,6 +1004,10 @@ class AerohiveBase extends HTMLElement {
         this._call("set_port_description", { device_id: device.device_id, port: dialog.port, description }, { busyKey: `rename:${key}`, hold: true, success: description ? `Port ${dialog.port} renamed to ${description}` : `Name of port ${dialog.port} cleared` });
         break;
       }
+      case "refresh":
+        if (device) this._call("refresh", { device_id: device.device_id }, { busyKey: `refresh:${device.entry_id}`, success: `${device.name} refreshed` });
+        else this._call("refresh", {}, { busyKey: "refresh:all", success: "All devices refreshed" });
+        break;
       case "save":
         this._call("save_config", { device_id: device.device_id }, { busyKey: `save:${device.entry_id}`, success: `Configuration of ${device.name} saved` });
         break;
@@ -999,6 +1061,7 @@ function deviceActions(base, device) {
   const busy = (k) => base._isBusy(`${k}:${id}`);
   return `
     <div class="actions">
+      <button class="btn" data-action="refresh" ${busy("refresh") ? "disabled" : ""} title="Read everything from the device now">${icon("reboot", busy("refresh") ? "spin" : "")}${busy("refresh") ? "Refreshing…" : "Refresh"}</button>
       <button class="btn ${cfg.unsaved ? "attention" : ""}" data-action="save" ${busy("save") || !device.online ? "disabled" : ""}>${icon("save")}${busy("save") ? "Saving…" : "Save configuration"}</button>
       <button class="btn" data-action="backup" ${busy("backup") || !device.online || cfg.changed_after_reboot ? "disabled" : ""}>${icon("backup")}${busy("backup") ? "Backing up…" : "Back up now"}</button>
       <button class="btn danger" data-action="reboot" ${!device.online ? "disabled" : ""}>${icon("reboot")}Reboot</button>
@@ -1079,7 +1142,8 @@ const PANEL_CSS = `
   border-bottom: var(--app-header-border-bottom, 1px solid var(--ah-line));
 }
 .toolbar .title { font-size: 20px; font-weight: 400; margin-left: 8px; }
-.tabs { display: flex; gap: 2px; margin-left: auto; }
+.tabs { display: flex; gap: 2px; }
+.refresh-all { margin-left: auto; color: inherit; }
 .tab {
   height: 36px; padding: 0 14px; border: 0; border-radius: 18px; background: transparent; cursor: pointer; color: inherit; opacity: 0.75; font-weight: 500;
 }
@@ -1171,6 +1235,7 @@ class AerohiveNetworkPanel extends AerohiveBase {
     rowKeyboard(this.shadowRoot);
     this.shadowRoot.innerHTML = `<style>${BASE_CSS}${PANEL_CSS}</style>
       <div class="toolbar"><span class="menu"></span><span class="title">Network</span>
+        <button class="icon-btn refresh-all" data-action="refresh" aria-label="Refresh all devices now" title="Refresh all devices now">${icon("reboot")}</button>
         <div class="tabs" role="tablist">
           <button class="tab" role="tab" data-action="tab" data-tab="devices">Devices</button>
           <button class="tab" role="tab" data-action="tab" data-tab="clients">Clients</button>
@@ -1260,6 +1325,11 @@ class AerohiveNetworkPanel extends AerohiveBase {
     if (!this.shadowRoot.getElementById("content")) return;
     for (const tab of this.shadowRoot.querySelectorAll(".tab")) {
       tab.setAttribute("aria-selected", String(tab.dataset.tab === this._tab));
+    }
+    const refreshAll = this.shadowRoot.querySelector(".refresh-all");
+    if (refreshAll) {
+      refreshAll.disabled = this._isBusy("refresh:all");
+      refreshAll.querySelector(".icon").classList.toggle("spin", this._isBusy("refresh:all"));
     }
     this._renderContent();
     this._renderDialogInto(this.shadowRoot.getElementById("dialog"));
@@ -1359,6 +1429,7 @@ class AerohiveNetworkPanel extends AerohiveBase {
         ${isSwitch ? this._faceplateCard(device) : ""}
         <div class="layout">
           <div>
+            ${device.kind === "unknown" ? this._unknownCard(device) : ""}
             ${isSwitch ? this._portsCard(device) : ""}
             ${device.radios && device.radios.length ? this._radiosCard(device) : ""}
             ${device.ssids && device.ssids.length ? this._ssidsCard(device) : ""}
@@ -1371,6 +1442,17 @@ class AerohiveNetworkPanel extends AerohiveBase {
           </div>
         </div>
       </div>`;
+  }
+
+  _unknownCard(device) {
+    return `<div class="card panel-card">
+      <div class="section-title">Device type not recognised</div>
+      <p style="margin:0 0 10px">Home Assistant logged in to ${esc(device.name)} at ${esc(device.host)}, but its replies didn't match an
+        access point, SR switch or ExtremeXOS switch, so there are no ports or radios to show.</p>
+      <p class="muted" style="margin:0">Press <strong>Refresh</strong> to try again. If it stays like this, please
+        <a href="https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/issues/new/choose" target="_blank" rel="noreferrer">request support for the device</a>
+        and attach its diagnostics (Settings → Devices &amp; services → Aerohive → ⋮ → Download diagnostics) so it can be added.</p>
+    </div>`;
   }
 
   _portFilterFn() {
@@ -1666,6 +1748,7 @@ class AerohiveCardBase extends AerohiveBase {
       <span class="avatar ${device.online ? "" : "off"}">${deviceIcon(device)}</span>
       <div class="grow"><div class="name ellipsis">${esc(this._config.title || device.name)}</div>
         <div class="sub ellipsis">${esc(deviceSummary(device))}</div></div>
+      <button class="icon-btn" data-action="refresh" aria-label="Refresh now" title="Refresh now" ${this._isBusy(`refresh:${device.entry_id}`) ? "disabled" : ""}>${icon("reboot", this._isBusy(`refresh:${device.entry_id}`) ? "spin" : "")}</button>
       <button class="icon-btn" data-action="open-panel" data-open="${esc(device.entry_id)}" aria-label="Open in the Network panel" title="Open in the Network panel">${icon("back", "flip")}</button>
     </div>`;
   }
@@ -1759,6 +1842,7 @@ class AerohiveNetworkCard extends AerohiveCardBase {
     return `<style>${FLIP_CSS}</style>
       <div class="head"><span class="avatar">${icon("switch")}</span><div class="grow"><div class="name">${esc(this._config.title || "Network")}</div>
         <div class="sub">${online} of ${devices.length} devices online</div></div>
+        <button class="icon-btn" data-action="refresh" aria-label="Refresh all devices now" title="Refresh all devices now" ${this._isBusy("refresh:all") ? "disabled" : ""}>${icon("reboot", this._isBusy("refresh:all") ? "spin" : "")}</button>
         <button class="icon-btn" data-action="open-panel" data-open="" aria-label="Open the Network panel" title="Open the Network panel">${icon("back", "flip")}</button></div>
       <div class="totals">
         <div><b class="num">${wireless}</b><span>Wi-Fi clients</span></div>

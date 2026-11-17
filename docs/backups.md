@@ -24,7 +24,7 @@ and ExtremeXOS switches).
 | **Save configuration button** | Saves the running configuration on the device (`save config`, `write memory` or `save configuration`). |
 | **Network-wide view** | The *Aerohive Network* device has a `Devices with configuration problems` sensor listing every device with an alert, unsaved changes, or that's offline. |
 
-Changes made from Home Assistant are always saved on the device immediately, so they're
+Changes made from Home Assistant are saved on the device within a couple of seconds, so they're
 never the ones lost in a power cut.
 
 ## When an alert appears

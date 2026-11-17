@@ -452,6 +452,25 @@ class VersionInfo:
     raw: dict[str, str] = field(default_factory=dict)
 
 
+_EXOS_VERSION_RE = re.compile(r"^\s*(?:Switch|Chassis|Slot-\d+)\s*:\s*\S+\s+\S+\s+Rev\b", re.MULTILINE | re.IGNORECASE)
+
+
+def dialect_from_version(text: str) -> str | None:
+    """Which CLI produced this 'show version' output ("hiveos", "switch", "exos"), if it's clear.
+
+    Used when the login prompt didn't identify the device (an unusual prompt
+    would otherwise leave a switch being polled with access point commands).
+    """
+    text = clean_output(text or "")
+    if "ExtremeXOS" in text or "IMG:" in text or _EXOS_VERSION_RE.search(text):
+        return "exos"
+    if "Burned In MAC Address" in text or re.search(r"^\s*Machine (?:Model|Type)\.{3,}", text, re.MULTILINE):
+        return "switch"
+    if re.search(r"\b(?:HiveOS|IQ Engine)\b", text):
+        return "hiveos"
+    return None
+
+
 def parse_show_version(text: str) -> VersionInfo:
     kv = parse_key_values(text)
     info = VersionInfo(raw=kv)

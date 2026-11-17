@@ -28,7 +28,7 @@
       },
       "pick": {
         "title": "Pick a discovered device",
-        "description": "Found {count} likely Aerohive/Extreme device(s) out of {total} SSH devices. Pick one (or type an IP) and enter its CLI login.",
+        "description": "Found {count} likely Aerohive/Extreme device(s) out of {total} SSH devices. Each shows its IP address, name, model, MAC address and where it's connected, when known. Pick one (or type an IP) and enter its CLI login.",
         "data": {
           "host": "Device",
           "username": "Username",
@@ -44,7 +44,7 @@
       },
       "discovery_confirm": {
         "title": "Set up {name}",
-        "description": "Found an Aerohive / Extreme Networks device at {host}. Enter its CLI login to add it.",
+        "description": "Found **{name}** at {host}.\n\n{details}\n\nEnter its CLI login to add it.",
         "data": {
           "username": "Username",
           "password": "Password",
@@ -322,6 +322,9 @@
       },
       "accept_config": {
         "name": "Accept current configuration"
+      },
+      "refresh": {
+        "name": "Refresh now"
       }
     },
     "binary_sensor": {
@@ -576,6 +579,16 @@
         "device_id": {
           "name": "Device",
           "description": "The device with the alert."
+        }
+      }
+    },
+    "refresh": {
+      "name": "Refresh now",
+      "description": "Read everything from a device right away, including LLDP neighbours, health and the configuration. Without a device, every device is refreshed.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The device to refresh. Leave empty for all devices."
         }
       }
     }

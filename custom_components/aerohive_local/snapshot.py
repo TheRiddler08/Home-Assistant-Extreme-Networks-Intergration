@@ -45,7 +45,12 @@ def device_kind(data: AerohiveData) -> str:
         return "switch"
     if (data.version.platform or "").upper().startswith("BR"):
         return "router"
-    return "ap"
+    if data.is_wireless:
+        return "ap"
+    if data.ports():
+        return "switch"
+    # Connected, but the replies weren't recognised: don't pretend it's an access point.
+    return "unknown"
 
 
 def _ports(data: AerohiveData) -> list[dict[str, Any]]:
@@ -155,6 +160,8 @@ def _problems(coordinator: AerohiveCoordinator, data: AerohiveData) -> list[dict
         problems.append({"kind": "boot", "text": f"Boot problem: {text}"})
     if data.config_unsaved:
         problems.append({"kind": "unsaved", "text": "Unsaved configuration changes"})
+    if data.save_error:
+        problems.append({"kind": "save_failed", "text": "Saving a change on the device failed (retrying)"})
     for text in data.environment.problems if data.environment else []:
         problems.append({"kind": "hardware", "text": text[0].upper() + text[1:]})
     return problems
@@ -199,7 +206,7 @@ def device_snapshot(hass: HomeAssistant, coordinator: AerohiveCoordinator) -> di
         "poe": None
         if poe is None
         else {"budget_w": _round(poe.budget_w), "used_w": _round(poe.used_w), "remaining_w": _round(poe.remaining_w)},
-        "ports": _ports(data) if data.has_switch_ports else [],
+        "ports": _ports(data) if data.has_switch_ports or device_kind(data) == "switch" else [],
         "radios": _radios(data) if data.is_wireless else [],
         "ssids": [
             {

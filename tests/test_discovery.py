@@ -73,9 +73,21 @@ def test_read_arp_table(tmp_path) -> None:
 def test_scan_result_label() -> None:
     r = d.ScanResult(host="192.168.1.10", mac="bc:f3:10:7c:06:80", hostname="AH-7c0680")
     assert r.likely_aerohive
-    assert r.label == "192.168.1.10 – AH-7c0680 – Aerohive/Extreme MAC"
+    assert r.label == "192.168.1.10 · AH-7c0680 · bc:f3:10:7c:06:80 (Extreme Networks)"
     other = d.ScanResult(host="192.168.1.20", mac="00:11:22:33:44:55")
     assert not other.likely_aerohive
+    assert other.label == "192.168.1.20 · 00:11:22:33:44:55"
+    # With what other devices know (LLDP, MAC tables), and the SSH software when nothing else is known.
+    rich = d.ScanResult(
+        host="192.168.9.66", mac="b8:7c:f2:00:00:94", name="AH-Switch", model="Aerohive SR2208P",
+        seen_on="X450e-48p port 49", configured=True,
+    )
+    assert rich.label == (
+        "192.168.9.66 · AH-Switch · Aerohive SR2208P · b8:7c:f2:00:00:94 (Extreme Networks) · on X450e-48p port 49 (already added)"
+    )
+    bare = d.ScanResult(host="192.168.1.30", banner="SSH-2.0-OpenSSH_7.4")
+    assert bare.label == "192.168.1.30 · OpenSSH_7.4" and bare.ssh_software == "OpenSSH_7.4"
+    assert d.oui_vendor("00:19:77:00:00:01") == "Aerohive" and d.oui_vendor("00:11:22:33:44:55") is None
 
 
 async def test_async_scan_finds_local_ssh_banner(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -27,7 +27,7 @@ MAX_SCAN_INTERVAL: Final = 3600
 
 # Control actions requested within this window are coalesced; only the last
 # requested value is sent to the device.
-CONTROL_DEBOUNCE_SECONDS: Final = 1.5
+CONTROL_DEBOUNCE_SECONDS: Final = 0.5
 # Mostly static data (boot-param, hw-info, mgt0 address) is re-read this often.
 SLOW_REFRESH_SECONDS: Final = 900
 

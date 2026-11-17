@@ -57,6 +57,7 @@
     async callService(domain, service, data) {
       window.serviceCalls.push({ domain, service, data });
       await new Promise((r) => setTimeout(r, 400));
+      if (service === "refresh") { setTimeout(push, 100); return; }
       const d = device(data.device_id);
       if (service === "set_port") {
         const p = port(d, data.port);

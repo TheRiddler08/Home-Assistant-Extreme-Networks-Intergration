@@ -28,13 +28,17 @@ You get a menu with two choices:
 - **Scan my network**: the integration probes the local subnet(s) Home Assistant is on
   for SSH (port 22, at most 1024 addresses, 32 at a time) and lists what answers.
   Aerohive/Extreme devices are listed first, recognised by MAC prefix or by the default
-  `AH-xxxxxx` hostname. Pick one, enter the CLI login, and it's added. You can still type
-  an IP into the device box.
+  `AH-xxxxxx` hostname. Each entry shows what's known about it: IP address, name, model,
+  MAC address and maker, and which switch port or access point it's connected to (from
+  the devices you've already added). Devices already set up are marked *(already added)*.
+  Pick one, enter the CLI login, and it's added. You can still type an IP into the device box.
 - **Enter IP address manually**: the classic form.
 
 **Automatic discovery:** if Home Assistant sees an Aerohive/Extreme device request a DHCP
 lease, it shows up as **Discovered** under Settings → Devices & services, and you only need
-to enter the login. Matching is on the `AH-*` hostname and the MAC prefixes in
+to enter the login. The discovery card shows the device's MAC address, maker, model and
+the switch port it's on, when known. Switches you've added also offer the Aerohive /
+Extreme devices they see as LLDP neighbours. Matching is on the `AH-*` hostname and the MAC prefixes in
 `manifest.json`. For devices that are already configured, DHCP discovery also updates the
 stored IP address when it changes.
 

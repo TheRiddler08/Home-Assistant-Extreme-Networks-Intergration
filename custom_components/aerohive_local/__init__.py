@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import logging
 from typing import Any
 
@@ -21,7 +23,7 @@ from homeassistant.core import (
     ServiceResponse,
     SupportsResponse,
 )
-from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import (
     config_validation as cv,
 )
@@ -254,6 +256,23 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             raise ServiceValidationError("Set confirm: true to reboot the device")
         await coordinator_for(call).async_reboot(call.data.get("save_changes"))
 
+    async def refresh(call: ServiceCall) -> None:
+        if call.data.get(ATTR_DEVICE_ID):
+            await coordinator_for(call).async_refresh_now()
+            return
+        coordinators = [
+            e.runtime_data
+            for e in hass.config_entries.async_entries(DOMAIN)
+            if e.state is ConfigEntryState.LOADED and isinstance(e.runtime_data, AerohiveCoordinator)
+        ]
+        results = await asyncio.gather(*(c.async_refresh_now() for c in coordinators), return_exceptions=True)
+        failed = [str(r) for r in results if isinstance(r, Exception)]
+        if failed:
+            raise HomeAssistantError("; ".join(failed))
+
+    hass.services.async_register(
+        DOMAIN, "refresh", refresh, vol.Schema({vol.Optional(ATTR_DEVICE_ID): cv.string})
+    )
     hass.services.async_register(DOMAIN, "set_poe", set_poe, SET_POE_SCHEMA)
     hass.services.async_register(DOMAIN, "set_port_description", set_port_description, PORT_DESCRIPTION_SCHEMA)
     hass.services.async_register(DOMAIN, "reboot", reboot, REBOOT_SCHEMA)
@@ -409,6 +428,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: AerohiveConfigEntry) ->
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     coordinator = getattr(entry, "runtime_data", None)
     if unloaded and coordinator is not None:
+        try:
+            await coordinator.async_flush_save()
+        except Exception:  # noqa: BLE001 - unloading must not fail
+            _LOGGER.warning("Could not save %s before unloading", coordinator.client.host)
         await coordinator.client.close()
     return unloaded
 

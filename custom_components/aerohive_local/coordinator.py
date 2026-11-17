@@ -45,6 +45,7 @@ from .const import (
 )
 from .discovery import is_aerohive_mac
 from .parsers import (
+    dialect_from_version,
     BootParams,
     EnvironmentInfo,
     ExosSwitchInfo,
@@ -108,6 +109,10 @@ type AerohiveConfigEntry = ConfigEntry[AerohiveCoordinator]
 
 UPLINK_MAC_THRESHOLD = 16
 BACKUP_ROOT = "aerohive_local_backups"
+# Changes made from Home Assistant are saved on the device this long after the
+# last one, in the background: a burst of changes costs one save, and controls
+# stay responsive. 0 saves before the action returns.
+SAVE_DELAY_SECONDS = 2.0
 BACKUP_DOCS_URL = "https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/blob/main/docs/backups.md"
 
 
@@ -145,6 +150,12 @@ class Throughput:
         if self.rx_kbps is None and self.tx_kbps is None:
             return None
         return round((self.rx_kbps or 0) + (self.tx_kbps or 0), 1)
+
+
+def _lldp_model(neighbor: LldpNeighbor) -> str | None:
+    from .config_flow import _short_model  # noqa: PLC0415 - avoid an import cycle
+
+    return _short_model(neighbor)
 
 
 def _prefix_to_netmask(prefix: int | None) -> str | None:
@@ -191,6 +202,10 @@ class AerohiveData:
     config_unsaved: bool | None = None
     backup: BackupState | None = None
     vlans: dict[str, ExosVlan] = field(default_factory=dict)
+    # States set by Home Assistant that the device accepted but hasn't been read back yet:
+    # ("port", name) / ("poe", name) / ("ssid", ssid, radio) / ("hidden", ssid) -> bool.
+    overrides: dict[tuple[str, ...], bool] = field(default_factory=dict)
+    save_error: str | None = None
 
     @property
     def is_switch(self) -> bool:
@@ -242,6 +257,8 @@ class AerohiveData:
 
     def port_enabled(self, port: str) -> bool | None:
         """Administrative state of a port, best effort."""
+        if ("port", port) in self.overrides:
+            return self.overrides[("port", port)]
         if self.config is not None and port in self.config.shutdown_ports:
             return False
         detail = self.details.get(port)
@@ -256,12 +273,16 @@ class AerohiveData:
         return None
 
     def poe_enabled(self, port: str) -> bool | None:
+        if ("poe", port) in self.overrides:
+            return self.overrides[("poe", port)]
         if self.config is not None and port in self.config.pse_shutdown_ports:
             return False
         poe = self.poe_ports.get(port)
         return poe.enabled if poe else None
 
     def ssid_hidden(self, ssid: str) -> bool | None:
+        if ("hidden", ssid) in self.overrides:
+            return self.overrides[("hidden", ssid)]
         return None if self.config is None else ssid in self.config.hidden_ssids
 
     def ssid_enabled(self, ssid: str) -> bool:
@@ -338,6 +359,8 @@ class AerohiveData:
         return active or radios
 
     def ssid_on_radio(self, ssid: str, radio: str) -> bool:
+        if ("ssid", ssid, radio) in self.overrides:
+            return self.overrides[("ssid", ssid, radio)]
         return ssid in self.ssid_bindings().get(radio, set())
 
     def ssids_on_radio(self, radio: str) -> list[str]:
@@ -436,6 +459,13 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._serial: str | None = None
         self._config_text_new = False
         self._ha_changed = False
+        # Instant feedback for controls: key -> (value, monotonic time it was applied)
+        self._overrides: dict[tuple[str, ...], tuple[bool, float]] = {}
+        # Background save of changes made from Home Assistant
+        self._save_pending = False
+        self._save_generation = 0
+        self._save_lock = asyncio.Lock()
+        self._save_error: str | None = None
         # name -> (monotonic time, rx_bytes, tx_bytes) from the previous poll
         self._counters: dict[str, tuple[float, int | None, int | None]] = {}
 
@@ -488,14 +518,25 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             self.expect_removal = False
 
     async def _async_update_data(self) -> AerohiveData:
+        started = time.monotonic()
         try:
             data = await self._fetch()
             self._polled = True
-            return data
         except AerohiveAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
         except AerohiveError as err:
             raise UpdateFailed(f"Error communicating with {self.client.host}: {err}") from err
+        # A poll that started after a change shows the device's real state; keep only
+        # the changes made while this poll was already running.
+        self._overrides = {k: v for k, v in self._overrides.items() if v[1] >= started}
+        data.overrides = {k: v[0] for k, v in self._overrides.items()}
+        data.save_error = self._save_error
+        if self._save_pending:
+            if data.config_unsaved:
+                data.config_unsaved = False  # Home Assistant is about to save its own change
+            if self._save_error is not None and not self._save_lock.locked():
+                self._schedule_save(delay=0)  # retry a failed save
+        return data
 
     def _detail_targets(self, data: AerohiveData) -> list[str]:
         """Interfaces whose 'show interface <name>' detail is read each poll."""
@@ -530,6 +571,10 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._poll_count += 1
         data = AerohiveData()
         version_out = await self.client.run("show version")
+        detected = dialect_from_version(version_out)
+        if detected and detected != self.client.dialect:
+            # The prompt wasn't recognised; trust what the device says it is.
+            await self.client.async_set_dialect(detected)
         data.cli = self.client.dialect
         if self.client.dialect == commands.DIALECT_SWITCH:
             return await self._fetch_switch(data, version_out)
@@ -1021,13 +1066,27 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return {"file": str(backup.path), "created": backup.created.isoformat()}
 
     async def async_save_config(self) -> None:
+        self._save_generation += 1  # a scheduled save is covered by this one
         try:
-            await self._save()
+            async with self._save_lock:
+                await self._save()
+                self._save_pending = False
+                self._save_error = None
         except AerohiveError as err:
             raise HomeAssistantError(f"Error communicating with {self.client.host}: {err}") from err
         self._ha_changed = True
         self._config_dirty = True
         await self.async_request_refresh()
+
+    async def async_refresh_now(self) -> None:
+        """Read everything now, including what's normally read every 15 minutes."""
+        self._slow_at = None
+        self._config_dirty = True
+        await self.async_refresh()
+        if not self.last_update_success:
+            raise HomeAssistantError(
+                f"Could not read {self._device_name()} ({self.client.host}): {self.last_exception}"
+            )
 
     async def async_list_backups(self) -> list[dict[str, Any]]:
         backups = await self.hass.async_add_executor_job(backup_mod.list_backups, self.backup_folder)
@@ -1077,14 +1136,24 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
 
     def _announce_neighbors(self) -> None:
         """Offer unconfigured Aerohive/Extreme neighbours seen via LLDP for setup."""
-        configured = {
-            e.data.get(CONF_HOST) for e in self.hass.config_entries.async_entries(DOMAIN)
-        } | {e.unique_id for e in self.hass.config_entries.async_entries(DOMAIN)}
+        entries = self.hass.config_entries.async_entries(DOMAIN)
+        configured = {e.data.get(CONF_HOST) for e in entries} | {e.unique_id for e in entries}
+        # Also by name: a device already added under another IP address isn't offered twice.
+        names = {e.title.lower() for e in entries if e.title}
+        names |= {
+            e.runtime_data.data.hostname.lower()
+            for e in entries
+            if isinstance(getattr(e, "runtime_data", None), AerohiveCoordinator)
+            and e.runtime_data.data is not None
+            and e.runtime_data.data.hostname
+        }
         for neighbor in self._lldp.values():
             host = neighbor.management_address
             mac = normalize_mac(neighbor.chassis_id)
             looks_aerohive = is_aerohive_hostname(neighbor.system_name) or is_aerohive_mac(mac)
             if not host or not looks_aerohive or host in configured or mac in configured:
+                continue
+            if neighbor.system_name and neighbor.system_name.lower() in names:
                 continue
             if host in self._announced:
                 continue
@@ -1094,7 +1163,13 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 self.hass,
                 DOMAIN,
                 context={"source": SOURCE_INTEGRATION_DISCOVERY},
-                data={CONF_HOST: host, "mac": mac, "name": neighbor.system_name or host},
+                data={
+                    CONF_HOST: host,
+                    "mac": mac,
+                    "name": neighbor.system_name or host,
+                    "model": _lldp_model(neighbor),
+                    "seen_on": f"{self._device_name()} port {neighbor.local_port}",
+                },
             )
 
     # ------------------------------------------------------------------ #
@@ -1129,8 +1204,19 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
     # Control
     # ------------------------------------------------------------------ #
 
-    async def _apply(self, cmds: list[str], *, secret: str | None = None, sequence: bool = False) -> None:
-        """Run config commands, verify, save config and refresh."""
+    async def _apply(
+        self,
+        cmds: list[str],
+        *,
+        secret: str | None = None,
+        sequence: bool = False,
+        overrides: dict[tuple[str, ...], bool] | None = None,
+    ) -> None:
+        """Run config commands and check the replies, then show the new state at once.
+
+        The configuration is saved on the device shortly afterwards in the
+        background (SAVE_DELAY_SECONDS), followed by a refresh.
+        """
 
         def scrub(text: str) -> str:
             text = commands.redact(text)
@@ -1148,7 +1234,6 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                     raise HomeAssistantError(
                         f"{self.client.host} rejected '{scrub(cmd)}': {scrub(error)}"
                     )
-            await self._save()
         except AerohiveCommandError as err:
             self._config_dirty = True
             raise HomeAssistantError(scrub(str(err))) from err
@@ -1162,7 +1247,58 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             raise
         self._config_dirty = True
         self._ha_changed = True
+        if overrides:
+            self._set_overrides(overrides)
+        if SAVE_DELAY_SECONDS <= 0:
+            self._save_pending = True
+            await self._run_pending_save(raise_errors=True)
+            return
+        self._schedule_save()
+
+    def _set_overrides(self, overrides: dict[tuple[str, ...], bool]) -> None:
+        """Show a state the device accepted right away, without waiting for a poll."""
+        now = time.monotonic()
+        for key, value in overrides.items():
+            self._overrides[key] = (value, now)
+            if self.data is not None:
+                self.data.overrides[key] = value
+        if self.data is not None:
+            self.async_update_listeners()
+
+    def _schedule_save(self, delay: float | None = None) -> None:
+        self._save_pending = True
+        self._save_generation += 1
+        generation = self._save_generation
+        wait = SAVE_DELAY_SECONDS if delay is None else delay
+
+        async def later() -> None:
+            await asyncio.sleep(wait)
+            if generation == self._save_generation:
+                await self._run_pending_save()
+
+        self.config_entry.async_create_background_task(self.hass, later(), f"{DOMAIN} save {self.client.host}")
+
+    async def _run_pending_save(self, *, raise_errors: bool = False) -> None:
+        async with self._save_lock:
+            if not self._save_pending:
+                return
+            self._save_pending = False
+            try:
+                await self._save()
+            except (AerohiveError, HomeAssistantError) as err:
+                self._save_pending = True
+                self._save_error = str(err)
+                _LOGGER.warning("%s: saving the configuration failed (retried on the next poll): %s", self.client.host, err)
+                if raise_errors:
+                    raise HomeAssistantError(f"{self.client.host}: the change was made but saving failed: {err}") from err
+                return
+            self._save_error = None
         await self.async_request_refresh()
+
+    async def async_flush_save(self) -> None:
+        """Save a pending change now (before a reboot or unload)."""
+        self._save_generation += 1  # cancels a scheduled save
+        await self._run_pending_save()
 
     @property
     def is_switch_cli(self) -> bool:
@@ -1192,7 +1328,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
 
     async def async_set_ssid_on_radio(self, radio: str, ssid: str, enable: bool) -> None:
         cmd = self._validated(commands.ssid_bind, radio, ssid, enable)
-        await self._apply([cmd])
+        await self._apply([cmd], overrides={("ssid", ssid, radio): enable})
 
     async def async_set_max_client(self, ssid: str, value: int) -> None:
         cmd = self._validated(commands.ssid_max_client, ssid, int(value))
@@ -1232,7 +1368,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             await self._apply(cmds)
 
     async def async_set_ssid_hidden(self, ssid: str, hidden: bool) -> None:
-        await self._apply([self._validated(commands.ssid_hide, ssid, hidden)])
+        await self._apply([self._validated(commands.ssid_hide, ssid, hidden)], overrides={("hidden", ssid): hidden})
 
     async def async_create_ssid(
         self, ssid: str, password: str | None, radios: list[str] | None, hidden: bool = False
@@ -1307,20 +1443,22 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 "many devices are learned on it). Turning it off could disconnect Home Assistant from "
                 "the device. Use the set_port action with force: true if you really mean it."
             )
+        state = {("port", port): enable}
         if self.is_exos:
-            await self._apply([self._validated(commands.exos_port_enable, port, enable)])
+            await self._apply([self._validated(commands.exos_port_enable, port, enable)], overrides=state)
         elif self.is_switch_cli:
-            await self._apply(self._validated(commands.switch_port_enable, port, enable), sequence=True)
+            await self._apply(self._validated(commands.switch_port_enable, port, enable), sequence=True, overrides=state)
         else:
-            await self._apply([self._validated(commands.port_enable, port, enable)])
+            await self._apply([self._validated(commands.port_enable, port, enable)], overrides=state)
 
     async def async_set_poe(self, port: str, enable: bool) -> None:
+        state = {("poe", port): enable}
         if self.is_exos:
-            await self._apply([self._validated(commands.exos_poe, port, enable)])
+            await self._apply([self._validated(commands.exos_poe, port, enable)], overrides=state)
         elif self.is_switch_cli:
-            await self._apply(self._validated(commands.switch_poe, port, enable), sequence=True)
+            await self._apply(self._validated(commands.switch_poe, port, enable), sequence=True, overrides=state)
         else:
-            await self._apply([self._validated(commands.port_poe, port, enable)])
+            await self._apply([self._validated(commands.port_poe, port, enable)], overrides=state)
 
     async def async_power_cycle_poe(self, port: str, off_seconds: float = 5) -> None:
         """Turn PoE off and on again (runtime only, nothing is saved)."""
@@ -1402,6 +1540,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 "or use the Reboot action with save_changes set to true (save, then reboot) or false "
                 "(reboot and lose them)."
             )
+        await self.async_flush_save()  # Home Assistant's own changes are always kept
         try:
             if save_changes and not self.is_exos:
                 await self._save()

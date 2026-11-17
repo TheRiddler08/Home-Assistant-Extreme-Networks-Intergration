@@ -75,6 +75,7 @@ ENCRYPTION_ALGS = [
 CONNECT_TIMEOUT = 20
 COMMAND_TIMEOUT = 45
 MIN_COMMAND_INTERVAL = 0.3  # seconds between commands, be gentle with BR100
+SWITCH_COMMAND_INTERVAL = 0.05  # SR and ExtremeXOS switches
 READ_CHUNK = 65536
 TERM_SIZE = (250, 1000)  # wide/tall pty to minimise wrapping and paging
 
@@ -237,6 +238,20 @@ class AerohiveClient:
         if match.group("xhost"):
             self.config_unsaved = bool(match.group("unsaved"))
 
+    async def async_set_dialect(self, dialect: str) -> None:
+        """Switch to another CLI dialect found from the device's output (not its prompt)."""
+        if dialect == self.dialect:
+            return
+        _LOGGER.info("%s: the device answers like a %s CLI, switching from %s", self._host, dialect, self.dialect)
+        self.dialect = dialect
+        if dialect == DIALECT_EXOS and self.connected:
+            async with self._lock:
+                try:
+                    out = await self._exec(EXOS_DISABLE_PAGING, self._command_timeout)
+                    self.paging_disabled = find_cli_error(out) is None
+                except AerohiveError:
+                    pass
+
     async def _ensure_privileged(self) -> None:
         """Switch CLI: leave config modes and re-enter enable mode if needed."""
         for _ in range(3):
@@ -368,7 +383,9 @@ class AerohiveClient:
         return strip_echo_and_prompt(clean_output(raw), command)
 
     async def _throttle(self) -> None:
-        wait = self._min_interval - (time.monotonic() - self._last_command)
+        # Switch CLIs keep up fine; the gentle pace is for HiveOS devices (the BR100 especially).
+        interval = self._min_interval if self.dialect == DIALECT_HIVEOS else min(self._min_interval, SWITCH_COMMAND_INTERVAL)
+        wait = interval - (time.monotonic() - self._last_command)
         if wait > 0:
             await asyncio.sleep(wait)
 

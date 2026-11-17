@@ -3,6 +3,32 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.9.0] - 2026-11-17
+
+### Added
+- **Refresh now:** a *Refresh now* button on every device, a `refresh` action (one device or
+  all), and refresh buttons in the Network panel and cards. Reads everything at once,
+  including LLDP neighbours, health and the configuration.
+- **More detail when a device is found:** the network scan list and discovery cards show
+  the name, model, MAC address and maker, and the switch port or access point the device
+  is connected to (from the devices already added). Devices already set up are marked.
+
+### Changed
+- **Port, PoE and Wi-Fi switches respond at once.** The new state shows as soon as the
+  device accepts the command, instead of after the next poll, and flipping a switch back
+  straight away now works (it used to be skipped while the old state was still shown).
+  The configuration is saved in the background 2 seconds after the last change, so a burst
+  of changes costs one save; a failed save is retried and shown as a problem.
+- Shorter debounce (0.5 s) and less waiting between commands on switches, so polls and
+  refreshes on SR and ExtremeXOS switches are about four times faster.
+- A device already added isn't offered again through LLDP discovery under another address.
+
+### Fixed
+- A switch whose login prompt wasn't recognised was polled as an access point and showed up
+  as an AP with nothing on it. The device type is now confirmed from `show version`, and a
+  device whose replies aren't recognised is shown as *not recognised* with a pointer to
+  request support, not as an access point.
+
 ## [0.8.0] - 2026-11-17
 
 ### Added

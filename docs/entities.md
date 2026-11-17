@@ -92,7 +92,7 @@ same port, PoE, client and LLDP entities as [SR switches](switches.md).
 
 | Platform | Entity |
 | --- | --- |
-| button | Reboot |
+| button | Reboot, Refresh now (reads everything, including LLDP, health and the configuration; usable even while the device is offline, to retry) |
 | switch | SSID per radio (see above) |
 | number | SSID max clients (1–255) |
 
