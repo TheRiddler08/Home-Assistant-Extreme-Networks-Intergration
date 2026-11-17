@@ -79,7 +79,11 @@ See [Power-loss protection and backups](backups.md).
 | `Unsaved configuration changes` (problem binary sensor) | from the `*` in the prompt |
 | `Booted image`, `Booted configuration` | attributes: selected image / configuration, primary and secondary versions |
 | `Boot count`, `System state` | from `show switch` |
-| `Temperature`, `Fans`, `Power supply` | from `show temperature`, `show fans`, `show power` |
+| `Temperature`, `Fans`, `Power supply` | from `show temperature`, `show fans`, `show power`; the highest temperature on a stack |
+| `Fan speed` (rpm) | the slowest fan; attributes: every fan's speed |
+| `Power usage` (W) | system power usage, where the switch reports it |
+| `VLANs` | number of VLANs; attributes: name, ID, IP address, active / total ports |
+| `IP address`, `Serial number` | management IP from `show vlan`, serial from `show version` |
 
 Ports are named like on the switch (`Port 1` … `Port 52`, or `1:5` on a stack) and get the
 same port, PoE, client and LLDP entities as [SR switches](switches.md).

@@ -13,11 +13,16 @@ custom_components/aerohive_local/
   config_flow.py    setup (scan / manual / DHCP / LLDP discovery) + options (Wi-Fi manager, settings)
   sensor.py, binary_sensor.py, switch.py, number.py, text.py, button.py, device_tracker.py
   diagnostics.py    redacted diagnostics download
+  snapshot.py       JSON snapshots of every device for the panel and cards
+  websocket_api.py  aerohive_local/snapshot and aerohive_local/subscribe
+  frontend.py       registers the sidebar panel and the dashboard cards
+  frontend/aerohive-network.js   the panel and cards (one module, no build step)
 tests/
   fixtures/         device output (real ones are named after the device, synthetic_* are not real)
   test_parsers.py, test_commands.py, test_discovery.py   pure unit tests
   test_client.py    fake legacy-algorithm SSH servers (HiveOS and SR switch CLI)
   test_init.py, test_discovery_and_switch.py            Home Assistant integration tests
+  frontend/         UI harness, demo data, smoke test, pretend ExtremeXOS switch
 ```
 
 ## Running the tests
@@ -42,6 +47,43 @@ pip install pytest-homeassistant-custom-component
 
 They cover the config, options and Wi-Fi manager flows, entity setup, controls,
 debouncing, entity cleanup, the overview, services and diagnostics.
+
+## Working on the panel and cards
+
+`frontend/aerohive-network.js` is plain JavaScript (custom elements, no build step and no
+libraries), so you can edit it and reload.
+
+**Without Home Assistant:** serve the repository and open the harness. It feeds
+`tests/frontend/demo.json` (synthetic) to the panel and cards and applies actions to it.
+
+```bash
+python3 -m http.server 8765
+```
+
+Then open `http://localhost:8765/tests/frontend/harness.html`. Options: `?view=panel` or
+`?view=cards`, `&theme=dark`, `&path=<device name>` to open a device.
+
+**Smoke test** (runs in CI):
+
+```bash
+npm install --no-save playwright && npx playwright install chromium
+```
+```bash
+node tests/frontend/smoke.mjs
+```
+
+**With a real Home Assistant, without a switch:** `tests/frontend/mock_exos_switch.py` is a
+pretend Summit X450e-48p over SSH, built from the synthetic fixtures. Ports, PoE, port names,
+saving and the unsaved-changes prompt work like on a switch.
+
+```bash
+python3 tests/frontend/mock_exos_switch.py --port 2222
+```
+
+Add the integration with host `127.0.0.1`, port `2222` and any user name and password.
+
+To refresh the demo data after changing the snapshot format, run the WebSocket test with
+`AEROHIVE_SNAPSHOT_OUT=/tmp/snap.json`, then `python3 tests/frontend/make_demo.py /tmp/snap.json`.
 
 ## Adding support for a new device or firmware
 

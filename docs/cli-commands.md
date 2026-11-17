@@ -70,8 +70,8 @@ The session recovers from the switch's idle timeout by logging in again, re-ente
 
 ## ExtremeXOS (Summit X450e and other EXOS switches)
 
-All 🧪: written from the ExtremeXOS 12.x / 15.x command reference and not yet confirmed
-on a device. Real output is very welcome (see [Supported devices](supported-devices.md)).
+All 🧪: written from the ExtremeXOS 12.x–16.x command reference (its example output is
+what the parsers are tested against) and not yet confirmed on a device. Real output is very welcome (see [Supported devices](supported-devices.md)).
 
 ### Read
 
@@ -85,10 +85,13 @@ on a device. Real output is very welcome (see [Supported devices](supported-devi
 | `show fdb` | Clients per port |
 | `show cpu-monitoring`, `show memory` | CPU (System 5 s), memory |
 | `show configuration` | Backups and change detection (every 15 min and after changes) |
-| `show lldp neighbors` + `show lldp ports <n> neighbors detailed` | LLDP neighbours, their IP and capabilities (every 15 min) |
+| `show lldp neighbors` + `show lldp neighbors detailed` | LLDP neighbours, their IP, capabilities and LLDP-MED model (every 15 min; one command for all ports) |
+| `show version` | Serial number (every 15 min) |
+| `show vlan` | VLANs and the management IP address (every 15 min) |
 | `show temperature`, `show fans`, `show power` | Environment sensors (every 15 min) |
 
-The prompt (`X450e-48p.3 #`) is recognised automatically; a leading `*` means unsaved changes.
+The prompt (`X450e-48p.3 #`, or `Slot-1 Stack.3 #` on a stack) is recognised automatically;
+a leading `*` means unsaved changes.
 
 ### Change
 
@@ -97,8 +100,9 @@ The prompt (`X450e-48p.3 #`) is recognised automatically; a leading `*` means un
 | `enable ports <n>` / `disable ports <n>` | Port on / off |
 | `enable inline-power ports <n>` / `disable inline-power ports <n>` | PoE on / off |
 | `reset inline-power ports <n>` (fallback: disable, wait 5 s, enable) | PoE power cycle |
+| `configure ports <n> display-string <name>` / `unconfigure ports <n> display-string` | Port name |
 | `save configuration` | Save (the y/N question is answered `y`) |
-| `reboot` | Reboot |
+| `reboot` | Reboot. With unsaved changes ExtremeXOS asks "save and reboot?" (`y` / `n`): it's answered as the `save_changes` option says, and the reboot is refused without it |
 
 ## Configuration backups (all devices)
 

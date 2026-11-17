@@ -80,6 +80,48 @@ data:
   enabled: false
 ```
 
+## `aerohive_local.set_poe`
+
+Turn PoE on or off for one port (and save).
+
+```yaml
+action: aerohive_local.set_poe
+data:
+  device_id: <switch>
+  port: "12"
+  enabled: false
+```
+
+## `aerohive_local.set_port_description` (ExtremeXOS)
+
+Name a port (the display string shown in `show ports`): up to 15 letters, digits, `-`, `_`
+or `.`, no spaces, and not just a number. An empty name clears it.
+
+```yaml
+action: aerohive_local.set_port_description
+data:
+  device_id: <switch>
+  port: "12"
+  description: camera-yard
+```
+
+## `aerohive_local.reboot`
+
+Reboot a device. `confirm: true` is required.
+
+On an ExtremeXOS switch with unsaved changes the reboot is **refused** unless you say what
+to do with them: `save_changes: true` saves first, `save_changes: false` reboots without
+them. The Reboot button refuses in that case too, so a reboot never throws changes away by
+accident. On other devices `save_changes: true` saves before rebooting.
+
+```yaml
+action: aerohive_local.reboot
+data:
+  device_id: <switch>
+  confirm: true
+  save_changes: true
+```
+
 ## Configuration backups
 
 See [Power-loss protection and backups](backups.md) for the full picture.
@@ -89,4 +131,5 @@ See [Power-loss protection and backups](backups.md) for the full picture.
 | `aerohive_local.save_config` | Save the running configuration on the device |
 | `aerohive_local.backup_config` | Back up now (returns the file; no duplicate if unchanged). Refused while a "changed after reboot" alert is active |
 | `aerohive_local.list_backups` | List the backups of a device (returns a response) |
+| `aerohive_local.accept_config` | Use the current configuration as the new known-good backup and clear a "changed after reboot" alert (same as the Accept button) |
 | `aerohive_local.restore_config` | Send a backup back to the device (`confirm: true` required; `save: true` to save afterwards; `file:` to pick one) |

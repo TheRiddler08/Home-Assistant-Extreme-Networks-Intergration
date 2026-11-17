@@ -29,7 +29,9 @@ never the ones lost in a power cut.
 
 ## When an alert appears
 
-**Settings → System → Repairs** shows a notice such as *"X450e-48p: configuration changed
+The device's page in the [Network panel](dashboard.md#alerts-and-actions) shows the alert with
+**Restore last backup** and **Keep current** buttons. **Settings → System → Repairs** also
+shows a notice such as *"X450e-48p: configuration changed
 after a reboot"*, with the lines that differ. Then either:
 
 - **The backup is right** (the change is the damage): run the **Restore configuration**

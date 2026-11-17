@@ -9,8 +9,14 @@ Monitor and control **Aerohive / Extreme Networks access points, branch routers,
 and ExtremeXOS switches locally over SSH**. It doesn't use the cloud, HiveManager or
 ExtremeCloud IQ.
 
+![Network panel](docs/images/panel-switch.png)
+
 ## Features
 
+- **Network panel and dashboard cards:** a *Network* page in the sidebar with every device,
+  a live switch front panel (select a port to turn it or its PoE on and off, restart a PoE
+  device, or rename it), Wi-Fi radios and clients, and one-click fixes for configuration
+  alerts. Matching dashboard cards. [More →](docs/dashboard.md)
 - **Auto-discovery:** scan the network, DHCP discovery, and APs found through a switch's
   LLDP neighbours, or add a device by IP.
 - **Wi-Fi manager:** list, add, edit and delete SSIDs. Change passwords, choose radios,
@@ -20,7 +26,8 @@ ExtremeCloud IQ.
 - **Radios:** channel, width, TX/EIRP power, noise floor, utilisation.
 - **Switches:** port link, speed, throughput and counters; PoE power, status, on/off and
   power cycle; LLDP neighbours; port on/off with uplink protection.
-- **System:** firmware, model, serial, uptime, CPU, memory, temperature, fans, IP address, reboot.
+- **System:** firmware, model, serial, uptime, CPU, memory, temperature, fans (RPM), power
+  supplies, power usage, VLANs, IP address, reboot.
 - **Power-loss protection:** automatic configuration backups, an alert when a device comes
   back from a reboot with a different configuration, boot and unsaved-changes checks
   (ExtremeXOS), Save buttons and a restore action.
@@ -60,6 +67,7 @@ Networks (Local SSH)**, and choose **Scan my network** or **Enter IP address man
 | [Installation and setup](docs/installation.md) | Install, add devices, discovery, options |
 | [Supported devices](docs/supported-devices.md) | Tested models, feature matrix, requesting support |
 | [Entities](docs/entities.md) | Every sensor, switch and control, with a dashboard example |
+| [Network panel and cards](docs/dashboard.md) | The sidebar panel, switch front panel and dashboard cards |
 | [Wi-Fi manager](docs/wifi.md) | Managing SSIDs and passwords |
 | [Network overview](docs/overview.md) | The combined *Aerohive Network* device |
 | [Switches](docs/switches.md) | SR-series and ExtremeXOS switches: ports, PoE, LLDP |

@@ -67,7 +67,15 @@ protection. On top of that:
   notice) if the switch came up with Factory Default or the wrong file.
 - **Unsaved changes:** an alert while the prompt shows `*`, plus a **Save configuration**
   button.
+- **Port names:** set a port's display string from the Network panel or with the
+  `set_port_description` action.
+- **VLANs:** VLAN list and the switch's management IP.
+- **Safe reboot:** a reboot with unsaved changes is refused unless you choose to save or
+  discard them ([`reboot` action](actions.md#aerohive_localreboot)).
 - **Backups:** see [Power-loss protection and backups](backups.md).
+
+The [Network panel](dashboard.md) shows the switch's front panel with every port; select a
+port to manage it.
 
 Requirements: SSH enabled (`enable ssh2`) and an admin account; see
 [Supported devices](supported-devices.md#extremexos-switches).

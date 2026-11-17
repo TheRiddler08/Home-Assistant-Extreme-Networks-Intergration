@@ -3,6 +3,38 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.8.0] - 2026-11-17
+
+### Added
+- **Network panel** in the sidebar: every device at a glance; a live switch front panel
+  where you select a port to turn it or its PoE on and off, restart a PoE device, rename it,
+  and see its LLDP neighbour, clients and traffic; Wi-Fi radios, networks and clients;
+  VLANs and health; one-click Save / Restore last backup / Keep current / Reboot for the
+  power-loss alerts; a searchable list of all clients. Works on phones and in dark mode.
+- **Dashboard cards:** `custom:aerohive-switch-card` (front panel with port controls),
+  `custom:aerohive-device-card` and `custom:aerohive-network-card`, with a card editor.
+  Loaded automatically.
+- Actions: `reboot` (with `save_changes`), `set_poe`, `set_port_description`
+  (ExtremeXOS port names) and `accept_config`.
+- ExtremeXOS: serial number (`show version`), VLANs and management IP (`show vlan`), fan
+  speed, power usage, LLDP-MED model of neighbours.
+- WebSocket API (`aerohive_local/snapshot`, `aerohive_local/subscribe`) for the panel and
+  cards.
+
+### Changed
+- ExtremeXOS parsers checked against the example output in the ExtremeXOS command
+  reference: stack prompts (`Slot-1 Stack.2 #`) and two-column `show switch` values on
+  stacks, ELSM flags and VLAN counts in `show ports`, tagged ports in `show fdb`, fan trays,
+  stack temperature and CPU rows. LLDP details are read with one command instead of one per
+  port.
+- Booting the other image (for example a staged upgrade) is reported, not raised as a boot
+  problem; states such as MASTER and BACKUP no longer count as problems.
+
+### Fixed
+- ExtremeXOS reboot with unsaved changes: the "save and reboot? (y - save, n - reboot
+  without save)" prompt is answered as asked instead of always `y`, and the Reboot button
+  refuses until the changes are saved or the `reboot` action says what to do with them.
+
 ## [0.7.0] - 2026-11-16
 
 ### Added

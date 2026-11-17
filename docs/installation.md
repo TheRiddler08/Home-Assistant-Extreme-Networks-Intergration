@@ -65,6 +65,12 @@ Add one config entry per device. The unique ID is the `mgt0` MAC address.
   disabled by default (diagnostics, counters, raw fields, port switches). Entities you
   disabled yourself stay disabled.
 
+## After setup
+
+A **Network** page appears in the sidebar with every device, switch front panels and
+clients, and the dashboard card picker offers *Aerohive switch*, *Aerohive device* and
+*Aerohive network* cards. See [Network panel and dashboard cards](dashboard.md).
+
 ## SSH algorithms
 
 These devices only offer legacy algorithms, so the client explicitly allows
