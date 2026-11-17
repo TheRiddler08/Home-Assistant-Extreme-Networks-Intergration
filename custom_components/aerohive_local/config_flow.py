@@ -50,7 +50,15 @@ from .const import (
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
 )
-from .discovery import ScanResult, async_scan, narrow_network, oui_vendor, scan_targets
+from .discovery import (
+    ScanResult,
+    async_scan,
+    is_aerohive_hostname,
+    is_aerohive_mac,
+    narrow_network,
+    oui_vendor,
+    scan_targets,
+)
 from .entity import radio_label
 from .parsers import (
     dialect_from_version,
@@ -326,8 +334,13 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
         mac = normalize_mac(discovery_info.macaddress)
         host = discovery_info.ip
         await self.async_set_unique_id(mac or host)
+        # A device already set up: just follow its new IP address.
         self._abort_if_unique_id_configured(updates={CONF_HOST: host})
         self._async_abort_entries_match({CONF_HOST: host})
+        # DHCP also reports every device linked to this integration, such as phones and
+        # laptops with a device tracker. Only offer what looks like Aerohive / Extreme gear.
+        if not (is_aerohive_mac(mac) or is_aerohive_hostname(discovery_info.hostname)):
+            return self.async_abort(reason="not_aerohive_device")
         self._discovered_host = host
         name = discovery_info.hostname or host
         self.context["title_placeholders"] = {"name": name, "host": host}

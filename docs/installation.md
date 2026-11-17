@@ -40,7 +40,8 @@ to enter the login. The discovery card shows the device's MAC address, maker, mo
 the switch port it's on, when known. Switches you've added also offer the Aerohive /
 Extreme devices they see as LLDP neighbours. Matching is on the `AH-*` hostname and the MAC prefixes in
 `manifest.json`. For devices that are already configured, DHCP discovery also updates the
-stored IP address when it changes.
+stored IP address when it changes. Other devices on your network (phones, laptops, including tracked clients)
+are never offered.
 
 The username and port are pre-filled from devices you've already added.
 

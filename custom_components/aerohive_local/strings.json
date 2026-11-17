@@ -77,7 +77,8 @@
     "abort": {
       "already_configured": "This device is already configured.",
       "reauth_successful": "Re-authentication was successful.",
-      "already_in_progress": "Setup for this device is already in progress."
+      "already_in_progress": "Setup for this device is already in progress.",
+      "not_aerohive_device": "This device isn't an Aerohive / Extreme Networks access point or switch."
     },
     "flow_title": "{name} ({host})",
     "progress": {

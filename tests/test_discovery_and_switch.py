@@ -59,6 +59,36 @@ async def test_dhcp_discovery_creates_entry(hass: HomeAssistant) -> None:
     assert FakeClient.instances[-1].host == "192.168.1.10"
 
 
+async def test_dhcp_does_not_offer_phones_and_laptops(hass: HomeAssistant) -> None:
+    """DHCP reports every device linked to the integration (e.g. a tracked phone): only Aerohive gear is offered."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_DHCP},
+        data=_dhcp(ip="192.168.1.50", mac="e8b1fc5a1b2c", hostname="Pixel-8"),
+    )  # fmt: skip
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "not_aerohive_device"
+    assert not hass.config_entries.flow.async_progress()
+    # An AP with an unknown MAC prefix is still recognised by its AH- hostname.
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_DHCP},
+        data=_dhcp(ip="192.168.1.60", mac="020000112233", hostname="AH-112233"),
+    )  # fmt: skip
+    assert result["type"] is FlowResultType.FORM
+
+
+async def test_dhcp_updates_ip_of_configured_device_with_any_mac(hass: HomeAssistant) -> None:
+    existing = MockConfigEntry(domain=DOMAIN, unique_id="02:00:00:aa:bb:cc", data=USER_INPUT, title="Lab AP")
+    existing.add_to_hass(hass)
+    with patch("custom_components.aerohive_local.async_setup_entry", return_value=True):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_DHCP},
+            data=_dhcp(ip="192.168.1.88", mac="020000aabbcc", hostname="lab-ap"),
+        )  # fmt: skip
+        await hass.async_block_till_done()
+    assert result["reason"] == "already_configured"
+    assert existing.data[CONF_HOST] == "192.168.1.88"
+
+
 async def test_dhcp_discovery_updates_ip_of_configured_device(hass: HomeAssistant) -> None:
     existing = MockConfigEntry(domain=DOMAIN, unique_id=MAC, data=USER_INPUT, title="AH-7c0680")
     existing.add_to_hass(hass)

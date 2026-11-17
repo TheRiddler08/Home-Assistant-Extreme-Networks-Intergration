@@ -3,6 +3,16 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.10.1] - 2026-11-17
+
+### Fixed
+- Phones, laptops and other clients tracked with a device tracker were offered as new
+  Aerohive devices to set up. Home Assistant's DHCP discovery reports every device linked to
+  the integration (that's how a configured AP's new IP address is picked up), and the
+  integration didn't check what it was. Now only devices with an Aerohive / Extreme MAC
+  prefix or an `AH-xxxxxx` hostname are offered; devices already set up still have their IP
+  address updated.
+
 ## [0.10.0] - 2026-11-17
 
 ### Added
