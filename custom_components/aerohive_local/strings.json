@@ -299,6 +299,15 @@
       },
       "power_supply_status": {
         "name": "Power supply"
+      },
+      "fan_speed": {
+        "name": "Fan speed"
+      },
+      "power_usage": {
+        "name": "Power usage"
+      },
+      "vlans": {
+        "name": "VLANs"
       }
     },
     "button": {
@@ -503,6 +512,60 @@
         "confirm": {
           "name": "Confirm",
           "description": "Must be on: restoring changes the device configuration."
+        }
+      }
+    },
+    "set_poe": {
+      "name": "Turn PoE on or off",
+      "description": "Turn Power over Ethernet on or off for one switch port and save the configuration.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The switch."
+        },
+        "port": {
+          "name": "Port",
+          "description": "Port name, e.g. 5, 1:5 or 1/0/3."
+        },
+        "enabled": {
+          "name": "Enabled",
+          "description": "PoE on or off."
+        }
+      }
+    },
+    "set_port_description": {
+      "name": "Name a port",
+      "description": "Set a switch port's display name (ExtremeXOS display string, up to 15 characters without spaces). Leave the name empty to clear it.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The ExtremeXOS switch."
+        },
+        "port": {
+          "name": "Port",
+          "description": "Port number, e.g. 5 or 1:5."
+        },
+        "description": {
+          "name": "Name",
+          "description": "New name, e.g. camera-1. Empty clears it."
+        }
+      }
+    },
+    "reboot": {
+      "name": "Reboot",
+      "description": "Reboot the device. On ExtremeXOS with unsaved changes the reboot is refused unless save changes is set, so nothing is lost by accident.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The device to reboot."
+        },
+        "save_changes": {
+          "name": "Save changes",
+          "description": "On: save unsaved configuration changes first. Off: reboot and lose them. Not set: refuse if there are unsaved changes."
+        },
+        "confirm": {
+          "name": "Confirm",
+          "description": "Must be on to reboot."
         }
       }
     }

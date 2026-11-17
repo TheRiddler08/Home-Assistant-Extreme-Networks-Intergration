@@ -114,6 +114,27 @@ SET_PORT_SCHEMA = vol.Schema(
     }
 )
 DEVICE_ONLY_SCHEMA = vol.Schema({vol.Required(ATTR_DEVICE_ID): cv.string})
+SET_POE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_DEVICE_ID): cv.string,
+        vol.Required(ATTR_PORT): cv.string,
+        vol.Required("enabled"): cv.boolean,
+    }
+)
+PORT_DESCRIPTION_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_DEVICE_ID): cv.string,
+        vol.Required(ATTR_PORT): cv.string,
+        vol.Optional("description", default=""): vol.Any(None, cv.string),
+    }
+)
+REBOOT_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_DEVICE_ID): cv.string,
+        vol.Optional("save_changes"): cv.boolean,
+        vol.Required("confirm"): cv.boolean,
+    }
+)
 RESTORE_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_DEVICE_ID): cv.string,
@@ -216,6 +237,23 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         )
 
     hass.services.async_register(DOMAIN, "set_port", set_port, SET_PORT_SCHEMA)
+
+    async def set_poe(call: ServiceCall) -> None:
+        await coordinator_for(call).async_set_poe(call.data[ATTR_PORT].strip().lower(), call.data["enabled"])
+
+    async def set_port_description(call: ServiceCall) -> None:
+        await coordinator_for(call).async_set_port_description(
+            call.data[ATTR_PORT].strip(), call.data.get("description") or ""
+        )
+
+    async def reboot(call: ServiceCall) -> None:
+        if not call.data["confirm"]:
+            raise ServiceValidationError("Set confirm: true to reboot the device")
+        await coordinator_for(call).async_reboot(call.data.get("save_changes"))
+
+    hass.services.async_register(DOMAIN, "set_poe", set_poe, SET_POE_SCHEMA)
+    hass.services.async_register(DOMAIN, "set_port_description", set_port_description, PORT_DESCRIPTION_SCHEMA)
+    hass.services.async_register(DOMAIN, "reboot", reboot, REBOOT_SCHEMA)
 
     async def backup_config(call: ServiceCall) -> ServiceResponse:
         return await coordinator_for(call).async_backup_config()

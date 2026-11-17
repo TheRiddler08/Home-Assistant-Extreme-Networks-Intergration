@@ -484,12 +484,46 @@ def _make_exos_handler(received: list[str]):
                 if answer and answer.lower().startswith("y"):
                     unsaved = False
                     process.stdout.write("Saving configuration on master ....... done!\r\n")
+            elif cmd == "reboot":
+                if unsaved:
+                    process.stdout.write(
+                        "Do you want to save configuration changes to primary and reboot?\r\n"
+                        "(y - save and reboot, n - reboot without save, <cr> - cancel command) "
+                    )
+                else:
+                    process.stdout.write("Are you sure you want to reboot the switch? (y/N) ")
+                answer = await _read_line(process)
+                received.append(f"reboot:{answer}")
+                process.stdout.write("\r\nRebooting...\r\n")
+                break
             elif cmd:
                 process.stdout.write(f"ok {cmd}\r\n")
             prompt()
         process.exit(0)
 
     return handler
+
+
+@pytest.mark.parametrize(("unsaved", "save", "answer"), [(False, False, "y"), (True, False, "n"), (True, True, "y")])
+async def test_exos_reboot_prompt(unsaved: bool, save: bool, answer: str) -> None:
+    """The three-way 'save and reboot?' prompt is answered as asked, never a blind 'y'."""
+    received: list[str] = []
+    key = asyncssh.generate_private_key("ssh-rsa", 2048)
+    srv = await asyncssh.create_server(
+        _Server, "127.0.0.1", 0, server_host_keys=[key], process_factory=_make_exos_handler(received),
+        line_editor=False,
+    )  # fmt: skip
+    client = _client(srv.sockets[0].getsockname()[1])
+    try:
+        if unsaved:
+            await client.run("disable ports 5")
+        await client.reboot("reboot", save=save)
+        assert f"reboot:{answer}" in received
+        assert not client.connected
+    finally:
+        await client.close()
+        srv.close()
+        await srv.wait_closed()
 
 
 @pytest.mark.parametrize("paging_supported", [True, False])

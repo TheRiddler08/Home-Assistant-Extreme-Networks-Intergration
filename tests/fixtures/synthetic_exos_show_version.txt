@@ -1,0 +1,8 @@
+Switch      : 800153-00-09 0905G-00001 Rev 9.0 BootROM: 1.0.5.7    IMG: 12.6.3.4
+PSU-1       : Internal PSU-1 800153-00-09 0905G-00001
+PSU-2       :
+
+Image   : ExtremeXOS version 12.6.3.4 v1263b4 by release-manager
+          on Mon Nov 21 10:26:12 EST 2011
+BootROM : 1.0.5.7
+Diagnostics : 5.2

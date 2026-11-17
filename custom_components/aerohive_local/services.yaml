@@ -119,6 +119,55 @@ set_port:
       selector:
         boolean:
 
+set_poe:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+    port:
+      required: true
+      example: "5"
+      selector:
+        text:
+    enabled:
+      required: true
+      selector:
+        boolean:
+
+set_port_description:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+    port:
+      required: true
+      example: "5"
+      selector:
+        text:
+    description:
+      example: "camera-1"
+      selector:
+        text:
+
+reboot:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+    save_changes:
+      selector:
+        boolean:
+    confirm:
+      required: true
+      selector:
+        boolean:
+
 backup_config:
   fields:
     device_id:

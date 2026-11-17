@@ -26,6 +26,7 @@ from .commands import (
 )
 from .parsers import (
     CONFIRM_TAIL_RE,
+    SAVE_CHOICE_RE,
     MORE_TAIL_RE,
     PROMPT_RE,
     clean_output,
@@ -300,7 +301,7 @@ class AerohiveClient:
         return self.hostname is None or prompt_host(match) == self.hostname
 
     async def _read_until_prompt(
-        self, timeout: float, *, confirm: bool = False, password: str | None = None
+        self, timeout: float, *, confirm: bool = False, password: str | None = None, save: bool = False
     ) -> str:
         """Read until the CLI prompt, answering pager and y/n prompts."""
         assert self._proc is not None
@@ -346,8 +347,11 @@ class AerohiveClient:
             if confirm:
                 tail = clean_output(buf[confirm_from:])
                 if CONFIRM_TAIL_RE.search(tail.rstrip("\n")):
-                    _LOGGER.debug("%s: answering confirmation prompt", self._host)
-                    self._write("y\n")
+                    # ExtremeXOS reboot with unsaved changes offers "y - save and reboot,
+                    # n - reboot without save": answer as asked, never a blind "y".
+                    answer = "y" if save or not SAVE_CHOICE_RE.search(tail) else "n"
+                    _LOGGER.debug("%s: answering confirmation prompt with %s", self._host, answer)
+                    self._write(answer + "\n")
                     confirm_from = len(buf)
                     continue
 
@@ -357,10 +361,10 @@ class AerohiveClient:
                     self._note_prompt(match)
                 return buf
 
-    async def _exec(self, command: str, timeout: float, *, confirm: bool = False) -> str:
+    async def _exec(self, command: str, timeout: float, *, confirm: bool = False, save: bool = False) -> str:
         assert self._proc is not None
         self._write(command + "\n")
-        raw = await self._read_until_prompt(timeout, confirm=confirm)
+        raw = await self._read_until_prompt(timeout, confirm=confirm, save=save)
         return strip_echo_and_prompt(clean_output(raw), command)
 
     async def _throttle(self) -> None:
@@ -448,8 +452,12 @@ class AerohiveClient:
                         await self._close()
         return outputs
 
-    async def reboot(self, command: str = "reboot") -> None:
-        """Send reboot, confirm, and drop the session (device goes away)."""
+    async def reboot(self, command: str = "reboot", *, save: bool = False) -> None:
+        """Send reboot, confirm, and drop the session (device goes away).
+
+        ``save`` answers ExtremeXOS's "save configuration changes and reboot?"
+        prompt (only shown when there are unsaved changes).
+        """
         async with self._lock:
             await self._throttle()
             if not self.connected:
@@ -458,7 +466,7 @@ class AerohiveClient:
                 await self._ensure_privileged()
             try:
                 _LOGGER.debug("%s: > %s", self._host, command)
-                output = await self._exec(command, 15, confirm=True)
+                output = await self._exec(command, 15, confirm=True, save=save)
                 error = find_cli_error(output)
                 if error:
                     raise AerohiveCommandError(command, error)

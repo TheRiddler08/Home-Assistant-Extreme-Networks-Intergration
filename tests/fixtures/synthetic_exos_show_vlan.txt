@@ -1,0 +1,14 @@
+-----------------------------------------------------------------------------------------------
+Name            VID  Protocol Addr       Flags                         Proto  Ports  Virtual
+                                                                              Active router
+                                                                              /Total
+-----------------------------------------------------------------------------------------------
+Default         1    192.168.8.20   /24  -f------------------------- ANY    4 /52  VR-Default
+cameras         30   ------------------------------------------------ ANY    1 /2   VR-Default
+Mgmt            4095 ------------------------------------------------ ANY    0 /1   VR-Mgmt
+-----------------------------------------------------------------------------------------------
+Flags : (B) BFD Enabled, (c) 802.1ad customer VLAN, (C) EAPS Control VLAN,
+        (d) Dynamically created VLAN, (D) VLAN Admin Disabled,
+        (f) IP Forwarding Enabled, (T) Member of STP Domain
+
+Total number of VLAN(s) : 3

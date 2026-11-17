@@ -36,7 +36,8 @@ EXOS_ERROR = "                   ^\n% Invalid input detected at '^' marker."
 
 def _exos_responses() -> dict[str, str]:
     return {
-        "show version": "Switch      : 800153-00-09 0905G-00001 Rev 9.0 BootROM: 1.0.5.7    IMG: 12.6.3.4\n",
+        "show version": load_fixture("synthetic_exos_show_version.txt"),
+        "show vlan": load_fixture("synthetic_exos_show_vlan.txt"),
         "show switch": load_fixture("synthetic_exos_show_switch.txt"),
         "show ports no-refresh": load_fixture("synthetic_exos_show_ports.txt"),
         "show ports statistics no-refresh": load_fixture("synthetic_exos_show_ports_statistics.txt"),
@@ -47,8 +48,7 @@ def _exos_responses() -> dict[str, str]:
         "show memory": load_fixture("synthetic_exos_show_memory.txt"),
         "show configuration": load_fixture("synthetic_exos_show_configuration.txt"),
         "show lldp neighbors": load_fixture("synthetic_exos_show_lldp_neighbors.txt"),
-        "show lldp ports 2 neighbors detailed": load_fixture("synthetic_exos_show_lldp_port_2_detail.txt"),
-        "show lldp ports 49 neighbors detailed": load_fixture("synthetic_exos_show_lldp_port_49_detail.txt"),
+        "show lldp neighbors detailed": load_fixture("synthetic_exos_show_lldp_neighbors_detailed.txt"),
         "show temperature": load_fixture("synthetic_exos_show_temperature.txt"),
         "show fans": load_fixture("synthetic_exos_show_fans.txt"),
         "show power": load_fixture("synthetic_exos_show_power.txt"),
@@ -137,6 +137,12 @@ async def test_exos_entities(hass: HomeAssistant, exos_entry: MockConfigEntry) -
     assert st(_x(hass, "binary_sensor", "unsaved_config")).state == "off"
     assert st(_x(hass, "binary_sensor", "config_changed_after_reboot")).state == "off"
     assert st(_x(hass, "sensor", "last_backup")).state not in ("unknown", "unavailable")
+    assert st(_x(hass, "sensor", "fan_speed")).state == "4790"  # the slowest fan
+    vlans = st(_x(hass, "sensor", "vlans"))
+    assert vlans.state == "3" and vlans.attributes["vlans"][0]["ip_address"] == "192.168.8.20"
+    assert st(_x(hass, "sensor", "ip_address")).state == "192.168.8.20"
+    assert st(_x(hass, "sensor", "serial_number")).state == "0905G-00001"
+    assert device.serial_number == "0905G-00001"
     # Port 49 leads to the core switch (LLDP): its MACs aren't wired clients of this switch.
     assert st(_x(hass, "sensor", "wired_clients")).state == "2"
     assert st(_x(hass, "switch", "port_49")).attributes["uplink"] is True
@@ -171,6 +177,45 @@ async def test_exos_controls(hass: HomeAssistant, exos_entry: MockConfigEntry) -
 
     client.commands.clear()
     await hass.services.async_call("button", "press", {"entity_id": _x(hass, "button", "reboot")}, blocking=True)
+    assert client.commands == ["reboot"]
+
+
+async def test_exos_services_and_safe_reboot(hass: HomeAssistant, exos_entry: MockConfigEntry) -> None:
+    client = _client()
+    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, EXOS_MAC)})
+    client.commands.clear()
+    await hass.services.async_call(
+        DOMAIN, "set_port_description", {"device_id": device.id, "port": "4", "description": "cam-1"}, blocking=True
+    )
+    assert _config_cmds(client)[:2] == ["configure ports 4 display-string cam-1", "save configuration"]
+    client.commands.clear()
+    await hass.services.async_call(DOMAIN, "set_port_description", {"device_id": device.id, "port": "4"}, blocking=True)
+    assert _config_cmds(client)[0] == "unconfigure ports 4 display-string"
+    with pytest.raises(HomeAssistantError, match="15"):
+        await hass.services.async_call(
+            DOMAIN, "set_port_description", {"device_id": device.id, "port": "4", "description": "has space"},
+            blocking=True,
+        )  # fmt: skip
+    client.commands.clear()
+    await hass.services.async_call(DOMAIN, "set_poe", {"device_id": device.id, "port": "6", "enabled": False}, blocking=True)
+    assert _config_cmds(client)[0] == "disable inline-power ports 6"
+
+    # Unsaved changes: the reboot button refuses; the action needs save_changes.
+    client.config_unsaved = True
+    client.commands.clear()
+    with pytest.raises(HomeAssistantError, match="unsaved configuration changes"):
+        await hass.services.async_call("button", "press", {"entity_id": _x(hass, "button", "reboot")}, blocking=True)
+    with pytest.raises(HomeAssistantError, match="confirm"):
+        await hass.services.async_call(DOMAIN, "reboot", {"device_id": device.id, "confirm": False}, blocking=True)
+    assert client.commands == []
+    await hass.services.async_call(
+        DOMAIN, "reboot", {"device_id": device.id, "confirm": True, "save_changes": True}, blocking=True
+    )
+    assert client.commands == ["reboot (save)"]
+    client.commands.clear()
+    await hass.services.async_call(
+        DOMAIN, "reboot", {"device_id": device.id, "confirm": True, "save_changes": False}, blocking=True
+    )
     assert client.commands == ["reboot"]
 
 

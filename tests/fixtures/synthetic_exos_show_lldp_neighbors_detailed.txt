@@ -1,0 +1,36 @@
+-----------------------------------------------------------------------------
+LLDP Port 2 detected 1 neighbor
+  Neighbor: bc:f3:10:7c:06:80/mgt0, age 11 seconds
+    - Chassis ID type: MAC address (4); Chassis ID: bc:f3:10:7c:06:80
+      Port ID type: interface name (5); Port ID: "mgt0"
+    - Time To Live: 120 seconds
+    - System Name: "AH-7c0680"
+    - System Capabilities : "Bridge, WLAN Access Point"
+      Enabled Capabilities: "Bridge"
+    - Management Address Subtype: IPv4 (1)
+      Management Address        : 192.168.9.73
+-----------------------------------------------------------------------------
+LLDP Port 49 detected 1 neighbor
+  Neighbor: 00:04:96:12:34:56/1:24, age 5 seconds
+    - Chassis ID type: MAC address (4); Chassis ID: 00:04:96:12:34:56
+      Port ID type: ifName (5); Port ID: "1:24"
+    - Time To Live: 120 seconds
+    - System Name: "core-switch"
+    - System Capabilities : "Bridge, Router"
+      Enabled Capabilities: "Bridge, Router"
+    - Management Address Subtype: IPv4 (1)
+      Management Address        : 192.168.8.2
+-----------------------------------------------------------------------------
+LLDP Port 4 detected 1 neighbor
+  Neighbor: 192.168.8.61/b8:a4:4f:00:d3:de, age 30 seconds
+    - Chassis ID type: Network address (5); Address type: IPv4 (1)
+      Chassis ID      : 192.168.8.61
+      Port ID type: MAC address (3); Port ID: b8:a4:4f:00:d3:de
+    - Time To Live: 120 seconds
+    - System Name: "camera-driveway"
+    - System Description: "IP camera firmware 5.5.1 build 2026-01-12, a long description that wr\
+      aps onto a second line"
+    - MED Capabilities: "MED Capabilities, Network Policy, Inventory"
+      MED Device Type : Endpoint Class I (1)
+    - MED Manufacturer Name: "ExampleCam"
+    - MED Model Name: "EC-200"

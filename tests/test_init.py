@@ -97,8 +97,8 @@ class FakeClient:
                 raise AerohiveCommandError(command, error)
         return outputs
 
-    async def reboot(self, command: str = "reboot") -> None:
-        self.commands.append(command)
+    async def reboot(self, command: str = "reboot", *, save: bool = False) -> None:
+        self.commands.append(f"{command} (save)" if save else command)
 
     async def close(self) -> None:
         self.connected = False

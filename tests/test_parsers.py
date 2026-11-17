@@ -622,6 +622,9 @@ def test_exos_prompt() -> None:
     # other prompt styles unaffected
     assert p.PROMPT_RE.search("x\nAH-7c0680#").group("host") == "AH-7c0680"
     assert p.PROMPT_RE.search("x\n(AH-Switch) #").group("phost") == "AH-Switch"
+    # stacks put the slot in front: "* Slot-1 Stack.2 #"
+    m = p.PROMPT_RE.search("out\n* Slot-1 Stack.2 #")
+    assert p.prompt_host(m) == "Stack" and m.group("unsaved") and m.group("slot") == "Slot-1"
     assert p.clean_output("a\nPress <SPACE> to continue or <Q> to quit:\r      \rb\n").split("\n")[:2] == ["a", "b"]
 
 
@@ -639,9 +642,44 @@ def test_exos_show_switch() -> None:
         .replace("Config Booted:    primary.cfg", "Config Booted:    Factory Default")
         .replace("Image Booted:     primary", "Image Booted:     secondary")
     )
-    assert len(bad.boot_problems) == 2
+    assert len(bad.boot_problems) == 1  # booting the other image is reported, not a problem
     assert "Factory Default" in bad.boot_problems[0]
     assert bad.booted_version == "12.5.4.5"
+    assert bad.image_pending == "primary"
+
+
+def test_exos_show_switch_stack_and_states() -> None:
+    """Stack/MSM layouts have two columns (master, backup); states like MASTER are fine."""
+    text = (
+        "SysName:          Stack\n"
+        "Current State:    MASTER                       BACKUP (In Sync)\n"
+        "Image Selected:   primary                      primary\n"
+        "Image Booted:     primary                      primary\n"
+        "Primary ver:      15.3.1.4                     15.3.1.4\n"
+        "Config Selected:  primary.cfg                  primary.cfg\n"
+        "Config Booted:    primary.cfg                  primary.cfg\n"
+    )
+    info = p.parse_exos_show_switch(text)
+    assert info.current_state == "MASTER"
+    assert (info.image_booted, info.config_booted, info.primary_version) == ("primary", "primary.cfg", "15.3.1.4")
+    assert info.boot_problems == []
+    failed = p.parse_exos_show_switch(text.replace("MASTER    ", "FAILED    "))
+    assert failed.boot_problems == ["state is FAILED"]
+    default = p.parse_exos_show_switch(
+        text.replace("Config Booted:    primary.cfg                  primary.cfg", "Config Booted:    Factory Default")
+    )
+    assert default.config_booted == "Factory Default" and len(default.boot_problems) == 1
+
+
+def test_exos_version_and_vlans() -> None:
+    assert p.parse_exos_version(load_fixture("synthetic_exos_show_version.txt")) == ("0905G-00001", "12.6.3.4")
+    modular = "Chassis     : 800427-00-01 1135G-02182 Rev 1.0\nImage   : ExtremeXOS version 15.1.0.30 v1510b30\n"
+    assert p.parse_exos_version(modular) == ("1135G-02182", "15.1.0.30")
+    vlans = p.parse_exos_vlans(load_fixture("synthetic_exos_show_vlan.txt"))
+    assert list(vlans) == ["Default", "cameras", "Mgmt"]
+    assert (vlans["Default"].vid, vlans["Default"].ip_address, vlans["Default"].prefix) == (1, "192.168.8.20", 24)
+    assert (vlans["Default"].active_ports, vlans["Default"].total_ports) == (4, 52)
+    assert vlans["cameras"].ip_address is None and vlans["Mgmt"].virtual_router == "VR-Mgmt"
 
 
 def test_exos_ports() -> None:
@@ -653,6 +691,22 @@ def test_exos_ports() -> None:
     assert ports["5"].admin_state == "Disable"
     assert ports["50"].extra["link_state"] == "NP"
     assert all(i.is_port for i in ports.values())
+
+
+def test_exos_ports_variants() -> None:
+    """Stack ports, VLAN counts, ELSM flag, and a display string with spaces."""
+    text = (
+        "1:1   uplink to core    (3)          E     A D   1000   FULL\n"
+        "1:2                     Default      E     A     1000\n"
+        "1:3   a b               Default      D     R\n"
+        "1:4                     Default      E     L\n"
+    )
+    ports = p.parse_exos_ports(text)
+    assert ports["1:1"].vlan == "3 VLANs" and ports["1:1"].extra["elsm"] == "down"
+    assert ports["1:1"].extra["display_string"] == "uplink to core" and ports["1:1"].is_up
+    assert ports["1:2"].speed == "1000" and ports["1:2"].duplex is None
+    assert ports["1:3"].extra["display_string"] == "a b" and ports["1:3"].admin_state == "Disable"
+    assert ports["1:4"].extra["link_state"] == "L" and ports["1:4"].is_up is False
 
 
 def test_exos_statistics_poe_fdb_lldp() -> None:
@@ -671,17 +725,51 @@ def test_exos_statistics_poe_fdb_lldp() -> None:
     lldp = p.parse_exos_lldp_neighbors(load_fixture("synthetic_exos_show_lldp_neighbors.txt"))
     assert set(lldp) == {"1", "2", "49"}
     assert lldp["49"].system_name == "core-switch" and lldp["49"].port_id == "1:24"
-    detail = p.parse_exos_lldp_detail(load_fixture("synthetic_exos_show_lldp_port_2_detail.txt"), "2")
-    assert detail.management_address == "192.168.9.73"
-    assert detail.system_name == "AH-7c0680"
-    assert detail.is_access_point
+    details = p.parse_exos_lldp_detail_all(load_fixture("synthetic_exos_show_lldp_neighbors_detailed.txt"))
+    assert set(details) == {"2", "49", "4"}
+    assert details["2"].management_address == "192.168.9.73"
+    assert details["2"].system_name == "AH-7c0680"
+    assert details["2"].is_access_point
+    assert details["49"].capabilities_enabled == "Bridge, Router"
+    assert details["4"].chassis_id == "192.168.8.61"
+    assert details["4"].system_description.endswith("wraps onto a second line")  # "\\" continuation joined
+    assert details["4"].raw["med_model_name"] == "EC-200"
+    one = p.parse_exos_lldp_detail(load_fixture("synthetic_exos_show_lldp_neighbors_detailed.txt"), "2")
+    assert one is not None and one.system_name == "AH-7c0680"
+
+
+def test_exos_fdb_variants() -> None:
+    text = (
+        "00:01:02:03:04:05 v1(0010)      0000  d m         3(0010)\n"
+        "00:01:02:03:04:05 v2(0020)      0000  d m         3(0010)\n"
+        "00:aa:bb:cc:dd:ee Default(0001) 0000  s m         1:7\n"
+    )
+    fdb = p.parse_exos_fdb(text)
+    assert [(e.mac, e.port, e.vlan, e.entry_type) for e in fdb] == [
+        ("00:01:02:03:04:05", "3", 10, "dynamic"),
+        ("00:aa:bb:cc:dd:ee", "1:7", 1, "static"),
+    ]
 
 
 def test_exos_environment_cpu_memory() -> None:
     assert p.parse_exos_temperature(load_fixture("synthetic_exos_show_temperature.txt")) == (43.0, "Normal")
     state, fans = p.parse_exos_fans(load_fixture("synthetic_exos_show_fans.txt"))
-    assert state == "Operational" and fans["fan-1"] == "Operational at 4800 RPM"
-    assert p.parse_exos_power(load_fixture("synthetic_exos_show_power.txt")) == {"PSU 1": "Powered On"}
+    assert state == "Operational" and fans["Fan-1"] == "Operational at 4800 RPM"
+    assert p.fan_rpms(fans) == {"Fan-1": 4800, "Fan-2": 4830, "Fan-3": 4790}
+    supplies, usage = p.parse_exos_power(load_fixture("synthetic_exos_show_power.txt"))
+    assert supplies == {"PSU 1": "Powered On", "PSU 2": "Empty"} and usage is None
+    env = p.EnvironmentInfo(power_supplies=supplies, fans_state=state, fans=fans, temperature_status="Normal")
+    assert env.power_state == "Powered On" and env.problems == []
+    trays = (
+        "FanTray-1 information:\nState:   Operational\nFan-1:   Operational at 7200 RPM\n"
+        "FanTray-2 information:\nState:   Failed\nFan-1:   Failed at 0 RPM\n"
+    )
+    state, fans = p.parse_exos_fans(trays)
+    assert state == "Failed" and fans == {"FanTray-1 Fan-1": "Operational at 7200 RPM", "FanTray-2 Fan-1": "Failed at 0 RPM"}
+    assert p.parse_exos_power("PowerSupply 1 information:\nState:   Powered On\nSystem Power Usage : 85.5 W\n")[1] == 85.5
+    stack_temp = "Slot-1 : X460-48p  41.0  Normal  -10 0-48 57\nSlot-2 : X460-48p  52.5  Warning -10 0-48 57\n"
+    assert p.parse_exos_temperature(stack_temp) == (52.5, "Warning")
+    assert p.parse_exos_cpu("Slot-1 System  n/a  3.5  2.0\n").cpu_total == 3.5
     assert p.parse_exos_cpu(load_fixture("synthetic_exos_show_cpu_monitoring.txt")).cpu_total == 2.0
     mem = p.parse_show_memory(load_fixture("synthetic_exos_show_memory.txt"))
     assert mem.memory_total_kb == 262144 and mem.memory_free_kb == 104121
@@ -697,6 +785,9 @@ def test_exos_parsers_never_raise(garbage: str) -> None:
     p.parse_exos_fdb(garbage)
     p.parse_exos_lldp_neighbors(garbage)
     p.parse_exos_lldp_detail(garbage, "1")
+    p.parse_exos_lldp_detail_all(garbage)
+    p.parse_exos_version(garbage)
+    p.parse_exos_vlans(garbage)
     p.parse_exos_temperature(garbage)
     p.parse_exos_fans(garbage)
     p.parse_exos_power(garbage)

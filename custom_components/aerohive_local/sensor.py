@@ -23,6 +23,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import (
     PERCENTAGE,
+    REVOLUTIONS_PER_MINUTE,
     SIGNAL_STRENGTH_DECIBELS,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     EntityCategory,
@@ -335,6 +336,31 @@ DEVICE_SENSORS: tuple[DeviceSensorDescription, ...] = (
         value_fn=lambda d: d.environment.power_state if d.environment else None,
         exists_fn=lambda d: bool(d.environment and d.environment.power_supplies),
         attrs_fn=lambda d: dict(d.environment.power_supplies) if d.environment else {},
+    ),
+    DeviceSensorDescription(
+        key="fan_speed", translation_key="fan_speed", entity_category=DIAG, icon="mdi:fan",
+        native_unit_of_measurement=REVOLUTIONS_PER_MINUTE, state_class=SensorStateClass.MEASUREMENT,
+        # The slowest fan: the one that matters when a fan starts failing.
+        value_fn=lambda d: min(d.environment.fan_rpm.values()) if d.environment and d.environment.fan_rpm else None,
+        exists_fn=lambda d: bool(d.environment and d.environment.fan_rpm),
+        attrs_fn=lambda d: dict(d.environment.fan_rpm) if d.environment else {},
+    ),
+    DeviceSensorDescription(
+        key="power_usage", translation_key="power_usage", device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT, state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.environment.power_usage_w if d.environment else None,
+        exists_fn=lambda d: bool(d.environment and d.environment.power_usage_w is not None),
+    ),
+    DeviceSensorDescription(
+        key="vlans", translation_key="vlans", entity_category=DIAG, icon="mdi:lan",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: len(d.vlans),
+        exists_fn=lambda d: bool(d.vlans),
+        attrs_fn=lambda d: {"vlans": [
+            extra_attrs(name=v.name, vid=v.vid, ip_address=v.ip_address, prefix=v.prefix,
+                        active_ports=v.active_ports, total_ports=v.total_ports)
+            for v in d.vlans.values()
+        ]},
     ),
     DeviceSensorDescription(
         key="wired_clients", translation_key="wired_clients", state_class=SensorStateClass.MEASUREMENT,

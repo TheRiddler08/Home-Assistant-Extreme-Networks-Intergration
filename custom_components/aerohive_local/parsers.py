@@ -30,18 +30,22 @@ MORE_TAIL_RE = re.compile(
 )
 _EXOS_MORE_RE = re.compile(r"Press <SPACE> to continue or <Q> to quit:[ \t]*(?:\r[ \t]*)*", re.IGNORECASE)
 CONFIRM_TAIL_RE = re.compile(
-    r"(\((?:y/n|yes/no)\)|\[(?:y/n|yes/no)\]|<(?:y/n|yes/no)>|\b(?:y/n|yes/no)\b)"
-    r"[^\n]{0,20}[:?]?\s*$",
+    r"(?:(\((?:y/n|yes/no)\)|\[(?:y/n|yes/no)\]|<(?:y/n|yes/no)>|\b(?:y/n|yes/no)\b)[^\n]{0,20}[:?]?"
+    # ExtremeXOS reboot: "(y - save and reboot, n - reboot without save, <cr> - cancel command)"
+    r"|\(y\s*-[^)\n]*\bn\s*-[^)\n]*\))\s*$",
     re.IGNORECASE,
 )
+# The ExtremeXOS three-way reboot prompt ("y - save and reboot, n - reboot without save").
+SAVE_CHOICE_RE = re.compile(r"\(y\s*-\s*save[^)\n]*\bn\s*-", re.IGNORECASE)
 # CLI prompt, anchored at the end of the buffer:
 #   HiveOS / IQ Engine APs and routers: "AH-7c0680#"
 #   SR-series switches (FASTPATH-style): "(AH-Switch) #", "(AH-Switch) >",
 #   and in config mode "(AH-Switch) (Config)#" / "(AH-Switch) (Interface 1/0/1)#"
-#   ExtremeXOS switches: "X450e-48p.3 #", "* X450e-48p.4 #" (* = unsaved changes)
+#   ExtremeXOS switches: "X450e-48p.3 #", "* X450e-48p.4 #" (* = unsaved changes),
+#   stacks "* Slot-1 Stack.2 #"
 PROMPT_RE = re.compile(
     r"(?:^|\n)[ \t]*(?:"
-    r"(?P<unsaved>\*[ \t]+)?(?P<xhost>[A-Za-z0-9][A-Za-z0-9_\-\.]*?)\.(?P<seq>\d+)[ \t]+"
+    r"(?P<unsaved>\*[ \t]+)?(?:(?P<slot>Slot-\d+)[ \t]+)?(?P<xhost>[A-Za-z0-9][A-Za-z0-9_\-\.]*?)\.(?P<seq>\d+)[ \t]+"
     r"|\((?P<phost>[^()\n]{1,64})\)(?:[ \t]*\((?P<submode>[^()\n]{1,64})\))?[ \t]*"
     r"|(?P<host>[A-Za-z0-9][A-Za-z0-9_\-\.]*))"
     r"(?P<mode>[#>])[ \t]*$"
@@ -1633,18 +1637,38 @@ def parse_lldp_neighbors(text: str) -> dict[str, LldpNeighbor]:
 # --------------------------------------------------------------------------
 # ExtremeXOS (Summit X450e and other EXOS switches)
 # --------------------------------------------------------------------------
+# Formats follow the ExtremeXOS 12.x-16.x command reference examples.
 
-_EXOS_PORT_STATES = {"E", "D", "F", "L"}  # enabled, disabled, ...
-_EXOS_LINK_STATES = {"A", "R", "NP", "L", "D", "LB", "ND", "d"}
+_EXOS_PORT_STATES = {"E", "D", "F"}  # Enabled, Disabled, ...
+_EXOS_LINK_STATES = {"A", "R", "NP", "L"}  # Active, Ready, Not Present, Loopback
+_EXOS_OK_STATES = ("OPERATIONAL", "MASTER", "BACKUP", "STANDBY", "IN SYNC")
+_EXOS_BAD_STATES = ("FAIL", "ERROR", "INIT", "BOOTING", "DOWN", "NOT ", "POWER")
+
+
+def _first_column(value: str | None) -> str | None:
+    """'primary.cfg   primary.cfg' (MSM/stack two-column layout) -> 'primary.cfg'.
+
+    'Factory Default' (a two-word value) is kept as-is.
+    """
+    value = _none_if_empty(value)
+    if value is None:
+        return None
+    parts = value.split()
+    if len(parts) >= 2 and (parts[0].endswith(".cfg") or parts[0].lower() in {"primary", "secondary"}):
+        return parts[0]
+    if len(parts) >= 2 and re.match(r"^\d+(?:\.\d+)+$", parts[0]):
+        return parts[0]
+    return value
 
 
 @dataclass
 class ExosSwitchInfo:
-    """'show switch' on ExtremeXOS."""
+    """'show switch' (and 'show version') on ExtremeXOS."""
 
     sysname: str | None = None
     system_type: str | None = None
     mac: str | None = None
+    serial: str | None = None
     uptime_seconds: int | None = None
     boot_count: int | None = None
     boot_time: str | None = None
@@ -1667,6 +1691,13 @@ class ExosSwitchInfo:
         return self.primary_version
 
     @property
+    def image_pending(self) -> str | None:
+        """A different image is selected for the next reboot (e.g. a staged upgrade)."""
+        if self.image_booted and self.image_selected and self.image_booted != self.image_selected:
+            return self.image_selected
+        return None
+
+    @property
     def boot_problems(self) -> list[str]:
         """Signs the switch did not come up the way it was configured to."""
         problems = []
@@ -1675,10 +1706,8 @@ class ExosSwitchInfo:
             problems.append(f"booted with {self.config_booted} instead of a saved configuration")
         elif self.config_booted and self.config_selected and self.config_booted != self.config_selected:
             problems.append(f"booted {self.config_booted} but {self.config_selected} is selected")
-        if self.image_booted and self.image_selected and self.image_booted != self.image_selected:
-            problems.append(f"booted the {self.image_booted} image but {self.image_selected} is selected")
         state = (self.current_state or "").upper()
-        if state and state != "OPERATIONAL":
+        if state and any(w in state for w in _EXOS_BAD_STATES) and not any(w in state for w in _EXOS_OK_STATES):
             problems.append(f"state is {self.current_state}")
         return problems
 
@@ -1686,16 +1715,27 @@ class ExosSwitchInfo:
 def parse_exos_show_switch(text: str) -> ExosSwitchInfo:
     kv = parse_key_values(text)
     info = ExosSwitchInfo(raw=kv)
-    fields_map = {
-        "sysname": "sysname", "system_type": "system_type", "boot_time": "boot_time",
-        "current_state": "current_state", "syshealth_check": "health", "image_selected": "image_selected",
-        "image_booted": "image_booted", "primary_ver": "primary_version", "secondary_ver": "secondary_version",
-        "config_selected": "config_selected", "config_booted": "config_booted",
-    }  # fmt: skip
-    for key, attr in fields_map.items():
+    plain = {"sysname": "sysname", "system_type": "system_type", "boot_time": "boot_time",
+             "syshealth_check": "health"}  # fmt: skip
+    columns = {"current_state": "current_state", "image_selected": "image_selected",
+               "image_booted": "image_booted", "primary_ver": "primary_version",
+               "secondary_ver": "secondary_version", "config_selected": "config_selected",
+               "config_booted": "config_booted"}  # fmt: skip
+    for key, attr in plain.items():
         if _none_if_empty(kv.get(key)) is not None:
             setattr(info, attr, kv[key])
             info.mapped_keys.append(key)
+    for key, attr in columns.items():
+        value = kv.get(key)
+        if _none_if_empty(value) is None:
+            continue
+        if key == "current_state":
+            # "MASTER                       BACKUP (In Sync)" -> "MASTER"
+            value = re.split(r"\s{2,}", value.strip())[0]
+        else:
+            value = _first_column(value)
+        setattr(info, attr, value)
+        info.mapped_keys.append(key)
     info.mac = normalize_mac(kv.get("system_mac"))
     info.boot_count = parse_int(kv.get("boot_count"))
     info.uptime_seconds = parse_uptime(kv.get("system_uptime"))
@@ -1703,10 +1743,34 @@ def parse_exos_show_switch(text: str) -> ExosSwitchInfo:
     return info
 
 
+def parse_exos_version(text: str) -> tuple[str | None, str | None]:
+    """'show version' -> (serial number, image version).
+
+    'Switch : 800153-00-09 0905G-00001 Rev 9.0 BootROM: 1.0.5.7 IMG: 12.6.3.4'
+    (standalone; 'Slot-1' on a stack, 'Chassis' on a modular switch) and
+    'Image : ExtremeXOS version 12.6.3.4 v1263b4 by release-manager'.
+    """
+    serial = image = None
+    for line in clean_output(text).split("\n"):
+        match = re.match(r"^\s*(Switch|Chassis|Slot-1)\s*:\s*(\S+)\s+(\S+)\s+Rev", line, re.IGNORECASE)
+        if match and serial is None:
+            serial = match.group(3)
+        img = re.match(r"^\s*Image\s*:\s*ExtremeXOS version\s+(\S+)", line, re.IGNORECASE)
+        if img and image is None:
+            image = img.group(1)
+    return serial, image
+
+
+def _exos_port_token(token: str) -> str | None:
+    """'1:2' / '12' / '3(0010)' (port with a tag) -> port name."""
+    token = re.sub(r"\(.*\)$", "", token.strip())
+    return token if _EXOS_PORT_RE.match(token) else None
+
+
 def parse_exos_ports(text: str) -> dict[str, Interface]:
     """'show ports no-refresh' (Port Summary), parsed by tokens from the right.
 
-    Row: <port> [display string] <vlan name> <port state> <link state> [speed] [duplex]
+    Row: <port> [display string] <vlan name | (n VLANs)> <port state> <link state> [ELSM D] [speed] [duplex]
     """
     result: dict[str, Interface] = {}
     for line in clean_output(text).split("\n"):
@@ -1719,16 +1783,20 @@ def parse_exos_ports(text: str) -> dict[str, Interface]:
             iface.duplex = rest.pop().capitalize()
         if rest and rest[-1].isdigit():
             iface.speed = rest.pop()
-        if rest and rest[-1] in _EXOS_LINK_STATES:
-            link = rest.pop()
-            iface.state = "Up" if link == "A" else "Down"
-            iface.extra["link_state"] = link
-        else:
+        if len(rest) >= 2 and rest[-1] == "D" and rest[-2] in _EXOS_LINK_STATES:
+            rest.pop()  # "A D": ELSM enabled but not up
+            iface.extra["elsm"] = "down"
+        if not rest or rest[-1] not in _EXOS_LINK_STATES:
             continue
+        link = rest.pop()
+        iface.state = "Up" if link == "A" else "Down"
+        iface.extra["link_state"] = link
         if rest and rest[-1] in _EXOS_PORT_STATES:
             iface.admin_state = "Enable" if rest.pop() == "E" else "Disable"
         if rest:
-            iface.vlan = rest.pop()
+            vlan = rest.pop()
+            count = re.match(r"^\((\d+)\)$", vlan)
+            iface.vlan = f"{count.group(1)} VLANs" if count else vlan
         if rest:
             iface.extra["display_string"] = " ".join(rest)
         result[name] = iface
@@ -1736,7 +1804,7 @@ def parse_exos_ports(text: str) -> dict[str, Interface]:
 
 
 def parse_exos_port_statistics(text: str) -> dict[str, InterfaceDetail]:
-    """'show ports statistics no-refresh': Tx Pkt, Tx Byte, Rx Pkt, Rx Byte, ... per port."""
+    """'show ports statistics no-refresh': Tx Pkt, Tx Byte, Rx Pkt, Rx Byte, Rx Bcast, Rx Mcast."""
     result: dict[str, InterfaceDetail] = {}
     for line in clean_output(text).split("\n"):
         tokens = line.split()
@@ -1752,20 +1820,20 @@ def parse_exos_port_statistics(text: str) -> dict[str, InterfaceDetail]:
 
 
 def parse_exos_inline_power(text: str) -> PoeSummary:
-    """'show inline-power': budget and measured power (slot table or key/values)."""
+    """'show inline-power': budgeted and measured power.
+
+    Standalone: 'Operational   405 W   0 W   Disabled' (budgeted, measured);
+    modular/stack: one row per slot ('3  Enabled  Operational  50 W  9 W').
+    Budgets in parentheses aren't allocated and are skipped.
+    """
     summary = PoeSummary(raw=parse_key_values(text))
-    for key, value in summary.raw.items():
-        if summary.budget_w is None and ("budget" in key or "allocated" in key):
-            summary.budget_w = parse_number(value)
-        elif summary.used_w is None and ("measured" in key or "consum" in key):
-            summary.used_w = parse_number(value)
-    if summary.budget_w is None:
-        for line in clean_output(text).split("\n"):
-            watts = re.findall(r"(\d+(?:\.\d+)?)\s*W\b", line)
-            if len(watts) >= 2:
-                summary.budget_w = summary.budget_w or 0.0
-                summary.budget_w += float(watts[0])
-                summary.used_w = (summary.used_w or 0.0) + float(watts[1])
+    for line in clean_output(text).split("\n"):
+        if "(" in line and re.search(r"\(\s*\d+\s*W\s*\)", line):
+            continue
+        watts = re.findall(r"(\d+(?:\.\d+)?)\s*W\b", line)
+        if len(watts) >= 2 and not re.match(r"^\s*(System|Redundant)", line, re.IGNORECASE):
+            summary.budget_w = (summary.budget_w or 0.0) + float(watts[0])
+            summary.used_w = (summary.used_w or 0.0) + float(watts[1])
     if summary.budget_w is not None and summary.used_w is not None:
         summary.remaining_w = round(summary.budget_w - summary.used_w, 2)
     return summary
@@ -1782,7 +1850,7 @@ def parse_exos_inline_power_info(text: str) -> dict[str, PoePort]:
         numbers = tokens[3:6]
         if not all(parse_number(n) is not None for n in numbers):
             continue
-        entry = PoePort(port=port, status=state, poe_class=_none_if_empty(poe_class.strip("-")) or None)
+        entry = PoePort(port=port, status=state, poe_class=None if set(poe_class) <= {"-"} else poe_class)
         entry.power_w = parse_number(numbers[2])
         entry.admin = "Disable" if state.lower().startswith("disabled") else "Enable"
         entry.extra = {
@@ -1795,27 +1863,28 @@ def parse_exos_inline_power_info(text: str) -> dict[str, PoePort]:
 
 
 def parse_exos_fdb(text: str) -> list[FdbEntry]:
-    """'show fdb': MAC, VLAN name(id), age, flags, port (last column)."""
+    """'show fdb': MAC, VLAN name(id), age, flags, port (last column, e.g. '1:2' or '3(0010)')."""
     entries: list[FdbEntry] = []
+    seen: set[tuple[str, str]] = set()
     for line in clean_output(text).split("\n"):
         mac_match = MAC_SEARCH_RE.search(line)
         if not mac_match:
             continue
         tokens = line.split()
-        port = tokens[-1] if tokens else ""
-        if not _EXOS_PORT_RE.match(port):
-            continue  # CPU / static self entries
-        vlan = re.search(r"\((\d{1,4})\)", line)
-        flags = line[mac_match.end():]
-        entry_type = "static" if re.search(r"\bs\b", flags) else "dynamic"
+        port = _exos_port_token(tokens[-1]) if tokens else None
         mac = normalize_mac(mac_match.group(0))
-        if mac:
-            entries.append(FdbEntry(mac=mac, port=port, vlan=int(vlan.group(1)) if vlan else None, entry_type=entry_type))
+        if not port or not mac or (mac, port) in seen:
+            continue  # CPU / self entries, or the same MAC on another VLAN
+        seen.add((mac, port))
+        vlan = re.search(r"\((\d{1,4})\)", line[mac_match.end():])
+        flags = line[mac_match.end():]
+        entry_type = "static" if re.search(r"\bs\w*\b", flags.split(")", 1)[-1]) else "dynamic"
+        entries.append(FdbEntry(mac=mac, port=port, vlan=int(vlan.group(1)) if vlan else None, entry_type=entry_type))
     return entries
 
 
 def parse_exos_lldp_neighbors(text: str) -> dict[str, LldpNeighbor]:
-    """'show lldp neighbors': Port, Chassis ID, Port ID, TTL, Age, System Name."""
+    """'show lldp neighbors': Port, Chassis ID, Port ID, TTL, Age [, System Name (EXOS 22.1+)]."""
     result: dict[str, LldpNeighbor] = {}
     for line in clean_output(text).split("\n"):
         tokens = line.split()
@@ -1823,9 +1892,10 @@ def parse_exos_lldp_neighbors(text: str) -> dict[str, LldpNeighbor]:
             continue
         if not (tokens[3].isdigit() and tokens[4].isdigit()):
             continue
+        chassis = re.sub(r"^\(\d+\.\d+\)", "", tokens[1])  # "(5.1)10.201.41.146" -> IP
         result[tokens[0]] = LldpNeighbor(
             local_port=tokens[0],
-            chassis_id=tokens[1],
+            chassis_id=chassis,
             port_id=tokens[2],
             system_name=" ".join(tokens[5:]) or None,
             raw={"line": line.strip()},
@@ -1833,30 +1903,91 @@ def parse_exos_lldp_neighbors(text: str) -> dict[str, LldpNeighbor]:
     return result
 
 
-def parse_exos_lldp_detail(text: str, port: str) -> LldpNeighbor | None:
-    """'show lldp port N neighbors detailed' (key: value lines with '- ' bullets)."""
+def _lldp_values(block: str) -> dict[str, str]:
     values: dict[str, str] = {}
-    for line in clean_output(text).split("\n"):
-        line = line.strip().lstrip("- ").strip()
+    # Long values wrap with a trailing backslash.
+    block = re.sub(r"\\\n\s*", "", block)
+    for line in block.split("\n"):
+        line = line.strip().lstrip("-").strip()
         for part in line.split(";"):
-            if ":" in part:
-                key, _, value = part.partition(":")
-                key = normalize_key(key)
-                if key and key not in values:
-                    values[key] = value.strip().strip('"')
-    if not values:
-        return None
+            if ":" not in part:
+                continue
+            key, _, value = part.partition(":")
+            key = normalize_key(key)
+            if key and key not in values:
+                values[key] = value.strip().strip('"')
+    return values
+
+
+def _lldp_from_values(port: str, values: dict[str, str]) -> LldpNeighbor:
+    name = values.get("system_name")
+    model = " ".join(v for v in (values.get("med_manufacturer_name"), values.get("med_model_name")) if v)
     return LldpNeighbor(
         local_port=port,
-        system_name=values.get("system_name"),
+        system_name=name,
         chassis_id=values.get("chassis_id"),
         port_id=values.get("port_id"),
         port_description=values.get("port_description"),
+        system_description=values.get("system_description") or (model or None),
         management_address=_valid_ip(values.get("management_address")),
         capabilities=values.get("system_capabilities"),
         capabilities_enabled=values.get("enabled_capabilities"),
         raw=values,
     )
+
+
+def parse_exos_lldp_detail(text: str, port: str) -> LldpNeighbor | None:
+    """One port's 'show lldp ports N neighbors detailed'."""
+    values = _lldp_values(clean_output(text))
+    return _lldp_from_values(port, values) if values else None
+
+
+def parse_exos_lldp_detail_all(text: str) -> dict[str, LldpNeighbor]:
+    """'show lldp neighbors detailed': blocks starting 'LLDP Port 1:2 detected 1 neighbor'."""
+    result: dict[str, LldpNeighbor] = {}
+    parts = re.split(r"^\s*LLDP Port\s+(\S+)\s+detected\s+\d+\s+neighbors?\s*$", clean_output(text), flags=re.M | re.I)
+    for port, block in zip(parts[1::2], parts[2::2], strict=False):
+        values = _lldp_values(block)
+        if values and _EXOS_PORT_RE.match(port):
+            result[port] = _lldp_from_values(port, values)
+    return result
+
+
+@dataclass
+class ExosVlan:
+    name: str
+    vid: int
+    ip_address: str | None = None
+    prefix: int | None = None
+    active_ports: int | None = None
+    total_ports: int | None = None
+    virtual_router: str | None = None
+
+
+_VLAN_ROW_RE = re.compile(
+    r"^(?P<name>\S+)\s+(?P<vid>\d{1,4})\s+"
+    r"(?:(?P<ip>\d{1,3}(?:\.\d{1,3}){3})\s*/\s*(?P<prefix>\d{1,2})\s+)?"
+    r"(?P<flags>\S+)\s+(?P<proto>\S+)\s+(?P<active>\d+)\s*/\s*(?P<total>\d+)\s*(?P<vr>\S+)?\s*$"
+)
+
+
+def parse_exos_vlans(text: str) -> dict[str, ExosVlan]:
+    """'show vlan' summary: name, VID, IP/prefix, flags, protocol, active/total ports, VR."""
+    result: dict[str, ExosVlan] = {}
+    for line in clean_output(text).split("\n"):
+        match = _VLAN_ROW_RE.match(line.strip())
+        if not match:
+            continue
+        result[match.group("name")] = ExosVlan(
+            name=match.group("name"),
+            vid=int(match.group("vid")),
+            ip_address=match.group("ip"),
+            prefix=int(match.group("prefix")) if match.group("prefix") else None,
+            active_ports=int(match.group("active")),
+            total_ports=int(match.group("total")),
+            virtual_router=match.group("vr"),
+        )
+    return result
 
 
 @dataclass
@@ -1867,55 +1998,111 @@ class EnvironmentInfo:
     temperature_status: str | None = None
     fans_state: str | None = None
     fans: dict[str, str] = field(default_factory=dict)
+    fan_rpm: dict[str, int] = field(default_factory=dict)
     power_supplies: dict[str, str] = field(default_factory=dict)
+    power_usage_w: float | None = None
 
     @property
     def power_state(self) -> str | None:
         if not self.power_supplies:
             return None
-        states = set(self.power_supplies.values())
+        states = {v for v in self.power_supplies.values() if v.lower() != "empty"} or set(self.power_supplies.values())
         return states.pop() if len(states) == 1 else ", ".join(f"{k}: {v}" for k, v in self.power_supplies.items())
+
+    @property
+    def problems(self) -> list[str]:
+        out = []
+        if self.temperature_status and self.temperature_status.lower() != "normal":
+            out.append(f"temperature {self.temperature_status}")
+        if self.fans_state and self.fans_state.lower() not in {"operational", "empty"}:
+            out.append(f"fans {self.fans_state}")
+        out += [f"{name} {state}" for name, state in self.fans.items()
+                if not state.lower().startswith(("operational", "empty"))]  # fmt: skip
+        out += [f"{name} {state}" for name, state in self.power_supplies.items()
+                if re.search(r"fail|fault|unsupported|no power", state, re.IGNORECASE)]  # fmt: skip
+        return out
+
+
+_TEMP_STATUS_ORDER = {"normal": 0, "warning": 1, "alarm": 2, "critical": 3, "error": 3, "fault": 3}
 
 
 def parse_exos_temperature(text: str) -> tuple[float | None, str | None]:
+    """Highest temperature and worst status over all rows (one per slot on a stack)."""
+    best: tuple[float, str] | None = None
     for line in clean_output(text).split("\n"):
         match = re.search(r"(-?\d+(?:\.\d+)?)\s+(Normal|Warning|Critical|Alarm|Error|Fault)\b", line, re.IGNORECASE)
-        if match:
-            return float(match.group(1)), match.group(2).capitalize()
-    return None, None
+        if not match:
+            continue
+        temp, status = float(match.group(1)), match.group(2).capitalize()
+        if best is None or (_TEMP_STATUS_ORDER.get(status.lower(), 0), temp) > (
+            _TEMP_STATUS_ORDER.get(best[1].lower(), 0), best[0]
+        ):
+            best = (temp, status)
+    return best if best else (None, None)
 
 
 def parse_exos_fans(text: str) -> tuple[str | None, dict[str, str]]:
-    kv = parse_key_values(text)
-    fans = {k.replace("_", "-"): v for k, v in kv.items() if re.match(r"^fan_?\d+$", k)}
-    return kv.get("state"), fans
+    """'show fans': tray state(s) and 'Fan-N: Operational at 4800 RPM' per fan."""
+    states: list[str] = []
+    fans: dict[str, str] = {}
+    tray = ""
+    for line in clean_output(text).split("\n"):
+        header = re.match(r"^\s*(FanTray(?:-\d+)?)\s+information", line, re.IGNORECASE)
+        if header:
+            tray = header.group(1)
+            continue
+        state = re.match(r"^\s*State\s*:\s*(.+?)\s*$", line)
+        if state:
+            states.append(state.group(1))
+            continue
+        fan = re.search(r"\b(Fan-\d+)\s*:\s*(.+?)\s*$", line)
+        if fan:
+            name = f"{tray} {fan.group(1)}".strip() if tray and tray.lower() != "fantray" else fan.group(1)
+            fans[name] = fan.group(2)
+    real = [s for s in states if s.lower() != "empty"] or states
+    state_out = None
+    if real:
+        bad = [s for s in real if s.lower() != "operational"]
+        state_out = bad[0] if bad else real[0]
+    return state_out, fans
 
 
-def parse_exos_power(text: str) -> dict[str, str]:
-    """'show power': State per power supply."""
+def fan_rpms(fans: dict[str, str]) -> dict[str, int]:
+    return {name: int(m.group(1)) for name, state in fans.items() if (m := re.search(r"(\d+)\s*RPM", state))}
+
+
+def parse_exos_power(text: str) -> tuple[dict[str, str], float | None]:
+    """'show power': State per power supply, and System Power Usage (W)."""
     supplies: dict[str, str] = {}
+    usage: float | None = None
     current = "PSU"
     for line in clean_output(text).split("\n"):
-        header = re.match(r"^\s*PowerSupply\s+(\d+)", line, re.IGNORECASE)
+        header = re.match(r"^\s*(?:(Slot-\d+)\s+)?PowerSupply\s+(\d+)", line, re.IGNORECASE)
         if header:
-            current = f"PSU {header.group(1)}"
+            current = f"{header.group(1) + ' ' if header.group(1) else ''}PSU {header.group(2)}"
             continue
         state = re.match(r"^\s*State\s*:\s*(.+?)\s*$", line, re.IGNORECASE)
         if state:
-            supplies[current] = state.group(1)
-    return supplies
+            supplies[current] = re.sub(r"\s{2,}", " ", state.group(1))
+            continue
+        total = re.match(r"^\s*System Power Usage\s*:\s*([\d.]+)\s*W", line, re.IGNORECASE)
+        if total:
+            usage = float(total.group(1))
+    return supplies, usage
 
 
 def parse_exos_cpu(text: str) -> SystemStats:
-    """'show cpu-monitoring': the 'System' row's 5-second utilisation."""
+    """'show cpu-monitoring': the 'System' row ('Slot-1 System' on a stack); first value that isn't n/a."""
     stats = SystemStats()
     for line in clean_output(text).split("\n"):
         tokens = line.split()
-        if tokens and tokens[0].lower() == "system":
-            numbers = [parse_number(t) for t in tokens[1:] if parse_number(t) is not None]
-            if numbers:
-                stats.cpu_total = numbers[0]
-                break
+        index = next((i for i, t in enumerate(tokens[:2]) if t.lower() == "system"), None)
+        if index is None:
+            continue
+        numbers = [n for t in tokens[index + 1 :] if (n := parse_number(t)) is not None]
+        if numbers:
+            stats.cpu_total = numbers[0]
+            break
     return stats
 
 

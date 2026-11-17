@@ -263,7 +263,9 @@ EXOS_SHOW_POE = "show inline-power"
 EXOS_SHOW_POE_INFO = "show inline-power info ports"
 EXOS_SHOW_FDB = "show fdb"
 EXOS_SHOW_LLDP = "show lldp neighbors"
-EXOS_SHOW_LLDP_DETAIL = "show lldp ports {port} neighbors detailed"
+EXOS_SHOW_LLDP_DETAIL = "show lldp neighbors detailed"
+EXOS_SHOW_VERSION = "show version"
+EXOS_SHOW_VLAN = "show vlan"
 EXOS_SHOW_TEMPERATURE = "show temperature"
 EXOS_SHOW_FANS = "show fans"
 EXOS_SHOW_POWER = "show power"
@@ -293,6 +295,22 @@ def exos_poe(port: str, enable: bool) -> str:
 
 def exos_poe_reset(port: str) -> str:
     return f"reset inline-power ports {validate_exos_port(port)}"
+
+
+_DISPLAY_STRING_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,14}$")
+
+
+def exos_port_display_string(port: str, text: str) -> str:
+    """'configure ports N display-string X' (max 15 characters; empty clears it)."""
+    port = validate_exos_port(port)
+    text = (text or "").strip()
+    if not text:
+        return f"unconfigure ports {port} display-string"
+    if not _DISPLAY_STRING_RE.match(text) or text.isdigit():
+        raise InvalidArgument(
+            "Port names can be up to 15 letters, digits, '-', '_' or '.', without spaces, and not just a number"
+        )
+    return f"configure ports {port} display-string {text}"
 
 
 # Commands that read the full configuration, per CLI dialect (for backups).

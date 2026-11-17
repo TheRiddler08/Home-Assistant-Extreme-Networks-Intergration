@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import re
 import time
@@ -68,13 +69,17 @@ from .parsers import (
     parse_exos_fdb,
     parse_exos_inline_power,
     parse_exos_inline_power_info,
-    parse_exos_lldp_detail,
+    parse_exos_lldp_detail_all,
     parse_exos_lldp_neighbors,
     parse_exos_port_statistics,
     parse_exos_ports,
     parse_exos_power,
     parse_exos_show_switch,
     parse_exos_temperature,
+    parse_exos_version,
+    parse_exos_vlans,
+    fan_rpms,
+    ExosVlan,
     parse_key_values,
     parse_lldp_neighbors,
     parse_mac_address_table,
@@ -142,6 +147,12 @@ class Throughput:
         return round((self.rx_kbps or 0) + (self.tx_kbps or 0), 1)
 
 
+def _prefix_to_netmask(prefix: int | None) -> str | None:
+    if prefix is None or not 0 <= prefix <= 32:
+        return None
+    return str(ipaddress.IPv4Network(f"0.0.0.0/{prefix}").netmask)
+
+
 def _sum_rates(rates: list[Throughput]) -> Throughput:
     if not rates:
         return Throughput()
@@ -179,6 +190,7 @@ class AerohiveData:
     environment: EnvironmentInfo | None = None
     config_unsaved: bool | None = None
     backup: BackupState | None = None
+    vlans: dict[str, ExosVlan] = field(default_factory=dict)
 
     @property
     def is_switch(self) -> bool:
@@ -420,6 +432,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._backup = BackupState(folder=str(self.backup_folder))
         self._config_text: str | None = None
         self._environment: EnvironmentInfo | None = None
+        self._vlans: dict[str, ExosVlan] = {}
+        self._serial: str | None = None
         self._config_text_new = False
         self._ha_changed = False
         # name -> (monotonic time, rx_bytes, tx_bytes) from the previous poll
@@ -781,30 +795,53 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             self._config_dirty = True
             if out := await self._optional(commands.EXOS_SHOW_LLDP):
                 neighbors = parse_exos_lldp_neighbors(out)
-                for port in list(neighbors):
-                    detail_out = await self._optional(commands.EXOS_SHOW_LLDP_DETAIL.format(port=port))
-                    if detail_out and (detail := parse_exos_lldp_detail(detail_out, port)):
-                        detail.system_name = detail.system_name or neighbors[port].system_name
-                        detail.chassis_id = detail.chassis_id or neighbors[port].chassis_id
-                        detail.port_id = detail.port_id or neighbors[port].port_id
-                        neighbors[port] = detail
+                # One command for every port's detail (management address, capabilities).
+                detail_out = await self._optional(commands.EXOS_SHOW_LLDP_DETAIL) if neighbors else None
+                for port, detail in parse_exos_lldp_detail_all(detail_out or "").items():
+                    summary = neighbors.get(port)
+                    if summary is not None:
+                        detail.system_name = detail.system_name or summary.system_name
+                        detail.chassis_id = detail.chassis_id or summary.chassis_id
+                        detail.port_id = detail.port_id or summary.port_id
+                    neighbors[port] = detail
                 self._lldp = neighbors
                 self._announce_neighbors()
+            if out := await self._optional(commands.EXOS_SHOW_VERSION):
+                self._serial = parse_exos_version(out)[0] or self._serial
+            if out := await self._optional(commands.EXOS_SHOW_VLAN):
+                self._vlans = parse_exos_vlans(out)
             env = EnvironmentInfo()
             if out := await self._optional(commands.EXOS_SHOW_TEMPERATURE):
                 env.temperature_c, env.temperature_status = parse_exos_temperature(out)
             if out := await self._optional(commands.EXOS_SHOW_FANS):
                 env.fans_state, env.fans = parse_exos_fans(out)
+                env.fan_rpm = fan_rpms(env.fans)
             if out := await self._optional(commands.EXOS_SHOW_POWER):
-                env.power_supplies = parse_exos_power(out)
+                env.power_supplies, env.power_usage_w = parse_exos_power(out)
             self._environment = env
         data.environment = self._environment
         data.lldp = self._lldp
+        data.vlans = self._vlans
+        data.version.serial = self._serial
+        if mgmt := self._management_vlan(self._vlans):
+            data.details["mgt0"] = InterfaceDetail(
+                name=mgmt.name, ip_address=mgmt.ip_address, netmask=_prefix_to_netmask(mgmt.prefix)
+            )
         data.config_unsaved = self.client.config_unsaved
         self._update_boot_time(data)
         self._update_boot_problem_issue(data)
         await self._process_backup(data)
         return data
+
+    def _management_vlan(self, vlans: dict[str, ExosVlan]) -> ExosVlan | None:
+        """The VLAN Home Assistant reaches the switch on (else Mgmt, else the first with an IP)."""
+        with_ip = [v for v in vlans.values() if v.ip_address]
+        host = self.client.host
+        return (
+            next((v for v in with_ip if v.ip_address == host), None)
+            or next((v for v in with_ip if v.name.lower() == "mgmt"), None)
+            or (with_ip[0] if with_ip else None)
+        )
 
     # ------------------------------------------------------------------ #
     # Configuration backups and change detection
@@ -1351,19 +1388,41 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         # Runtime action, nothing to persist.
         await self.async_request_refresh()
 
-    async def async_reboot(self) -> None:
+    async def async_reboot(self, save_changes: bool | None = None) -> None:
+        """Reboot the device.
+
+        ExtremeXOS with unsaved changes: refused unless ``save_changes`` says
+        whether to save them first (True) or throw them away (False), because
+        losing them is exactly the power-loss problem this integration guards
+        against.
+        """
+        if self.is_exos and self.client.config_unsaved and save_changes is None:
+            raise HomeAssistantError(
+                f"{self._device_name()} has unsaved configuration changes. Press Save configuration first, "
+                "or use the Reboot action with save_changes set to true (save, then reboot) or false "
+                "(reboot and lose them)."
+            )
         try:
+            if save_changes and not self.is_exos:
+                await self._save()
             if self.is_exos:
                 command = commands.EXOS_REBOOT
             elif self.is_switch_cli:
                 command = commands.SW_REBOOT
             else:
                 command = commands.REBOOT
-            await self.client.reboot(command)
+            _LOGGER.info("%s: rebooting (save changes: %s)", self.client.host, bool(save_changes))
+            await self.client.reboot(command, save=bool(save_changes))
         except AerohiveCommandError as err:
             raise HomeAssistantError(str(err)) from err
         except AerohiveConnectionError as err:
             raise HomeAssistantError(f"Error communicating with {self.client.host}: {err}") from err
+
+    async def async_set_port_description(self, port: str, description: str) -> None:
+        """Name a switch port (ExtremeXOS display string)."""
+        if not self.is_exos:
+            raise HomeAssistantError("Port names can only be set on ExtremeXOS switches")
+        await self._apply([self._validated(commands.exos_port_display_string, port, description)])
 
     async def async_run_show(self, command: str, redact: bool = True) -> str:
         command = self._validated(commands.validate_show_command, command)

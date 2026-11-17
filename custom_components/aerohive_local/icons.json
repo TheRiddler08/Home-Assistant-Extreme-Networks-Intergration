@@ -32,6 +32,15 @@
     },
     "restore_config": {
       "service": "mdi:backup-restore"
+    },
+    "set_poe": {
+      "service": "mdi:power-plug"
+    },
+    "set_port_description": {
+      "service": "mdi:rename"
+    },
+    "reboot": {
+      "service": "mdi:restart"
     }
   }
 }
