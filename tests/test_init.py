@@ -97,6 +97,12 @@ class FakeClient:
                 raise AerohiveCommandError(command, error)
         return outputs
 
+    async def connect(self) -> None:
+        if self.fail_with:
+            raise self.fail_with
+        self.connected = True
+        self.dialect = getattr(self, "dialect_on_connect", self.dialect)
+
     async def async_set_dialect(self, dialect: str) -> None:
         self.dialect = dialect
 

@@ -1,5 +1,5 @@
 {
-  "name": "Aerohive / Extreme Networks (Local SSH)",
+  "name": "Aerohive, Extreme Networks & OpenWrt (Local SSH)",
   "homeassistant": "2025.1.0",
   "render_readme": true
 }

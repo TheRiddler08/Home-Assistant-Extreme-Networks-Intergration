@@ -147,7 +147,10 @@ async def async_update_network(
     async def one(ap: AerohiveCoordinator) -> None:
         radios = None
         if enabled is not None:
-            radios = radios_for_bands(ap, bands) if enabled else []
+            if enabled and bands is None:
+                radios = ap.wifi_home_radios(ssid) or radios_for_bands(ap, None)
+            else:
+                radios = radios_for_bands(ap, bands) if enabled else []
             if enabled and not radios:
                 raise HomeAssistantError(f"no radio on {', '.join(bands or [])}")
         elif bands is not None:

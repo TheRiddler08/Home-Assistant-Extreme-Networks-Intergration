@@ -24,6 +24,7 @@ from .commands import (
     EXOS_DISABLE_PAGING,
     redact,
 )
+from .openwrt import DIALECT_OPENWRT
 from .parsers import (
     CONFIRM_TAIL_RE,
     SAVE_CHOICE_RE,
@@ -205,6 +206,8 @@ class AerohiveClient:
             self._note_prompt(match)
             if match.group("xhost"):
                 self.dialect = DIALECT_EXOS
+            elif match.group("lhost"):
+                self.dialect = DIALECT_OPENWRT
             elif match.group("phost"):
                 self.dialect = DIALECT_SWITCH
             else:
@@ -216,8 +219,13 @@ class AerohiveClient:
             await self._enable()
 
         # Try to disable paging; fall back to answering --More-- prompts.
-        self.paging_disabled = False
-        paging_commands = (EXOS_DISABLE_PAGING,) if self.dialect == DIALECT_EXOS else DISABLE_PAGING_COMMANDS
+        self.paging_disabled = self.dialect == DIALECT_OPENWRT  # a shell doesn't page
+        if self.dialect == DIALECT_OPENWRT:
+            paging_commands: tuple[str, ...] = ()
+        elif self.dialect == DIALECT_EXOS:
+            paging_commands = (EXOS_DISABLE_PAGING,)
+        else:
+            paging_commands = DISABLE_PAGING_COMMANDS
         for command in paging_commands:
             try:
                 out = await self._exec(command, self._command_timeout)

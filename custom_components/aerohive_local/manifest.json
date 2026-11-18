@@ -1,6 +1,6 @@
 {
   "domain": "aerohive_local",
-  "name": "Aerohive / Extreme Networks (Local SSH)",
+  "name": "Aerohive, Extreme Networks & OpenWrt (Local SSH)",
   "after_dependencies": [
     "dhcp",
     "frontend",
@@ -73,5 +73,5 @@
   "requirements": [
     "asyncssh>=2.21.0"
   ],
-  "version": "0.10.2"
+  "version": "0.11.0"
 }

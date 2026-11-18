@@ -1,0 +1,1 @@
+{ "phy": "phy1", "ssid": "Home Net", "bssid": "02:5A:00:00:00:11", "country": "US", "mode": "Master", "channel": 36, "center_chan1": 42, "frequency": 5180, "txpower": 23, "quality": 0, "quality_max": 70, "noise": -95, "bitrate": 1201000, "hwmode": "ax", "htmode": "HE80" }

@@ -557,3 +557,62 @@ async def test_exos_prompt_paging_unsaved_and_save(paging_supported: bool) -> No
         await client.close()
         srv.close()
         await srv.wait_closed()
+
+
+# --------------------------------------------------------------------------
+# OpenWrt: a Linux shell ("root@OpenWrt:~# "), JSON from ubus
+# --------------------------------------------------------------------------
+
+OPENWRT_BANNER = (
+    "\r\nBusyBox v1.36.1 (2024-03-22 22:09:42 UTC) built-in shell (ash)\r\n\r\n"
+    "  _______                     ________        __\r\n"
+    " |       |.-----.-----.-----.|  |  |  |.----.|  |_\r\n"
+    " |   -   ||  _  |  -__|     ||  |  |  ||   _||   _|\r\n"
+    " |_______||   __|_____|__|__||________||__|  |____|\r\n"
+    "          |__| W I R E L E S S   F R E E D O M\r\n"
+    " -----------------------------------------------------\r\n"
+    " OpenWrt 23.05.3, r23809-234f1a2efa\r\n"
+    " -----------------------------------------------------\r\n"
+)
+
+
+def _make_openwrt_handler(received: list[str]):
+    async def handler(process: asyncssh.SSHServerProcess) -> None:
+        process.stdout.write(OPENWRT_BANNER + "root@OpenWrt:~# ")
+        while True:
+            line = await _read_line(process)
+            if line is None:
+                break
+            received.append(line)
+            if line == "ubus call system board":
+                process.stdout.write('{\r\n\t"hostname": "OpenWrt",\r\n\t"model": "Example AX3000 Router"\r\n}\r\n')
+            elif line.startswith("uci set"):
+                pass  # silent on success, like uci
+            elif line:
+                process.stdout.write(f"-ash: {line.split()[0]}: not found\r\n")
+            process.stdout.write("root@OpenWrt:~# ")
+        process.exit(0)
+
+    return handler
+
+
+async def test_openwrt_shell_is_detected_and_json_comes_back_clean() -> None:
+    from custom_components.aerohive_local import openwrt as ow
+
+    received: list[str] = []
+    key = asyncssh.generate_private_key("ssh-rsa", 2048)
+    srv = await asyncssh.create_server(
+        _Server, "127.0.0.1", 0, server_host_keys=[key], process_factory=_make_openwrt_handler(received), line_editor=False
+    )
+    client = _client(srv.sockets[0].getsockname()[1])
+    try:
+        out = await client.run(ow.BOARD)
+        assert client.dialect == "openwrt" and client.hostname == "OpenWrt"
+        assert received == [ow.BOARD]  # no "console page 0" / "terminal length 0" sent to a shell
+        assert ow.parse_board(out).model == "Example AX3000 Router"
+        out = await client.run("uci set wireless.cfg1.key='a b c d e f'")
+        assert out.strip() == ""
+    finally:
+        await client.close()
+        srv.close()
+        await srv.wait_closed()

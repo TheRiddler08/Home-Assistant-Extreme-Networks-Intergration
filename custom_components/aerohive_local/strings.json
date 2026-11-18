@@ -2,8 +2,8 @@
   "config": {
     "step": {
       "user": {
-        "title": "Add Aerohive / Extreme Networks device",
-        "description": "Find access points, branch routers and switches on your network automatically, or enter an IP address yourself.",
+        "title": "Add an Aerohive, Extreme Networks or OpenWrt device",
+        "description": "Find access points, routers and switches on your network automatically, or enter an IP address yourself. OpenWrt devices are added by IP address with their SSH login.",
         "menu_options": {
           "scan": "Scan my network",
           "manual": "Enter IP address manually"

@@ -104,6 +104,11 @@ a leading `*` means unsaved changes.
 | `save configuration` | Save (the y/N question is answered `y`) |
 | `reboot` | Reboot. With unsaved changes ExtremeXOS asks "save and reboot?" (`y` / `n`): it's answered as the `save_changes` option says, and the reboot is refused without it |
 
+## OpenWrt
+
+All 🧪 (simulated router, OpenWrt 23.05-style output). `ubus` JSON and UCI; see the full list in
+[OpenWrt → Commands used](openwrt.md#commands-used).
+
 ## Configuration backups (all devices)
 
 `show running-config` (HiveOS, SR switches) or `show configuration` (ExtremeXOS) is read to

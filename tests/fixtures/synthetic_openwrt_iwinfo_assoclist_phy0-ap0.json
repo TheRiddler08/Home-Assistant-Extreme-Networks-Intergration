@@ -1,0 +1,5 @@
+{ "results": [
+	{ "mac": "02:11:22:33:44:01", "signal": -52, "signal_avg": -53, "noise": -91, "inactive": 120, "connected_time": 3725, "thr": 0, "authorized": true, "authenticated": true,
+	  "rx": { "drop_misc": 0, "packets": 10000, "bytes": 1000000, "ht": true, "vht": false, "he": true, "mhz": 20, "rate": 143400, "mcs": 9 },
+	  "tx": { "failed": 0, "retries": 0, "packets": 12000, "bytes": 2000000, "ht": true, "he": true, "mhz": 20, "rate": 172000, "mcs": 11 } }
+] }

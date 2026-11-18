@@ -115,6 +115,7 @@ await page.waitForTimeout(900);
 check((await panel().locator(".net").count()) === 4, "new network appears");
 await panel().locator('.net[data-ssid="IoT"] [data-wifi-toggle]').evaluate((el) => el.click());
 await page.waitForTimeout(900);
+check(((await panel().locator(".toast").textContent()) || "").includes("IoT turned off"), "Wi-Fi toggle confirms with a message");
 const wifiCalls = await page.evaluate(() => window.serviceCalls.map((c) => c.data));
 check(JSON.stringify(wifiCalls) === JSON.stringify([
   { type: "aerohive_local/wifi/update", ssid: "Guest Wifi", enabled: false, duration_minutes: 120 },

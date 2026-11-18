@@ -7,6 +7,8 @@ custom_components/aerohive_local/
   client.py         asyncssh session: login prompts, enable, paging, prompt detection, retries
   commands.py       CLI command builders + input validation (no Home Assistant imports)
   parsers.py        pure parsers for every show command (no Home Assistant imports)
+  openwrt.py        OpenWrt commands and parsers (ubus JSON, UCI; no Home Assistant imports)
+  wifi.py           Wi-Fi networks across access points, timed changes
   discovery.py      network scan + MAC prefix / hostname matching
   coordinator.py    one DataUpdateCoordinator per device; HiveOS and switch-CLI polling; actions
   overview.py       "Aerohive Network" overview entry (aggregates all devices)
@@ -81,6 +83,13 @@ python3 tests/frontend/mock_exos_switch.py --port 2222
 ```
 
 Add the integration with host `127.0.0.1`, port `2222` and any user name and password.
+
+`tests/frontend/mock_openwrt_router.py` does the same for an OpenWrt router (ash prompt,
+ubus JSON, UCI), applying Wi-Fi changes to its own configuration:
+
+```bash
+python3 tests/frontend/mock_openwrt_router.py --port 2223
+```
 
 To refresh the demo data after changing the snapshot format, run the WebSocket test with
 `AEROHIVE_SNAPSHOT_OUT=/tmp/snap.json`, then `python3 tests/frontend/make_demo.py /tmp/snap.json`.

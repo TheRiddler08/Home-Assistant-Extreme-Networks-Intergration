@@ -1,0 +1,6 @@
+{ "results": [
+	{ "mac": "02:11:22:33:44:02", "signal": -61, "noise": -95, "inactive": 30, "connected_time": 600,
+	  "rx": { "rate": 864800, "mhz": 80 }, "tx": { "rate": 1201000, "mhz": 80 } },
+	{ "mac": "02:11:22:33:44:03", "signal": -70, "noise": -95, "inactive": 900, "connected_time": 59,
+	  "rx": { "rate": 390000 }, "tx": { "rate": 433300 } }
+] }

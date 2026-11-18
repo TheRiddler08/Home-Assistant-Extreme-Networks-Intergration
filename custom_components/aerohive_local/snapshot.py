@@ -41,6 +41,8 @@ def _speed_mbps(value: str | None) -> int | None:
 
 
 def device_kind(data: AerohiveData) -> str:
+    if data.cli == "openwrt":
+        return "router"
     if data.is_switch:
         return "switch"
     if (data.version.platform or "").upper().startswith("BR"):
@@ -241,6 +243,8 @@ def device_snapshot(hass: HomeAssistant, coordinator: AerohiveCoordinator) -> di
         "problems": _problems(coordinator, data),
         "features": {
             "port_names": data.cli == commands.DIALECT_EXOS,
+            "port_control": data.cli != "openwrt",
+            "restore": data.cli != "openwrt",
             "poe": bool(data.poe_ports),
             "save": True,
             "reboot_save_prompt": data.cli == commands.DIALECT_EXOS,

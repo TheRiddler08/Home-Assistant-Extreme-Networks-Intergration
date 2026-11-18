@@ -1,13 +1,13 @@
-# Aerohive / Extreme Networks (Local SSH) for Home Assistant
+# Aerohive, Extreme Networks & OpenWrt (Local SSH) for Home Assistant
 
 [![Validate](https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/actions/workflows/validate.yml/badge.svg)](https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/actions/workflows/validate.yml)
 [![Release](https://img.shields.io/github/v/release/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration)](https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/releases)
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Monitor and control **Aerohive / Extreme Networks access points, branch routers, SR switches
-and ExtremeXOS switches locally over SSH**. It doesn't use the cloud, HiveManager or
-ExtremeCloud IQ.
+Monitor and control **Aerohive / Extreme Networks access points, branch routers, SR switches,
+ExtremeXOS switches and OpenWrt routers locally over SSH**. It doesn't use the cloud,
+HiveManager, ExtremeCloud IQ or an OpenWrt controller.
 
 ![Network panel](docs/images/panel-switch.png)
 
@@ -44,6 +44,7 @@ ExtremeCloud IQ.
 | Aerohive SR2208P switch (software 1.0.1.28) | ✅ Working |
 | Aerohive BR100 (HiveOS) | 🟡 Partial |
 | Extreme Networks Summit X450e-48p (ExtremeXOS) | 🧪 Preview, needs testing |
+| OpenWrt routers and access points (21.02 and later) | 🧪 Preview, needs testing ([details](docs/openwrt.md)) |
 | Other HiveOS / IQ Engine APs, SR switches and ExtremeXOS switches | Expected to work, untested |
 
 Full details: [Supported devices](docs/supported-devices.md).
@@ -52,7 +53,7 @@ Full details: [Supported devices](docs/supported-devices.md).
 
 **HACS:** HACS → **⋮ → Custom repositories** → add
 `https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration` as an
-**Integration** → install **Aerohive / Extreme Networks (Local SSH)** → restart Home Assistant.
+**Integration** → install **Aerohive, Extreme Networks & OpenWrt (Local SSH)** → restart Home Assistant.
 
 **Manual:** copy `custom_components/aerohive_local/` into your `config/custom_components/`
 folder and restart Home Assistant.
@@ -71,6 +72,7 @@ Networks (Local SSH)**, and choose **Scan my network** or **Enter IP address man
 | [Network panel and cards](docs/dashboard.md) | The sidebar panel, switch front panel and dashboard cards |
 | [Wi-Fi manager](docs/wifi.md) | Managing SSIDs and passwords |
 | [Network overview](docs/overview.md) | The combined *Aerohive Network* device |
+| [OpenWrt](docs/openwrt.md) | OpenWrt routers and access points: what's read, Wi-Fi control, limits |
 | [Switches](docs/switches.md) | SR-series and ExtremeXOS switches: ports, PoE, LLDP |
 | [Power-loss protection and backups](docs/backups.md) | Backups, change-after-reboot alerts, restore |
 | [Actions](docs/actions.md) | Actions for automations and debugging |

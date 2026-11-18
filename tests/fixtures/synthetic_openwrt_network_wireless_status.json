@@ -1,0 +1,11 @@
+{
+	"radio0": { "up": true, "pending": false, "autostart": true, "disabled": false, "retry_setup_failed": false,
+		"config": { "path": "platform/soc/18000000.wifi", "channel": "1", "band": "2g", "htmode": "HE20" },
+		"interfaces": [ { "section": "default_radio0", "ifname": "phy0-ap0", "config": { "mode": "ap", "ssid": "Home Net", "encryption": "sae-mixed", "network": [ "lan" ], "mode": "ap" } } ] },
+	"radio1": { "up": true, "pending": false, "autostart": true, "disabled": false, "retry_setup_failed": false,
+		"config": { "path": "platform/soc/18000000.wifi+1", "channel": "36", "band": "5g", "htmode": "HE80" },
+		"interfaces": [
+			{ "section": "default_radio1", "ifname": "phy1-ap0", "config": { "mode": "ap", "ssid": "Home Net", "encryption": "sae-mixed", "network": [ "lan" ] } },
+			{ "section": "cfg073579", "ifname": "phy1-ap1", "config": { "mode": "ap", "ssid": "Guest Net", "encryption": "psk2", "network": [ "guest" ], "hidden": true } }
+		] }
+}

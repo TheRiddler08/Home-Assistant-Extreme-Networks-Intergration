@@ -12,7 +12,7 @@ switches: `enable ssh2` and an admin account, see
    listed in the HACS default store.
 2. Add `https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration`
    with category **Integration**.
-3. Install **Aerohive / Extreme Networks (Local SSH)** and restart Home Assistant.
+3. Install **Aerohive, Extreme Networks & OpenWrt (Local SSH)** and restart Home Assistant.
 
 ### Manual
 
@@ -21,7 +21,7 @@ restart Home Assistant.
 
 ## Setup
 
-**Settings → Devices & services → Add integration → Aerohive / Extreme Networks (Local SSH)**
+**Settings → Devices & services → Add integration → Aerohive, Extreme Networks & OpenWrt (Local SSH)**
 
 You get a menu with two choices:
 

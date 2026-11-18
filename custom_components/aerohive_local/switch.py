@@ -44,7 +44,7 @@ async def async_setup_entry(
                 yield f"ssid_all_{ssid}", lambda ssid=ssid: AerohiveSsidAllRadiosSwitch(coordinator, ssid)
             if data.config is not None:
                 yield f"ssid_hidden_{ssid}", lambda ssid=ssid: AerohiveSsidHiddenSwitch(coordinator, ssid)
-        if data.has_switch_ports:
+        if data.has_switch_ports and data.cli != "openwrt":  # OpenWrt ports are read-only
             for port in data.ports():
                 yield f"port_{port}", lambda port=port: AerohivePortSwitch(coordinator, port)
         for port in data.poe_ports:

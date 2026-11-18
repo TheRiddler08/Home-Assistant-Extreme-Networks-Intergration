@@ -44,6 +44,7 @@ from .const import (
     SLOW_REFRESH_SECONDS,
 )
 from .discovery import is_aerohive_mac
+from . import openwrt as ow
 from .parsers import (
     model_ethernet_ports,
     dialect_from_version,
@@ -218,8 +219,8 @@ class AerohiveData:
 
     @property
     def has_switch_ports(self) -> bool:
-        """Switches and branch routers (BR100 eth1-eth4) have LAN ports worth managing."""
-        return self.is_switch or (self.version.platform or "").upper().startswith("BR")
+        """Switches and routers (BR100 eth1-eth4, OpenWrt) have LAN ports worth managing."""
+        return self.is_switch or self.cli == ow.DIALECT_OPENWRT or (self.version.platform or "").upper().startswith("BR")
 
     def ports(self) -> list[str]:
         """Physical Ethernet ports, naturally sorted (eth1/2 before eth1/10)."""
@@ -238,7 +239,8 @@ class AerohiveData:
         An LLDP neighbour that is a bridge/router (and not an AP) marks an
         uplink; without LLDP, a port with many learned MACs is assumed to be one.
         """
-        uplinks: set[str] = set()
+        # Ports the reader already knows lead upstream (OpenWrt's WAN port).
+        uplinks: set[str] = {n for n, i in self.interfaces.items() if i.extra.get("uplink") == "yes"}
         counts: dict[str, int] = {}
         for entry in self.fdb:
             if entry.port:
@@ -457,6 +459,10 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._config_text: str | None = None
         self._environment: EnvironmentInfo | None = None
         self._vlans: dict[str, ExosVlan] = {}
+        # OpenWrt
+        self._ow_cpu: tuple[int, int] | None = None
+        self._ow_wifi: list[ow.WifiIface] = []
+        self._ow_ifnames: dict[str, str] = {}  # wifi-iface section -> ifname (phy0-ap0)
         self._serial: str | None = None
         self._config_text_new = False
         self._ha_changed = False
@@ -573,6 +579,11 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
     async def _fetch(self) -> AerohiveData:
         self._poll_count += 1
         data = AerohiveData()
+        if not self.client.connected:
+            # The login prompt tells which CLI this is: connect before choosing how to poll.
+            await self.client.connect()
+        if self.client.dialect == ow.DIALECT_OPENWRT:
+            return await self._fetch_openwrt(data)
         version_out = await self.client.run("show version")
         detected = dialect_from_version(version_out)
         if detected and detected != self.client.dialect:
@@ -803,6 +814,247 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             self._poe_single = False  # no per-port PoE command on this firmware
         return result
 
+    # ------------------------------------------------------------------ #
+    # OpenWrt
+    # ------------------------------------------------------------------ #
+
+    def _config_command(self) -> str:
+        if self.client.dialect == ow.DIALECT_OPENWRT:
+            return ow.CONFIG_EXPORT
+        return commands.SHOW_CONFIG_COMMANDS.get(self.client.dialect, "show running-config")
+
+    @property
+    def is_openwrt(self) -> bool:
+        return self.client.dialect == ow.DIALECT_OPENWRT
+
+    async def _fetch_openwrt(self, data: AerohiveData) -> AerohiveData:
+        """Poll an OpenWrt router or access point (ubus JSON + UCI over SSH)."""
+        run = self.client.run
+        data.cli = ow.DIALECT_OPENWRT
+        board = ow.parse_board(await run(ow.BOARD))
+        if board.model is None and board.version is None and board.hostname is None:
+            raise AerohiveConnectionError("'ubus call system board' gave no usable answer")
+        info = ow.parse_system_info(await run(ow.SYSTEM_INFO))
+        data.hostname = board.hostname or self.client.hostname
+        data.version = VersionInfo(
+            version=board.description or (f"OpenWrt {board.version}" if board.version else None),
+            firmware=board.version,
+            build=board.revision,
+            os_name="OpenWrt",
+            platform=board.model or board.board_name,
+            uptime_seconds=info.uptime,
+        )
+        devices_out = await run(ow.NETWORK_DEVICES)
+        interfaces_out = await run(ow.NETWORK_INTERFACES)
+        data.version.mac = normalize_mac(ow.bridge_mac(devices_out))
+        now = time.monotonic()
+        for name, port in ow.parse_ports(devices_out, interfaces_out).items():
+            extra = {"port": "yes"}
+            if port.wan:
+                extra.update(uplink="yes", role="WAN")
+            data.interfaces[name] = Interface(
+                name=name,
+                mac=normalize_mac(port.mac),
+                state="Up" if port.carrier else "Down",
+                speed=str(port.speed) if port.speed else None,
+                duplex=port.duplex,
+                admin_state="Enable" if port.up is not False else "Disable",
+                extra=extra,
+            )
+            detail = InterfaceDetail(
+                name=name, rx_bytes=port.rx_bytes, tx_bytes=port.tx_bytes, rx_packets=port.rx_packets,
+                tx_packets=port.tx_packets, rx_errors=port.rx_errors, tx_errors=port.tx_errors,
+                speed=str(port.speed) if port.speed else None, duplex=port.duplex,
+            )  # fmt: skip
+            data.details[name] = detail
+            if (rate := self._rate(name, detail, now)) is not None:
+                data.throughput[name] = rate
+        # Management address: the one Home Assistant connects to, else the LAN's.
+        ip_ifaces = [i for i in ow.parse_interfaces(interfaces_out) if i.name != "loopback"]
+        chosen = next(((i, a) for i in ip_ifaces for a in i.addresses if a[0] == self.client.host), None)
+        chosen = chosen or next(((i, i.addresses[0]) for i in ip_ifaces if i.name == "lan" and i.addresses), None)
+        if chosen:
+            data.details["mgt0"] = InterfaceDetail(
+                name=chosen[0].name, ip_address=chosen[1][0], netmask=_prefix_to_netmask(chosen[1][1])
+            )
+        stat = ow.parse_cpu_stat(await run(ow.CPU_STAT))
+        data.cpu = SystemStats(cpu_total=ow.cpu_percent(self._ow_cpu, stat))
+        self._ow_cpu = stat or self._ow_cpu
+        if info.memory_total:
+            data.memory = SystemStats(
+                memory_total_kb=info.memory_total // 1024,
+                memory_free_kb=(info.memory_available or 0) // 1024,
+            )
+        await self._fetch_openwrt_wifi(data)
+        # Wired clients: neighbours on the LAN side that aren't Wi-Fi clients.
+        wan_devices = {i.device for i in ip_ifaces if i.name.startswith("wan")}
+        for _ip, mac, device in ow.parse_arp(await run(ow.ARP)):
+            if device not in wan_devices and mac not in data.stations:
+                data.fdb.append(FdbEntry(mac=mac, port=None))
+        # Staged but uncommitted UCI changes (e.g. LuCI without "Save & Apply"): like ExtremeXOS's "*".
+        changes = await run(ow.UCI_CHANGES)
+        data.config_unsaved = bool(changes.strip()) and not ow.load_json(changes)
+
+        now = time.monotonic()
+        if self._config_dirty:
+            self._config_dirty = False
+            out = await run(ow.CONFIG_EXPORT, timeout=60)
+            if "package " in out:
+                self._config_text, self._config_text_new = out, True
+        if self._slow_at is None or now - self._slow_at > SLOW_REFRESH_SECONDS:
+            self._slow_at = now
+            self._config_dirty = True
+            self._environment = EnvironmentInfo(temperature_c=ow.parse_temperature(await run(ow.TEMPERATURE)))
+        data.environment = self._environment
+        self._update_boot_time(data)
+        await self._process_backup(data)
+        return data
+
+    async def _fetch_openwrt_wifi(self, data: AerohiveData) -> None:
+        run = self.client.run
+        radios, wifaces = ow.parse_wireless_config(await run(ow.UCI_WIRELESS))
+        status = ow.parse_wireless_status(await run(ow.WIRELESS_STATUS))
+        self._ow_wifi = wifaces
+        self._ow_ifnames = {sec: ifn for st in status.values() for sec, ifn in st.ifnames.items()}
+        if not radios:
+            return
+        leases = ow.parse_dhcp_leases(await run(ow.DHCP_LEASES))
+        for name, radio in sorted(radios.items()):
+            st = status.get(name)
+            channel = int(radio.channel) if radio.channel and radio.channel.isdigit() else None
+            width = re.search(r"(\d+)$", radio.htmode or "")
+            data.interfaces[name] = Interface(
+                name=name,
+                mode="access",
+                state="Up" if st and st.up and not radio.disabled else "Down",
+                channel=channel,
+                channel_raw=radio.channel,
+                channel_width=width.group(1) if width else None,
+                radio_profile={"2g": "ng", "5g": "na", "6g": "ax6"}.get(radio.band or ""),
+            )
+        config = RunningConfigSummary()
+        for wif in wifaces:
+            if wif.mode != "ap" or not wif.ssid or wif.device not in radios:
+                continue
+            data.ssids.setdefault(wif.ssid, Ssid(name=wif.ssid, max_client=wif.maxassoc))
+            config.ssid_security_objects[wif.ssid] = wif.ssid
+            config.security_suites[wif.ssid] = wif.encryption or "none"
+            if wif.hidden:
+                config.hidden_ssids.add(wif.ssid)
+            if wif.disabled:
+                continue
+            config.ssid_bindings.setdefault(wif.device, set()).add(wif.ssid)
+            ifname = self._ow_ifnames.get(wif.section)
+            if not ifname:
+                continue  # configured but not running (radio off)
+            sub = Interface(name=f"{wif.device}.{ifname}", ssid=wif.ssid, state="Up", mode="access")
+            data.interfaces[sub.name] = sub
+            iw = ow.parse_iwinfo_info(await run(ow.iwinfo_info(ifname)))
+            radio_iface = data.interfaces[wif.device]
+            if iw.channel:
+                radio_iface.channel = iw.channel
+            if iw.width:
+                radio_iface.channel_width = str(iw.width)
+            if wif.device not in data.details:
+                data.details[wif.device] = InterfaceDetail(
+                    name=wif.device, channel=iw.channel, tx_power=iw.txpower, noise_floor=iw.noise,
+                    channel_width=str(iw.width) if iw.width else None,
+                )  # fmt: skip
+            for client in ow.parse_assoclist(await run(ow.iwinfo_assoclist(ifname))):
+                ip, hostname = leases.get(client.mac, (None, None))
+                seconds = client.connected_seconds
+                data.stations[client.mac] = Station(
+                    mac=client.mac, ip=ip, hostname=hostname, interface=sub.name, ssid=wif.ssid,
+                    channel=iw.channel, signal=client.signal, tx_rate=ow.rate_text(client.tx_rate_kbps),
+                    rx_rate=ow.rate_text(client.rx_rate_kbps),
+                    assoc_time=f"{seconds // 3600}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}" if seconds else None,
+                    extra={"ifname": ifname},
+                )  # fmt: skip
+        data.config = config
+
+    def wifi_home_radios(self, ssid: str) -> list[str] | None:
+        """Radios a network is configured for even while it's off (OpenWrt keeps disabled sections).
+
+        Turning it back on uses these, so a 2.4 GHz-only network doesn't spread to 5 GHz.
+        None where the device keeps no such record (HiveOS removes the binding).
+        """
+        if not self.is_openwrt or self.data is None:
+            return None
+        radios = self.data.radio_names()
+        return sorted({w.device for w in self._ow_sections(ssid) if w.device in radios}) or None
+
+    def _ow_sections(self, ssid: str) -> list[ow.WifiIface]:
+        return [w for w in self._ow_wifi if w.mode == "ap" and w.ssid == ssid]
+
+    async def _ow_update_ssid(
+        self,
+        ssid: str,
+        *,
+        password: str | None = None,
+        radios: list[str] | None = None,
+        hidden: bool | None = None,
+        max_clients: int | None = None,
+    ) -> bool:
+        sections = self._ow_sections(ssid)
+        if not sections:
+            raise HomeAssistantError(f"SSID {ssid} does not exist")
+        cmds: list[str] = []
+        state: dict[tuple[str, ...], bool] = {}
+        if radios is not None:
+            for radio in self.data.radio_names():
+                want = radio in radios
+                here = [w for w in sections if w.device == radio]
+                if want and not here:
+                    cmds.append(self._validated(ow.copy_iface, sections[0].section, radio))
+                for wif in here:
+                    if wif.disabled == want:  # disabled but wanted, or enabled but not wanted
+                        cmds.append(self._validated(ow.set_disabled, wif.section, not want))
+                if want != self.data.ssid_on_radio(ssid, radio):
+                    state[("ssid", ssid, radio)] = want
+        if hidden is not None and hidden != any(w.hidden for w in sections):
+            cmds += [self._validated(ow.uci_set, w.section, "hidden", "1" if hidden else "0") for w in sections]
+            state[("hidden", ssid)] = hidden
+        if max_clients is not None and max_clients != sections[0].maxassoc:
+            cmds += [self._validated(ow.uci_set, w.section, "maxassoc", str(int(max_clients))) for w in sections]
+        if password:
+            for wif in sections:
+                cmds += self._validated(ow.set_key, wif.section, password, wif.encryption)
+        if not cmds:
+            return False
+        _LOGGER.info("%s: updating Wi-Fi network %s (%d change(s))", self.client.host, ssid, len(cmds))
+        await self._apply([ow.apply_line(cmds)], secret=password or None, overrides=state)
+        return True
+
+    async def _ow_create_ssid(self, ssid: str, password: str | None, radios: list[str] | None, hidden: bool) -> None:
+        if ssid in self.data.ssids:
+            raise HomeAssistantError(f"SSID {ssid} already exists")
+        targets = radios if radios is not None else self.data.radio_names()
+        if not targets:
+            raise HomeAssistantError("No radio to broadcast the network on")
+        network = next((w.network for w in self._ow_wifi if w.mode == "ap" and w.network), None) or "lan"
+        cmds = [self._validated(ow.new_iface, radio, ssid, password, hidden, network.split()[0]) for radio in targets]
+        _LOGGER.info("%s: creating Wi-Fi network %s on %s", self.client.host, ssid, ", ".join(targets))
+        await self._apply([ow.apply_line(cmds)], secret=password or None)
+        await self.async_request_refresh()
+
+    async def _ow_delete_ssid(self, ssid: str) -> None:
+        sections = self._ow_sections(ssid)
+        if not sections:
+            raise HomeAssistantError(f"SSID {ssid} does not exist")
+        _LOGGER.info("%s: deleting Wi-Fi network %s", self.client.host, ssid)
+        self.expect_removal = True
+        try:
+            await self._apply([ow.apply_line([self._validated(ow.delete_iface, w.section) for w in sections])])
+        except HomeAssistantError:
+            self.expect_removal = False
+            raise
+        await self.async_request_refresh()
+
+    @staticmethod
+    def _not_on_openwrt(what: str) -> HomeAssistantError:
+        return HomeAssistantError(f"{what} isn't supported on OpenWrt devices")
+
+
     async def _fetch_exos(self, data: AerohiveData) -> AerohiveData:
         """Poll an ExtremeXOS switch (Summit X450e and others)."""
         data.hostname = self.client.hostname
@@ -959,7 +1211,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
 
     async def _confirm_config(self, text: str) -> bool:
         """Read the configuration again; True if it matches (not a cut-off reply)."""
-        command = commands.SHOW_CONFIG_COMMANDS.get(self.client.dialect, "show running-config")
+        command = self._config_command()
         try:
             again = await self.client.run(command, timeout=180)
         except AerohiveError:
@@ -1042,7 +1294,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             ir.async_delete_issue(self.hass, DOMAIN, issue_id)
 
     async def _read_config_text(self) -> str:
-        command = commands.SHOW_CONFIG_COMMANDS.get(self.client.dialect, "show running-config")
+        command = self._config_command()
         try:
             text = await self.client.run(command, timeout=180)
         except AerohiveError as err:
@@ -1112,6 +1364,12 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         reported; the rest are still applied. The result is only saved on the
         device when save=True.
         """
+        if self.is_openwrt:
+            raise HomeAssistantError(
+                "Restoring isn't supported on OpenWrt: use System → Backup / Flash firmware in LuCI, or "
+                "'sysupgrade -r'. Home Assistant's OpenWrt backups are a record of the configuration "
+                "with Wi-Fi keys and passwords masked."
+            )
         backups = await self.hass.async_add_executor_job(backup_mod.list_backups, self.backup_folder)
         if not backups:
             raise HomeAssistantError(f"No configuration backups for {self._device_name()} yet")
@@ -1322,6 +1580,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return self.client.dialect == commands.DIALECT_EXOS
 
     async def _save(self) -> None:
+        if self.is_openwrt:
+            return  # every change is committed with 'uci commit' as part of the change
         if self.is_exos:
             output = await self.client.run(commands.EXOS_SAVE, timeout=120, retry=False, confirm=True)
         elif self.is_switch_cli:
@@ -1340,10 +1600,17 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             raise HomeAssistantError(str(err)) from err
 
     async def async_set_ssid_on_radio(self, radio: str, ssid: str, enable: bool) -> None:
+        if self.is_openwrt:
+            bound = {r for r in self.data.radio_names() if self.data.ssid_on_radio(ssid, r)}
+            await self._ow_update_ssid(ssid, radios=sorted(bound | {radio} if enable else bound - {radio}))
+            return
         cmd = self._validated(commands.ssid_bind, radio, ssid, enable)
         await self._apply([cmd], overrides={("ssid", ssid, radio): enable})
 
     async def async_set_max_client(self, ssid: str, value: int) -> None:
+        if self.is_openwrt:
+            await self._ow_update_ssid(ssid, max_clients=int(value))
+            return
         cmd = self._validated(commands.ssid_max_client, ssid, int(value))
         await self._apply([cmd])
 
@@ -1362,6 +1629,9 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self, ssid: str, password: str, security_object: str | None = None
     ) -> None:
         self._validated(commands.validate_psk, password)
+        if self.is_openwrt:
+            await self._ow_update_ssid(ssid, password=password)
+            return
         obj = security_object or await self.async_get_security_object(ssid)
         cmd = self._validated(commands.ssid_psk, obj, password)
         _LOGGER.info("%s: changing Wi-Fi key of security-object %s", self.client.host, obj)
@@ -1371,6 +1641,10 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return sorted(self.data.ssids) if self.data else []
 
     async def async_set_ssid_all_radios(self, ssid: str, enable: bool) -> None:
+        if self.is_openwrt:
+            on = (self.wifi_home_radios(ssid) or self.data.radio_names()) if enable else []
+            await self._ow_update_ssid(ssid, radios=on)
+            return
         data = self.data
         cmds = [
             self._validated(commands.ssid_bind, radio, ssid, enable)
@@ -1381,12 +1655,18 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             await self._apply(cmds)
 
     async def async_set_ssid_hidden(self, ssid: str, hidden: bool) -> None:
+        if self.is_openwrt:
+            await self._ow_update_ssid(ssid, hidden=hidden)
+            return
         await self._apply([self._validated(commands.ssid_hide, ssid, hidden)], overrides={("hidden", ssid): hidden})
 
     async def async_create_ssid(
         self, ssid: str, password: str | None, radios: list[str] | None, hidden: bool = False
     ) -> None:
         """Create an SSID. radios=None: all active radios; []: create without broadcasting."""
+        if self.is_openwrt:
+            await self._ow_create_ssid(ssid, password, radios, hidden)
+            return
         if ssid in self.data.ssids:
             raise HomeAssistantError(f"SSID {ssid} already exists")
         available = self.data.radio_names()
@@ -1413,6 +1693,10 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         max_clients: int | None = None,
     ) -> bool:
         """Apply several changes to one SSID with a single save. Returns False if nothing changed."""
+        if self.is_openwrt:
+            return await self._ow_update_ssid(
+                ssid, password=password, radios=radios, hidden=hidden, max_clients=max_clients
+            )
         data = self.data
         if ssid not in data.ssids:
             raise HomeAssistantError(f"SSID {ssid} does not exist")
@@ -1440,6 +1724,9 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return True
 
     async def async_delete_ssid(self, ssid: str) -> None:
+        if self.is_openwrt:
+            await self._ow_delete_ssid(ssid)
+            return
         if ssid not in self.data.ssids:
             raise HomeAssistantError(f"SSID {ssid} does not exist")
         obj = await self.async_get_security_object(ssid)
@@ -1455,6 +1742,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         await self.async_request_refresh()  # the network disappears without waiting for the save
 
     async def async_set_port_enabled(self, port: str, enable: bool, force: bool = False) -> None:
+        if self.is_openwrt:
+            raise self._not_on_openwrt("Turning ports on and off")
         if not enable and not force and port in self.data.uplink_ports():
             raise HomeAssistantError(
                 f"{port} is an uplink port on {self.client.host} (LLDP neighbour is a switch/router or "
@@ -1470,6 +1759,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             await self._apply([self._validated(commands.port_enable, port, enable)], overrides=state)
 
     async def async_set_poe(self, port: str, enable: bool) -> None:
+        if self.is_openwrt:
+            raise self._not_on_openwrt("PoE control")
         state = {("poe", port): enable}
         if self.is_exos:
             await self._apply([self._validated(commands.exos_poe, port, enable)], overrides=state)
@@ -1480,6 +1771,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
 
     async def async_power_cycle_poe(self, port: str, off_seconds: float = 5) -> None:
         """Turn PoE off and on again (runtime only, nothing is saved)."""
+        if self.is_openwrt:
+            raise self._not_on_openwrt("PoE control")
         if self.is_exos:
             try:
                 out = await self.client.run(self._validated(commands.exos_poe_reset, port))
@@ -1529,6 +1822,18 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         await self.async_request_refresh()
 
     async def async_disconnect_client(self, mac: str) -> None:
+        if self.is_openwrt:
+            station = self.data.stations.get((mac or "").lower())
+            if station is None:
+                raise HomeAssistantError(f"{mac} isn't connected to {self._device_name()}")
+            try:
+                output = await self.client.run(self._validated(ow.disconnect_client, station.extra["ifname"], mac))
+            except AerohiveError as err:
+                raise HomeAssistantError(f"Error communicating with {self.client.host}: {err}") from err
+            if find_cli_error(output):
+                raise HomeAssistantError(f"{self.client.host} could not disconnect {mac} (is hostapd's ubus interface available?)")
+            await self.async_request_refresh()
+            return
         candidates = self._validated(commands.disconnect_commands, mac)
         last_error = None
         try:
@@ -1564,6 +1869,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 await self._save()
             if self.is_exos:
                 command = commands.EXOS_REBOOT
+            elif self.is_openwrt:
+                command = ow.REBOOT
             elif self.is_switch_cli:
                 command = commands.SW_REBOOT
             else:
@@ -1582,6 +1889,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         await self._apply([self._validated(commands.exos_port_display_string, port, description)])
 
     async def async_run_show(self, command: str, redact: bool = True) -> str:
+        if self.is_openwrt:
+            raise self._not_on_openwrt("run_show_command")
         command = self._validated(commands.validate_show_command, command)
         try:
             output = await self.client.run(command, timeout=120)

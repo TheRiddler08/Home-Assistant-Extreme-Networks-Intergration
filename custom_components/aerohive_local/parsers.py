@@ -43,18 +43,21 @@ SAVE_CHOICE_RE = re.compile(r"\(y\s*-\s*save[^)\n]*\bn\s*-", re.IGNORECASE)
 #   and in config mode "(AH-Switch) (Config)#" / "(AH-Switch) (Interface 1/0/1)#"
 #   ExtremeXOS switches: "X450e-48p.3 #", "* X450e-48p.4 #" (* = unsaved changes),
 #   stacks "* Slot-1 Stack.2 #"
+#   OpenWrt: "root@OpenWrt:~# "
 PROMPT_RE = re.compile(
     r"(?:^|\n)[ \t]*(?:"
     r"(?P<unsaved>\*[ \t]+)?(?:(?P<slot>Slot-\d+)[ \t]+)?(?P<xhost>[A-Za-z0-9][A-Za-z0-9_\-\.]*?)\.(?P<seq>\d+)[ \t]+"
     r"|\((?P<phost>[^()\n]{1,64})\)(?:[ \t]*\((?P<submode>[^()\n]{1,64})\))?[ \t]*"
+    # OpenWrt / Linux shells: "root@OpenWrt:~# ", "admin@router:/tmp$ "
+    r"|(?P<luser>[a-z_][a-z0-9_\-]*)@(?P<lhost>[A-Za-z0-9][A-Za-z0-9_\-\.]*):[^\s#$>]*[ \t]*"
     r"|(?P<host>[A-Za-z0-9][A-Za-z0-9_\-\.]*))"
-    r"(?P<mode>[#>])[ \t]*$"
+    r"(?P<mode>[#>$])[ \t]*$"
 )
 
 
 def prompt_host(match: re.Match[str]) -> str:
     """Hostname from a PROMPT_RE match (any prompt style)."""
-    return match.group("host") or match.group("phost") or match.group("xhost")
+    return match.group("host") or match.group("phost") or match.group("xhost") or match.group("lhost")
 
 NONE_VALUES = {"", "-", "--", "n/a", "na", "none"}
 
@@ -519,7 +522,7 @@ _IFACE_NAME_RE = re.compile(
 _USP_RE = re.compile(r"^(\d+)/(\d+)/(\d+)$")  # unit/slot/port (SR-series switch CLI)
 _EXOS_PORT_RE = re.compile(r"^\d+(?::\d+)?$")  # ExtremeXOS port / stack slot:port
 _CHAN_RE = re.compile(r"^(?P<chan>[^()\s]+)?\s*(?:\((?P<width>[^)]*)\))?$")
-_RADIO_RE = re.compile(r"^wifi\d+$")
+_RADIO_RE = re.compile(r"^(?:wifi|radio)\d+$")  # radioN: OpenWrt
 
 
 @dataclass
@@ -545,6 +548,8 @@ class Interface:
     @property
     def is_port(self) -> bool:
         """Physical Ethernet port (eth0, eth1/1, or 1/0/1 on SR switches; unit 0 = LAG/CPU)."""
+        if self.extra.get("port") == "yes":  # OpenWrt: lan1..lan4, wan (set by the reader)
+            return True
         usp = _USP_RE.match(self.name)
         if usp:
             return usp.group(1) != "0"

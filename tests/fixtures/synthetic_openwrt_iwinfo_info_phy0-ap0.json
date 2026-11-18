@@ -1,0 +1,1 @@
+{ "phy": "phy0", "ssid": "Home Net", "bssid": "02:5A:00:00:00:10", "country": "US", "mode": "Master", "channel": 6, "center_chan1": 6, "frequency": 2437, "txpower": 20, "quality": 0, "quality_max": 70, "noise": -91, "bitrate": 286800, "encryption": { "enabled": true }, "htmodes": [ "HT20", "HE20" ], "hwmodes": [ "b", "g", "n", "ax" ], "hwmode": "ax", "htmode": "HE20" }

@@ -537,7 +537,10 @@ function columns(ports) {
   return cols;
 }
 
-const isRouterPorts = (ports) => ports.length > 0 && ports.every((p) => /^eth\d+$/i.test(p.name));
+const isRouterPorts = (ports) => ports.length > 0 && ports.every((p) => /^(eth\d+|lan\d*|wan\d*)$/i.test(p.name));
+/* WAN: named wan*, else eth0 on a branch router whose ports are all ethN. */
+const isWanPort = (port, ports) =>
+  /^wan/i.test(port.name) || (!ports.some((p) => /^wan/i.test(p.name)) && ports.every((p) => /^eth\d+$/i.test(p.name)) && port.name.toLowerCase() === "eth0");
 
 function renderFaceplate(device, { selected = null, filter = null } = {}) {
   const ports = device.ports || [];
@@ -545,11 +548,11 @@ function renderFaceplate(device, { selected = null, filter = null } = {}) {
   if (isRouterPorts(ports)) {
     // Branch routers (BR100): one row, WAN (eth0) then the LAN ports.
     const sorted = [...ports].sort((a, b) => natCompare(a.name, b.name));
-    const wan = sorted.filter((p) => p.name.toLowerCase() === "eth0");
-    const lan = sorted.filter((p) => p.name.toLowerCase() !== "eth0");
+    const wan = sorted.filter((p) => isWanPort(p, sorted));
+    const lan = sorted.filter((p) => !isWanPort(p, sorted));
     const col = (p, label) => `<div class="fp-col"><span class="fp-num">${esc(label)}</span>${renderPort(p, selected, filter)}</div>`;
     return `<div class="faceplate" role="group" aria-label="Router ports">
-      ${wan.length ? `<div class="fp-block">${col(wan[0], "WAN")}</div>` : ""}
+      ${wan.length ? `<div class="fp-block">${wan.map((p, i) => col(p, wan.length > 1 ? `WAN${i + 1}` : "WAN")).join("")}</div>` : ""}
       <div class="fp-block ${wan.length ? "extra" : ""}">${lan.map((p) => col(p, portNumber(p.name))).join("")}</div>
     </div>`;
   }
@@ -835,7 +838,13 @@ class AerohiveBase extends HTMLElement {
     this._toastTimer = setTimeout(() => el.remove(), error ? 7000 : 3500);
   }
 
-  async _call(service, data, { busyKey = service, success = null, hold = false } = {}) {
+  /* _call("set_port", data, options) for an action, or _call({type: ...}, options) for a WebSocket command. */
+  async _call(service, data, options) {
+    if (typeof service === "object" && options === undefined) {
+      options = data;
+      data = undefined;
+    }
+    const { busyKey = typeof service === "object" ? service.type : service, success = null, hold = false } = options || {};
     if (this._busy.has(busyKey)) return false;
     this._busy.add(busyKey);
     this._render();
@@ -1156,10 +1165,10 @@ class AerohiveBase extends HTMLElement {
         </div>
         <section>
           <div class="controls">
-            <label class="toggle">
+            ${device.features && device.features.port_control === false ? `<span class="muted">${esc(portStatusText(port))}${port.uplink ? " · WAN" : ""}</span>` : `<label class="toggle">
               <input type="checkbox" data-toggle="port" ${port.enabled !== false ? "checked" : ""} ${port.present === false ? "disabled" : ""}>
               <span class="track"></span><span>Port ${port.enabled !== false ? "on" : "off"}</span>
-            </label>
+            </label>`}
             ${
               poe
                 ? `<label class="toggle">
@@ -1170,7 +1179,7 @@ class AerohiveBase extends HTMLElement {
                 : ""
             }
           </div>
-          ${port.uplink ? `<p class="muted" style="margin:10px 0 0">${icon("up")} Uplink port: turning it off can disconnect Home Assistant from the switch.</p>` : ""}
+          ${port.uplink && !(device.features && device.features.port_control === false) ? `<p class="muted" style="margin:10px 0 0">${icon("up")} Uplink port: turning it off can disconnect Home Assistant from the switch.</p>` : ""}
         </section>
         ${
           device.features && device.features.port_names
@@ -1474,7 +1483,7 @@ function deviceBanners(device) {
     const s = cfg.change_summary;
     out.push(`<div class="banner err">${icon("warn")}<div class="grow"><strong>Configuration changed after a reboot.</strong>
       This is what a power cut does to unsaved or damaged configurations${s ? ` (${esc(s.added)} lines added, ${esc(s.removed)} removed)` : ""}.
-      <div class="banner-actions"><button class="btn primary" data-action="restore">${icon("restore")}Restore last backup</button>
+      <div class="banner-actions">${device.features && device.features.restore === false ? "" : `<button class="btn primary" data-action="restore">${icon("restore")}Restore last backup</button>`}
       <button class="btn" data-action="accept">${icon("check")}Keep current</button></div></div></div>`);
   }
   for (const problem of cfg.boot_problems || []) {
@@ -2246,7 +2255,7 @@ class AerohiveDeviceCard extends AerohiveCardBase {
         actions
           ? `<div class="actions" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px" data-device="${esc(device.entry_id)}">
               ${cfg.unsaved ? `<button class="btn attention" data-action="save" ${this._isBusy(`save:${device.entry_id}`) ? "disabled" : ""}>${icon("save")}Save configuration</button>` : ""}
-              ${cfg.changed_after_reboot ? `<button class="btn primary" data-action="restore">${icon("restore")}Restore last backup</button>` : ""}
+              ${cfg.changed_after_reboot && !(device.features && device.features.restore === false) ? `<button class="btn primary" data-action="restore">${icon("restore")}Restore last backup</button>` : ""}
               <button class="btn danger" data-action="reboot" ${device.online ? "" : "disabled"}>${icon("reboot")}Reboot</button>
             </div>`
           : ""

@@ -55,6 +55,13 @@ Before adding one:
 Please [report](https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/issues/new/choose)
 how it works on yours.
 
+## OpenWrt
+
+🧪 Preview: OpenWrt 21.02 and later (routers and access points), read with `ubus` and UCI over
+SSH, nothing to install on the router. Ports, radios, Wi-Fi networks and clients, health and
+backups; Wi-Fi control (networks on/off, bands, password, hidden, max clients, add, delete,
+disconnect clients). Ports are read-only and restore isn't offered. See [OpenWrt](openwrt.md).
+
 ## Not supported
 
 - Extreme **VOSS / Fabric Engine** switches and **WiNG** access points: different CLIs.

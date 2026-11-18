@@ -3,6 +3,36 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.11.0] - 2026-11-18
+
+### Added
+- **OpenWrt routers and access points (preview).** Added by IP address with the SSH login
+  and recognised from the shell prompt; nothing to install on the router. Read with `ubus`
+  JSON and UCI: model, version, uptime, CPU, memory, temperature, Ethernet ports (link,
+  speed, traffic; WAN marked as the uplink), radios (actual channel, width, power, noise),
+  Wi-Fi networks, clients (names and IPs from the DHCP leases), wired clients, unsaved UCI
+  changes, and configuration backups with change-after-reboot alerts.
+- **Wi-Fi control on OpenWrt**, through the same Wi-Fi tab, card, entities and actions as on
+  Aerohive APs: networks on/off (also for a while), bands, hidden name, password, max
+  clients, add, delete, disconnect a client. Changes are UCI commands with
+  `uci commit wireless && wifi reload`; network, firewall and DHCP settings are never touched.
+  Wi-Fi keys never reach Home Assistant: they're filtered on the router, masked in backups,
+  and copied on the router when a network is added to another band.
+- Pretend OpenWrt router over SSH for development (`tests/frontend/mock_openwrt_router.py`).
+
+### Changed
+- The integration is now called **Aerohive, Extreme Networks & OpenWrt (Local SSH)**. The
+  domain (`aerohive_local`) is unchanged, so existing devices, entities and automations stay
+  as they are.
+- Turning a Wi-Fi network back on uses the bands it's configured for (OpenWrt keeps disabled
+  networks), instead of every radio.
+
+### Fixed
+- Wi-Fi actions in the Network panel didn't show their confirmation message or their
+  "working…" state (the change itself was made).
+- A device whose session was new chose how to poll before it knew the CLI (now it connects
+  first). This mattered for OpenWrt, whose prompt identifies it.
+
 ## [0.10.2] - 2026-11-17
 
 ### Fixed

@@ -107,9 +107,17 @@ def validate_show_command(command: str) -> str:
     return command
 
 
+# OpenWrt: "uci set wireless.cfg1.key='secret'"
+_UCI_SECRET_RE = re.compile(
+    r"(\.(?:key|password|sae_password|auth_secret|acct_secret|priv_key_pwd|private_key|preshared_key|psk|secret)=)"
+    r"('[^']*'|\"[^\"]*\"|\S+)"
+)
+
+
 def redact(text: str) -> str:
     """Hide secrets that may appear in a command line or config output."""
-    return _SECRET_ARG_RE.sub(lambda m: f"{m.group(1)} ***", text or "")
+    text = _SECRET_ARG_RE.sub(lambda m: f"{m.group(1)} ***", text or "")
+    return _UCI_SECRET_RE.sub(lambda m: f"{m.group(1)}***", text)
 
 
 # --------------------------------------------------------------------------

@@ -60,6 +60,7 @@ from .discovery import (
     scan_targets,
 )
 from .entity import radio_label
+from . import openwrt as ow
 from .parsers import (
     dialect_from_version,
     normalize_mac,
@@ -160,10 +161,20 @@ def _details_text(**details: str | None) -> str:
     return "\n".join(lines)
 
 
+async def _is_openwrt(client: Any) -> bool:
+    """Connect (the prompt tells the CLI) and say whether it's an OpenWrt shell."""
+    await client.connect()
+    return client.dialect == ow.DIALECT_OPENWRT
+
+
 async def _probe(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Connect, read identity, disconnect. Raises AerohiveError subclasses."""
     client = await async_create_client(hass, data)
     try:
+        if client.dialect == ow.DIALECT_OPENWRT or (not client.connected and await _is_openwrt(client)):
+            board = ow.parse_board(await client.run(ow.BOARD))
+            mac = normalize_mac(ow.bridge_mac(await client.run(ow.NETWORK_DEVICES)))
+            return {"mac": mac, "hostname": board.hostname or client.hostname, "platform": board.model}
         version_out = await client.run("show version")
         if (detected := dialect_from_version(version_out)) and detected != client.dialect:
             await client.async_set_dialect(detected)

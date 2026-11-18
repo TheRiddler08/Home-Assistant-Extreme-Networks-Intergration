@@ -1,0 +1,11 @@
+{
+	"br-lan": { "external": false, "present": true, "type": "bridge", "up": true, "carrier": true, "bridge-members": [ "lan1", "lan2", "lan3", "lan4", "phy0-ap0", "phy1-ap0", "phy1-ap1" ], "macaddr": "02:5a:00:00:00:01", "mtu": 1500, "statistics": { "rx_bytes": 9000000, "tx_bytes": 8000000 } },
+	"eth0": { "external": false, "present": true, "type": "Network device", "up": true, "carrier": true, "speed": "2500F", "macaddr": "02:5a:00:00:00:01", "statistics": { "rx_bytes": 1, "tx_bytes": 1 } },
+	"lan1": { "external": false, "present": true, "type": "Network device", "up": true, "carrier": true, "speed": "1000F", "macaddr": "02:5a:00:00:00:01", "statistics": { "rx_bytes": 123456789, "tx_bytes": 98765432, "rx_packets": 100000, "tx_packets": 90000, "rx_errors": 0, "tx_errors": 0 } },
+	"lan2": { "external": false, "present": true, "type": "Network device", "up": true, "carrier": false, "speed": "-1F", "macaddr": "02:5a:00:00:00:01", "statistics": { "rx_bytes": 0, "tx_bytes": 0 } },
+	"lan3": { "external": false, "present": true, "type": "Network device", "up": true, "carrier": true, "speed": "100F", "macaddr": "02:5a:00:00:00:01", "statistics": { "rx_bytes": 5555, "tx_bytes": 4444, "rx_errors": 2, "tx_errors": 0 } },
+	"lan4": { "external": false, "present": true, "type": "Network device", "up": false, "carrier": false, "macaddr": "02:5a:00:00:00:01", "statistics": { "rx_bytes": 0, "tx_bytes": 0 } },
+	"wan": { "external": false, "present": true, "type": "Network device", "up": true, "carrier": true, "speed": "1000F", "macaddr": "02:5a:00:00:00:02", "statistics": { "rx_bytes": 987654321, "tx_bytes": 123456789 } },
+	"phy0-ap0": { "external": false, "present": true, "type": "Network device", "wireless": true, "up": true, "carrier": true, "macaddr": "02:5a:00:00:00:10", "statistics": { "rx_bytes": 1000, "tx_bytes": 2000 } },
+	"lo": { "external": false, "present": true, "type": "Network device", "up": true, "carrier": true, "statistics": { "rx_bytes": 1, "tx_bytes": 1 } }
+}
