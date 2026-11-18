@@ -379,6 +379,19 @@ class AerohiveData:
         active = [r for r in radios if r in bound or self.interfaces[r].channel is not None]
         return active or radios
 
+    def ssid_configurable(self, ssid: str) -> bool:
+        """Is this SSID one the device's configuration defines (so it can be changed)?
+
+        Access points can list entries that aren't configured networks (one AP
+        showed "Unknown"); changing those fails. Until the configuration has been
+        read, or when it defines no SSIDs we could parse, every SSID counts.
+        """
+        if ssid not in self.ssids:
+            return False
+        if self.cli == ow.DIALECT_OPENWRT or self.config is None or not self.config.ssids:
+            return True
+        return ssid in self.config.ssids or resolve_ssid_name(ssid, self.config.ssids) in self.config.ssids
+
     def ssid_on_radio(self, ssid: str, radio: str) -> bool:
         if ("ssid", ssid, radio) in self.overrides:
             return self.overrides[("ssid", ssid, radio)]
@@ -1008,6 +1021,16 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                     extra={"ifname": ifname},
                 )  # fmt: skip
         data.config = config
+
+    def _require_configurable(self, ssid: str) -> None:
+        data = self.data
+        if data is None or ssid not in data.ssids:
+            raise HomeAssistantError(f"SSID {ssid} does not exist on {self._device_name()}")
+        if not data.ssid_configurable(ssid):
+            raise HomeAssistantError(
+                f"{ssid} is listed by {self._device_name()} but isn't in its configuration, so it can't be "
+                "changed (it's not a network you set up; access points show such entries as e.g. 'Unknown')."
+            )
 
     def wifi_home_radios(self, ssid: str) -> list[str] | None:
         """Radios a network is configured for even while it's off (OpenWrt keeps disabled sections).
@@ -1655,6 +1678,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             raise HomeAssistantError(str(err)) from err
 
     async def async_set_ssid_on_radio(self, radio: str, ssid: str, enable: bool) -> None:
+        self._require_configurable(ssid)
         if self.is_openwrt:
             bound = {r for r in self.data.radio_names() if self.data.ssid_on_radio(ssid, r)}
             await self._ow_update_ssid(ssid, radios=sorted(bound | {radio} if enable else bound - {radio}))
@@ -1663,6 +1687,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         await self._apply([cmd], overrides={("ssid", ssid, radio): enable})
 
     async def async_set_max_client(self, ssid: str, value: int) -> None:
+        self._require_configurable(ssid)
         if self.is_openwrt:
             await self._ow_update_ssid(ssid, max_clients=int(value))
             return
@@ -1684,6 +1709,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self, ssid: str, password: str, security_object: str | None = None
     ) -> None:
         self._validated(commands.validate_psk, password)
+        self._require_configurable(ssid)
         if self.is_openwrt:
             await self._ow_update_ssid(ssid, password=password)
             return
@@ -1696,6 +1722,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return sorted(self.data.ssids) if self.data else []
 
     async def async_set_ssid_all_radios(self, ssid: str, enable: bool) -> None:
+        self._require_configurable(ssid)
         if self.is_openwrt:
             on = (self.wifi_home_radios(ssid) or self.data.radio_names()) if enable else []
             await self._ow_update_ssid(ssid, radios=on)
@@ -1710,6 +1737,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             await self._apply(cmds)
 
     async def async_set_ssid_hidden(self, ssid: str, hidden: bool) -> None:
+        self._require_configurable(ssid)
         if self.is_openwrt:
             await self._ow_update_ssid(ssid, hidden=hidden)
             return
@@ -1748,6 +1776,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         max_clients: int | None = None,
     ) -> bool:
         """Apply several changes to one SSID with a single save. Returns False if nothing changed."""
+        self._require_configurable(ssid)
         if self.is_openwrt:
             return await self._ow_update_ssid(
                 ssid, password=password, radios=radios, hidden=hidden, max_clients=max_clients
@@ -1779,6 +1808,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return True
 
     async def async_delete_ssid(self, ssid: str) -> None:
+        self._require_configurable(ssid)
         if self.is_openwrt:
             await self._ow_delete_ssid(ssid)
             return

@@ -458,7 +458,9 @@ class AerohiveOptionsFlow(OptionsFlow):
         target = self._target
         if target is None or target.data is None:
             return []
-        return target.data.ssid_names() if self._is_overview else sorted(target.data.ssids)
+        if self._is_overview:
+            return target.data.ssid_names()
+        return sorted(s for s in target.data.ssids if target.data.ssid_configurable(s))
 
     def _ssid_label(self, ssid: str) -> str:
         data = self._target.data

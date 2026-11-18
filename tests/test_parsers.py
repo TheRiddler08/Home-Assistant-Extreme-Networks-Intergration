@@ -820,3 +820,8 @@ def test_exos_port_media_and_mgmt_port() -> None:
 def test_console_from_sr_config() -> None:
     assert p.parse_running_config_summary(load_fixture("sr2208p_show_running_config.txt")).console is True
     assert p.parse_running_config_summary("hostname x\n").console is False
+
+
+def test_running_config_lists_defined_ssids() -> None:
+    cfg = 'ssid AP460C\nssid AP460C security-object sec1\nssid "Guest Wifi"\nssid "Guest Wifi" hide-ssid\ninterface wifi0 ssid AP460C\n'
+    assert p.parse_running_config_summary(cfg).ssids == {"AP460C", "Guest Wifi"}

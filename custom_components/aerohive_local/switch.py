@@ -34,7 +34,7 @@ async def async_setup_entry(
 
     def factory(data: AerohiveData) -> Iterable[tuple[str, Callable[[], Entity]]]:
         radios = data.radio_names()
-        for ssid in data.ssids:
+        for ssid in (s for s in data.ssids if data.ssid_configurable(s)):
             for radio in radios:
                 yield (
                     f"ssid_{radio}_{ssid}",

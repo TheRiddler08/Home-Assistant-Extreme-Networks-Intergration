@@ -3,6 +3,19 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.12.1] - 2026-11-18
+
+### Fixed
+- **Wi-Fi editor: "Could not change Unknown … rejected 'no interface wifi0 ssid Unknown':
+  ERROR: Invalid parameter(s)".** Some access points list entries that aren't networks in
+  their configuration (one showed "Unknown"), and the integration offered them for editing.
+  Now only networks the access point's configuration defines (`ssid <name>`) can be changed:
+  - other entries are shown read-only in the Wi-Fi tab and on the access point's page, with
+    an explanation, and get no switches, password or max-clients entities;
+  - nothing is sent to the access point for them; actions explain why instead;
+  - a network that one access point configures and another only lists is changed on the
+    first only.
+
 ## [0.12.0] - 2026-11-18
 
 ### Added

@@ -88,14 +88,15 @@ class OverviewData:
         return [d for d in self.online if d.is_switch]
 
     def ssid_names(self) -> list[str]:
-        return sorted({s for ap in self.aps for s in ap.data.ssids})
+        """Networks at least one AP can change (entries an AP lists but doesn't configure are left out)."""
+        return sorted({s for ap in self.aps for s in ap.data.ssids if ap.data.ssid_configurable(s)})
 
     def known_ssid_names(self) -> list[str]:
         """SSIDs of every AP incl. offline ones (last known data): keeps entities stable."""
-        return sorted({s for d in self.devices if d.is_ap for s in d.data.ssids})
+        return sorted({s for d in self.devices if d.is_ap for s in d.data.ssids if d.data.ssid_configurable(s)})
 
     def aps_with_ssid(self, ssid: str) -> list[DeviceView]:
-        return [ap for ap in self.aps if ssid in ap.data.ssids]
+        return [ap for ap in self.aps if ssid in ap.data.ssids and ap.data.ssid_configurable(ssid)]
 
     def clients(self) -> list[dict[str, Any]]:
         rows = []

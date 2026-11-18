@@ -1,10 +1,10 @@
 {
  "version": 1,
- "generated": "2026-11-18T12:32:10.496204+00:00",
+ "generated": "2026-11-18T17:23:09.797830+00:00",
  "devices": [
   {
-   "entry_id": "01M7QA99NW2VFNYY6WDV7MK68M",
-   "device_id": "fd2cdbd2762a5a9df108ca77f36832bf",
+   "entry_id": "01M7QTY3SQXFM962JA6NV8GHPC",
+   "device_id": "ffe1aa78e2c4bbc51af04cfe397fde94",
    "name": "X450e-48p",
    "host": "192.168.9.65",
    "online": true,
@@ -16,7 +16,7 @@
    "mac": "00:04:96:aa:bb:01",
    "ip": "192.168.8.20",
    "uptime": 277200,
-   "boot_time": "2026-11-18T06:31:58+00:00",
+   "boot_time": "2026-11-18T11:22:57+00:00",
    "cpu": 2.0,
    "memory": 60.3,
    "temperature": 43.0,
@@ -1615,7 +1615,7 @@
     "boot_problems": [],
     "image_booted": "primary",
     "config_booted": "primary.cfg",
-    "last_backup": "2026-11-18T12:32:10+00:00",
+    "last_backup": "2026-11-18T17:23:09+00:00",
     "backups": 1
    },
    "hardware": {
@@ -1665,7 +1665,7 @@
    "mac": "08:ea:44:00:00:01",
    "ip": "192.168.9.66",
    "uptime": 277200,
-   "boot_time": "2026-11-18T06:31:58+00:00",
+   "boot_time": "2026-11-18T11:22:57+00:00",
    "cpu": 2.0,
    "memory": 60.3,
    "temperature": null,
@@ -1996,7 +1996,7 @@
     "boot_problems": [],
     "image_booted": null,
     "config_booted": null,
-    "last_backup": "2026-11-18T12:32:10+00:00",
+    "last_backup": "2026-11-18T17:23:09+00:00",
     "backups": 1
    },
    "hardware": {
@@ -2032,7 +2032,7 @@
    "mac": "00:19:77:00:11:20",
    "ip": "192.168.9.1",
    "uptime": 11565,
-   "boot_time": "2026-11-18T09:19:25+00:00",
+   "boot_time": "2026-11-18T14:10:23+00:00",
    "cpu": 5.9,
    "memory": 42.8,
    "temperature": null,
@@ -2209,7 +2209,8 @@
       "wifi1"
      ],
      "max_clients": 100,
-     "security": "wpa2-aes-psk"
+     "security": "wpa2-aes-psk",
+     "configurable": true
     },
     {
      "name": "Guest Wifi",
@@ -2221,7 +2222,8 @@
       "wifi1"
      ],
      "max_clients": 100,
-     "security": "wpa2-aes-psk"
+     "security": "wpa2-aes-psk",
+     "configurable": true
     },
     {
      "name": "IoT",
@@ -2232,7 +2234,20 @@
       "wifi0"
      ],
      "max_clients": 100,
-     "security": "wpa2-aes-psk"
+     "security": "wpa2-aes-psk",
+     "configurable": true
+    },
+    {
+     "name": "Unknown",
+     "broadcasting": true,
+     "hidden": false,
+     "clients": 0,
+     "radios": [
+      "wifi0"
+     ],
+     "max_clients": null,
+     "security": null,
+     "configurable": false
     }
    ],
    "stations": [
@@ -2268,7 +2283,7 @@
     "boot_problems": [],
     "image_booted": null,
     "config_booted": null,
-    "last_backup": "2026-11-18T12:32:10+00:00",
+    "last_backup": "2026-11-18T17:23:08+00:00",
     "backups": 1
    },
    "hardware": {
@@ -2294,8 +2309,8 @@
    }
   },
   {
-   "entry_id": "01M7QA99J0QQ20GRAHNCB1T2CT",
-   "device_id": "0ee4d99e5fe0fe34de635eaf8f120c99",
+   "entry_id": "01M7QTY2P4EFA94YVNWXCW3NBQ",
+   "device_id": "2a48078fae219f5e208d7e2652be9bfd",
    "name": "AH-7c0680",
    "host": "192.168.1.10",
    "online": true,
@@ -2307,7 +2322,7 @@
    "mac": "bc:f3:10:7c:06:80",
    "ip": "192.168.1.10",
    "uptime": 11565,
-   "boot_time": "2026-11-18T09:19:25+00:00",
+   "boot_time": "2026-11-18T14:10:23+00:00",
    "cpu": 5.9,
    "memory": 42.8,
    "temperature": null,
@@ -2368,7 +2383,8 @@
       "wifi1"
      ],
      "max_clients": 100,
-     "security": "wpa2-aes-psk"
+     "security": "wpa2-aes-psk",
+     "configurable": true
     },
     {
      "name": "Guest Wifi",
@@ -2380,7 +2396,8 @@
       "wifi1"
      ],
      "max_clients": 100,
-     "security": "wpa2-aes-psk"
+     "security": "wpa2-aes-psk",
+     "configurable": true
     },
     {
      "name": "IoT",
@@ -2391,7 +2408,20 @@
       "wifi0"
      ],
      "max_clients": 100,
-     "security": "wpa2-aes-psk"
+     "security": "wpa2-aes-psk",
+     "configurable": true
+    },
+    {
+     "name": "Unknown",
+     "broadcasting": true,
+     "hidden": false,
+     "clients": 0,
+     "radios": [
+      "wifi0"
+     ],
+     "max_clients": null,
+     "security": null,
+     "configurable": false
     }
    ],
    "stations": [
@@ -2482,7 +2512,7 @@
     "boot_problems": [],
     "image_booted": null,
     "config_booted": null,
-    "last_backup": "2026-11-18T12:32:10+00:00",
+    "last_backup": "2026-11-18T17:23:08+00:00",
     "backups": 1
    },
    "hardware": {
@@ -2515,7 +2545,7 @@
    "mac": "bc:f3:10:7c:06:80",
    "ip": "192.168.9.74",
    "uptime": 11565,
-   "boot_time": "2026-11-18T09:19:25+00:00",
+   "boot_time": "2026-11-18T14:10:23+00:00",
    "cpu": 5.9,
    "memory": 42.8,
    "temperature": null,
@@ -2574,7 +2604,8 @@
       "wifi1"
      ],
      "max_clients": 50,
-     "security": null
+     "security": null,
+     "configurable": true
     }
    ],
    "stations": [
@@ -2621,7 +2652,7 @@
     "boot_problems": [],
     "image_booted": null,
     "config_booted": null,
-    "last_backup": "2026-11-18T12:32:10+00:00",
+    "last_backup": "2026-11-18T17:23:08+00:00",
     "backups": 1
    },
    "hardware": {

@@ -2239,6 +2239,7 @@ class RunningConfigSummary:
     uptime_seconds: int | None = None  # SR switch: '!System Up Time "0 days 1 hrs 35 mins"'
     ssid_bindings: dict[str, set[str]] = field(default_factory=dict)  # radio -> SSIDs ("interface wifi0 ssid X")
     console: bool = False  # "line console" (SR switches): there's a serial console port
+    ssids: set[str] = field(default_factory=set)  # SSIDs the configuration defines ("ssid <name> ...")
 
     def ssid_security(self, ssid: str) -> str | None:
         obj = self.ssid_security_objects.get(ssid, ssid)
@@ -2248,6 +2249,7 @@ class RunningConfigSummary:
 _ARG = r'(?:"([^"]+)"|(\S+))'
 _BIND_RE = re.compile(rf"^\s*interface\s+(wifi\d+)\s+ssid\s+{_ARG}(\s+\S.*)?$", re.IGNORECASE)
 _HIDE_RE = re.compile(rf"^\s*ssid\s+{_ARG}\s+hide-ssid\b", re.IGNORECASE)
+_SSID_DEF_RE = re.compile(rf"^\s*ssid\s+{_ARG}(?:\s|$)", re.IGNORECASE)
 _SUITE_RE = re.compile(rf"^\s*security-object\s+{_ARG}\s+security\s+protocol-suite\s+(\S+)", re.IGNORECASE)
 _PSE_OFF_RE = re.compile(r"^\s*interface\s+(eth\S+)\s+pse\s+shutdown\b", re.IGNORECASE)
 _PORT_OFF_RE = re.compile(r"^\s*interface\s+(eth\S+)\s+shutdown\s*$", re.IGNORECASE)
@@ -2282,6 +2284,8 @@ def parse_running_config_summary(config: str) -> RunningConfigSummary:
             if not re.search(r"\bshutdown\b", m.group(4) or "", re.IGNORECASE):
                 summary.ssid_bindings.setdefault(m.group(1).lower(), set()).add(m.group(2) or m.group(3))
             continue
+        if m := _SSID_DEF_RE.match(line):
+            summary.ssids.add(m.group(1) or m.group(2))
         if m := _HIDE_RE.match(line):
             summary.hidden_ssids.add(m.group(1) or m.group(2))
         elif m := _SUITE_RE.match(line):

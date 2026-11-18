@@ -221,6 +221,7 @@ def device_snapshot(hass: HomeAssistant, coordinator: AerohiveCoordinator) -> di
                 "radios": [r for r in data.radio_names() if data.ssid_on_radio(name, r)],
                 "max_clients": data.ssids[name].max_client,
                 "security": data.config.ssid_security(name) if data.config else None,
+                "configurable": data.ssid_configurable(name),
             }
             for name in sorted(data.ssids)
         ]

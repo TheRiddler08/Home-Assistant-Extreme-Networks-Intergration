@@ -92,7 +92,9 @@ await page.close();
 
 // Wi-Fi tab: timer, edit, add, toggle; non-admins can only look.
 page = await open("?view=panel&path=wifi");
-check((await panel().locator(".net").count()) === 3, "Wi-Fi tab lists 3 networks");
+check((await panel().locator(".net").count()) === 4, "Wi-Fi tab lists 4 networks");
+check((await panel().locator('.net[data-ssid="Unknown"] [data-action="wifi-edit"], .net[data-ssid="Unknown"] [data-action="wifi-timer"]').count()) === 0, "an unconfigured entry has no edit/timer");
+check(await panel().locator('.net[data-ssid="Unknown"] [data-wifi-toggle]').isDisabled(), "an unconfigured entry can't be switched");
 check((await panel().locator(".muted").first().textContent()).includes("2 access points"), "router with Wi-Fi counts as an access point");
 await panel().locator('.net[data-ssid="Guest Wifi"] [data-action="wifi-timer"]').click();
 await panel().locator('input[data-field="minutes"][value="120"]').check();
@@ -112,7 +114,7 @@ await panel().locator('[data-action="wifi-add"]').first().click();
 await panel().locator("#wifi-name").fill("Kids");
 await panel().locator('[data-action="wifi-create"]').click();
 await page.waitForTimeout(900);
-check((await panel().locator(".net").count()) === 4, "new network appears");
+check((await panel().locator(".net").count()) === 5, "new network appears");
 await panel().locator('.net[data-ssid="IoT"] [data-wifi-toggle]').evaluate((el) => el.click());
 await page.waitForTimeout(900);
 check(((await panel().locator(".toast").textContent()) || "").includes("IoT turned off"), "Wi-Fi toggle confirms with a message");

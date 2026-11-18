@@ -26,7 +26,7 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
 
     def factory(data: AerohiveData) -> Iterable[tuple[str, Callable[[], Entity]]]:
-        for ssid in data.ssids:
+        for ssid in (s for s in data.ssids if data.ssid_configurable(s)):
             yield f"psk_{ssid}", lambda ssid=ssid: AerohiveSsidKeyText(coordinator, ssid)
 
     async_add_dynamic_entities(coordinator, entry, async_add_entities, factory)

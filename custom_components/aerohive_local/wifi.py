@@ -70,7 +70,12 @@ def _pick(hass: HomeAssistant, entry_ids: list[str] | None, ssid: str | None = N
     if entry_ids:
         aps = [ap for ap in aps if ap.config_entry.entry_id in entry_ids]
     if ssid is not None and must_have:
-        aps = [ap for ap in aps if ssid in ap.data.ssids]
+        listed = [ap for ap in aps if ssid in ap.data.ssids]
+        aps = [ap for ap in listed if ap.data.ssid_configurable(ssid)]
+        if listed and not aps:
+            raise HomeAssistantError(
+                f"{ssid} is listed by the access point(s) but isn't in their configuration, so it can't be changed"
+            )
     return aps
 
 

@@ -840,6 +840,7 @@ def _long_ssid_responses(client: FakeClient) -> None:
     client.responses["show interface"] = load_fixture("ap460c_show_interface.txt") + (
         "Wifi1.2     bcf3:107c:06b5 access         U      36(20MHz)     -  radio_axa0        hive0           REACT-Gues\n"
     )
+    client.responses["show running-config"] += f"ssid {LONG}\ninterface wifi1 ssid {LONG}\n"
 
 
 async def test_truncated_ssid_name_is_matched(hass: HomeAssistant, entry: MockConfigEntry) -> None:
@@ -1012,3 +1013,44 @@ async def test_usb_modem_on_branch_router(hass: HomeAssistant) -> None:
     data = entry.runtime_data.data
     assert data.panel.usb == [{"name": "USB modem", "id": "usbnet0", "up": True}]
     assert "usbnet0" not in data.ports()
+
+
+
+async def test_listed_but_unconfigured_ssid_is_read_only(hass: HomeAssistant, entry: MockConfigEntry, hass_ws_client) -> None:
+    """An AP listed an 'Unknown' SSID that isn't in its configuration; changing it failed on the AP.
+
+    It's shown, but nothing tries to change it: no controls, a clear error from actions, and the
+    Wi-Fi tab marks it read-only.
+    """
+    client = _client()
+    client.responses["show ssid"] = load_fixture("ap460c_show_ssid.txt") + (
+        "2   Unknown                          2346    2346    1           100         None\n"
+    )
+    client.responses["show interface"] = load_fixture("ap460c_show_interface.txt") + (
+        "Wifi0.2     bcf3:107c:0695 access         U       6(20MHz)     -  radio_axg0        hive0           Unknown\n"
+    )
+    coordinator = entry.runtime_data
+    coordinator._config_dirty = True  # noqa: SLF001
+    await coordinator.async_refresh()
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    data = coordinator.data
+    assert "Unknown" in data.ssids and not data.ssid_configurable("Unknown")
+    assert data.ssid_configurable("AP460C")
+    registry = er.async_get(hass)
+    ids = {e.unique_id for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
+    assert not [i for i in ids if i.endswith("_Unknown") and ("ssid_wifi" in i or "psk_" in i or "max_client" in i)]
+    client.commands.clear()
+    with pytest.raises(HomeAssistantError, match="isn't in its configuration"):
+        await coordinator.async_update_ssid("Unknown", radios=[])
+    with pytest.raises(HomeAssistantError, match="isn't in its configuration"):
+        await coordinator.async_set_ssid_on_radio("wifi0", "Unknown", False)
+    assert not [c for c in client.commands if "Unknown" in c]  # nothing was sent to the AP
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "aerohive_local/wifi/update", "ssid": "Unknown", "enabled": False})
+    reply = await ws.receive_json()
+    assert not reply["success"] and "configuration" in reply["error"]["message"]
+    await ws.send_json({"id": 2, "type": "aerohive_local/snapshot"})
+    snap = (await ws.receive_json())["result"]
+    ssids = {s["name"]: s for s in snap["devices"][0]["ssids"]}
+    assert ssids["Unknown"]["configurable"] is False and ssids["AP460C"]["configurable"] is True

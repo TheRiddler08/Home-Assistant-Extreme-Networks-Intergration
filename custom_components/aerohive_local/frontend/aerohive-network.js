@@ -188,11 +188,13 @@ function wifiNetworks(data) {
     for (const ssid of device.ssids || []) {
       let net = map.get(ssid.name);
       if (!net) {
-        net = { name: ssid.name, aps: [], clients: 0, hidden: false, on: false, bands: new Set(), security: null, maxClients: null };
+        net = { name: ssid.name, aps: [], clients: 0, hidden: false, on: false, bands: new Set(), security: null, maxClients: null, configurable: false };
         map.set(ssid.name, net);
       }
       const bands = (ssid.radios || []).map((r) => (device.radios || []).find((x) => x.name === r)?.band).filter(Boolean);
       net.aps.push({ device, ssid, bands });
+      // An AP can list an entry its configuration doesn't define (e.g. "Unknown"): shown, never changed.
+      net.configurable = net.configurable || ssid.configurable !== false;
       net.clients += ssid.clients || 0;
       net.hidden = net.hidden || Boolean(ssid.hidden);
       net.on = net.on || (ssid.radios || []).length > 0;
@@ -975,7 +977,7 @@ class AerohiveBase extends HTMLElement {
   }
 
   _networkCard(net, { compact = false } = {}) {
-    const admin = this._isAdmin();
+    const admin = this._isAdmin() && net.configurable;
     const on = this._wifiOn(net);
     const busy = this._isBusy(`wifi:${net.name}`);
     const apNames = net.aps.map((a) => a.device.name);
@@ -994,6 +996,7 @@ class AerohiveBase extends HTMLElement {
       ${net.timer ? `<div class="timer-note">${icon("timer")}<span class="grow">${esc(net.name)} goes back ${net.timer.enabled ? "off" : "on"} at ${esc(fmtUntil(net.timer.until))}.</span>
         ${admin ? `<button class="btn" data-action="wifi-timer-restore" data-ssid="${esc(net.name)}">${net.timer.enabled ? "Turn off now" : "Turn on now"}</button>
         <button class="btn" data-action="wifi-timer-keep" data-ssid="${esc(net.name)}">Keep ${net.timer.enabled ? "on" : "off"}</button>` : ""}</div>` : ""}
+      ${net.configurable ? "" : `<div class="muted" style="font-size:12px">Listed by the access point, but not one of its configured networks, so it can't be changed here.</div>`}
       ${compact ? "" : `<div class="chips">
         <span class="chip">${icon("clients")}${net.clients} client${net.clients === 1 ? "" : "s"}</span>
         ${net.bands.map((b) => `<span class="chip">${esc(b)}</span>`).join("")}
@@ -1040,7 +1043,8 @@ class AerohiveBase extends HTMLElement {
     const net = networks.find((n) => n.name === d.ssid);
     if (!net) return `<div class="dialog" role="dialog" aria-modal="true"><p>${esc(d.ssid)} no longer exists.</p><div class="dlg-actions"><button class="btn" data-action="close">Close</button></div></div>`;
     const form = (d.form = d.form || {});
-    const scope = d.scope ? net.aps.filter((a) => d.scope.includes(a.device.entry_id)) : net.aps;
+    const editable = net.aps.filter((a) => a.ssid.configurable !== false);
+    const scope = d.scope ? editable.filter((a) => d.scope.includes(a.device.entry_id)) : editable;
     const currentBands = [...new Set(scope.flatMap((a) => a.bands))].sort();
     const bands = form.bands ?? currentBands;
     const hidden = form.hidden ?? scope.some((a) => a.ssid.hidden);
@@ -1057,7 +1061,7 @@ class AerohiveBase extends HTMLElement {
       <div class="form-row"><label class="toggle"><input type="checkbox" data-field="hidden" ${hidden ? "checked" : ""}><span class="track"></span><span>Hide the network name</span></label></div>
       ${net.maxClients != null ? `<div class="form-row"><label class="section-title" for="wifi-max">Max clients per access point</label>
         <div class="field"><input type="number" id="wifi-max" min="1" max="255" data-field="max" value="${esc(maxClients)}"></div></div>` : ""}
-      ${net.aps.length > 1 ? `<div class="form-row"><span class="section-title">Apply to</span>${this._apChecks(net.aps.map((a) => a.device), aps)}</div>` : ""}
+      ${editable.length > 1 ? `<div class="form-row"><span class="section-title">Apply to</span>${this._apChecks(editable.map((a) => a.device), aps)}</div>` : ""}
       <div class="dlg-actions">
         <button class="btn danger" data-action="wifi-delete" style="margin-right:auto">${icon("trash")}Delete</button>
         <button class="btn" data-action="close">Cancel</button>
@@ -1151,11 +1155,12 @@ class AerohiveBase extends HTMLElement {
         const net = networks.find((n) => n.name === ssid);
         if (!net) return true;
         const form = d.form || {};
-        const scope = d.scope ? net.aps.filter((a) => d.scope.includes(a.device.entry_id)) : net.aps;
+        const editable = net.aps.filter((a) => a.ssid.configurable !== false);
+        const scope = d.scope ? editable.filter((a) => d.scope.includes(a.device.entry_id)) : editable;
         const msg = { type: `${DOMAIN}/wifi/update`, ssid };
         const aps = form.aps ?? scope.map((a) => a.device.entry_id);
         if (!aps.length) return this._toast("Choose at least one access point", true), true;
-        if (aps.length !== net.aps.length) msg.entry_ids = aps;
+        if (aps.length !== editable.length || editable.length !== net.aps.length) msg.entry_ids = aps;
         if (form.password) {
           if (form.password.length < 8 || form.password.length > 63) return this._toast("A Wi-Fi password needs 8 to 63 characters", true), true;
           msg.password = form.password;
@@ -2019,7 +2024,7 @@ class AerohiveNetworkPanel extends AerohiveBase {
       <thead><tr><th>SSID</th><th>Status</th><th>Clients</th></tr></thead>
       <tbody>${device.ssids
         .map(
-          (s) => `<tr class="click" data-action="wifi-edit" data-ssid="${esc(s.name)}" data-scope="${esc(device.entry_id)}" tabindex="0"><td><strong>${esc(s.name)}</strong>${s.hidden ? ' <span class="chip">hidden</span>' : ""}</td>
+          (s) => `<tr ${s.configurable === false ? 'title="Listed by the access point, not one of its configured networks"' : `class="click" data-action="wifi-edit" data-ssid="${esc(s.name)}" data-scope="${esc(device.entry_id)}" tabindex="0"`}><td><strong>${esc(s.name)}</strong>${s.hidden ? ' <span class="chip">hidden</span>' : ""}${s.configurable === false ? ' <span class="chip">read-only</span>' : ""}</td>
             <td><span class="row"><span class="dot ${s.broadcasting ? "ok" : ""}"></span>${s.broadcasting ? "Broadcasting" : "Off"}</span></td>
             <td class="num">${esc(s.clients)}</td></tr>`,
         )

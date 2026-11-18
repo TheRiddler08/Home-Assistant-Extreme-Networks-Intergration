@@ -92,7 +92,11 @@ ap["ssids"] = [
     {"name": "AP460C", "broadcasting": True, "hidden": False, "clients": 4, "radios": both, "max_clients": 100, "security": "wpa2-aes-psk"},
     {"name": "Guest Wifi", "broadcasting": True, "hidden": True, "clients": 3, "radios": both, "max_clients": 100, "security": "wpa2-aes-psk"},
     {"name": "IoT", "broadcasting": True, "hidden": False, "clients": 0, "radios": both[:1], "max_clients": 100, "security": "wpa2-aes-psk"},
+    # Listed by the AP but not in its configuration (seen on a real AP): read-only.
+    {"name": "Unknown", "broadcasting": True, "hidden": False, "clients": 0, "radios": both[:1], "max_clients": None, "security": None, "configurable": False},
 ]
+for _s in ap["ssids"]:
+    _s.setdefault("configurable", True)
 for radio in ap["radios"]:
     radio["ssids"] = ["AP460C", "Guest Wifi"]
 br = copy.deepcopy(ap)

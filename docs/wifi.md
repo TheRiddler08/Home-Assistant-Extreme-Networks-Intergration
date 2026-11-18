@@ -18,7 +18,9 @@ access points have it, with its bands, clients and whether it's hidden or open.
   here too.
 - **Add network:** name, password (empty = open network), bands, hidden, access points.
 
-Only administrators can change networks; other users see them read-only. Passwords go
+Only administrators can change networks; other users see them read-only. Entries an access
+point lists but doesn't have in its configuration (some show one called "Unknown") are shown
+read-only too: they aren't networks you set up, and the access point refuses changes to them. Passwords go
 straight to the access points over Home Assistant's WebSocket connection, and are never
 stored, logged or put on the event bus.
 
