@@ -127,3 +127,10 @@ def test_parsers_never_raise(garbage: str) -> None:
     ow.parse_dhcp_leases(garbage)
     ow.parse_arp(garbage)
     ow.parse_cpu_stat(garbage)
+
+
+def test_usb_devices_and_sfp_ports() -> None:
+    usb = ow.parse_usb_devices("1d6b:0002 xHCI Host Controller hub\n0bda:8153 USB 10/100/1000 LAN\n12d1:1506 HUAWEI Mobile\n")
+    assert usb == [{"id": "0bda:8153", "name": "USB 10/100/1000 LAN"}, {"id": "12d1:1506", "name": "HUAWEI Mobile"}]
+    devices = '{"lan1": {"type": "Network device", "up": true, "carrier": true}, "sfp1": {"type": "Network device", "up": true, "carrier": false}}'
+    assert sorted(ow.parse_ports(devices)) == ["lan1", "sfp1"]

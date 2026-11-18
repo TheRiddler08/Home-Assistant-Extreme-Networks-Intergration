@@ -74,6 +74,8 @@ def _ports(data: AerohiveData) -> list[dict[str, Any]]:
             {
                 "name": name,
                 "label": iface.extra.get("display_string"),
+                "media": iface.extra.get("media"),
+                "module": iface.extra.get("module"),
                 "up": iface.is_up,
                 "enabled": data.port_enabled(name),
                 "present": link_state != "NP",
@@ -239,6 +241,14 @@ def device_snapshot(hass: HomeAssistant, coordinator: AerohiveCoordinator) -> di
             "config_booted": data.exos.config_booted if data.exos else None,
             "last_backup": backup.last_backup.isoformat() if backup and backup.last_backup else None,
             "backups": backup.count if backup else 0,
+        },
+        "hardware": {
+            "console": data.panel.console,
+            "mgmt": None
+            if data.panel.mgmt_link is None and data.panel.mgmt_ip is None
+            else {"link": data.panel.mgmt_link, "ip": data.panel.mgmt_ip},
+            "usb": data.panel.usb,
+            "psus": [{"name": n, "state": st} for n, st in (env.power_supplies if env else {}).items()],
         },
         "problems": _problems(coordinator, data),
         "features": {

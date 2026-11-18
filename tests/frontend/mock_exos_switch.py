@@ -26,6 +26,8 @@ STATIC = {
     "show switch": "synthetic_exos_show_switch.txt",
     "show version": "synthetic_exos_show_version.txt",
     "show vlan": "synthetic_exos_show_vlan.txt",
+    "show ports configuration no-refresh": "synthetic_exos_show_ports_configuration.txt",
+    "show port mgmt information": "synthetic_exos_show_port_mgmt_information.txt",
     "show fdb": "synthetic_exos_show_fdb.txt",
     "show lldp neighbors": "synthetic_exos_show_lldp_neighbors.txt",
     "show lldp neighbors detailed": "synthetic_exos_show_lldp_neighbors_detailed.txt",

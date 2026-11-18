@@ -23,6 +23,14 @@ Select a device to open it.
   link speed (green 1 Gbit/s, olive 100 Mbit/s, ochre 10 Mbit/s), grey means no link and
   stripes mean the port is turned off. A yellow dot marks a port delivering PoE, a blue arrow
   an uplink. Stack members get one row each.
+- **Port types:** SFP cages are drawn square, filled when a module is in (its type, e.g. `SX`,
+  is in the tooltip and the port dialog) and showing an empty slot when not. Combo ports
+  (copper or SFP) have a small square marker.
+- **Other connectors**, next to the ports, when the device reports them: **CON** (serial
+  console), **MGMT** (management port, green with link, its IP in the tooltip), **USB**
+  (attached device), **PSU 1 / PSU 2** (green when powered, dashed when the slot is empty, red
+  on a fault). Nothing is drawn from guesswork: see the table below for what each device
+  reports.
 - **Ports table:** status, what's connected (LLDP neighbour, or the device learned on the
   port), PoE power and traffic. Filter it to connected ports, PoE ports, or disabled ports and
   ports with errors.
@@ -42,6 +50,20 @@ Select a port, on the front panel or in the table, to manage it:
   on the port, named when an access point knows their hostname.
 
 Changes are saved on the switch a couple of seconds after the last one, in the background.
+
+#### What each device reports
+
+| | Port types | Console | Management port | USB | Power supplies |
+| --- | --- | --- | --- | --- | --- |
+| ExtremeXOS (X450e) | copper, SFP (with module type), empty cage, combo: `show ports configuration` | ✅ (every ExtremeXOS switch has one) | ✅ link and IP: `show port mgmt information`, Mgmt VLAN | – | ✅ `show power` (incl. the external backup PSU) |
+| SR2208P | combo ports from the model string (*2 GE dual media ports*) | ✅ `line console` in its configuration | – | – | – |
+| BR100 / APs | – | – (not reported) | – | ✅ when a USB modem is attached (`usbnet0`) | – |
+| OpenWrt | SFP ports (named `sfp*`) | – | – | ✅ attached devices (`/sys/bus/usb/devices`) | – |
+
+A connector that isn't reported isn't drawn, even if the hardware has it (for example the
+BR100's and APs' console port, or an empty USB port). ExtremeXOS and SR results are from the
+command reference and real SR2208P output; ExtremeXOS port types are not yet confirmed on a
+device.
 
 ### Access points
 

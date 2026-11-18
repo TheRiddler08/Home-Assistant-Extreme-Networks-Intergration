@@ -70,6 +70,9 @@ protection. On top of that:
 - **Port names:** set a port's display string from the Network panel or with the
   `set_port_description` action.
 - **VLANs:** VLAN list and the switch's management IP.
+- **Front panel:** copper, SFP (with the module type) and combo ports, the management port's
+  link, and both power supplies (`show ports configuration`, `show port mgmt information`,
+  `show power`).
 - **Safe reboot:** a reboot with unsaved changes is refused unless you choose to save or
   discard them ([`reboot` action](actions.md#aerohive_localreboot)).
 - **Backups:** see [Power-loss protection and backups](backups.md).

@@ -42,6 +42,7 @@ def _responses() -> dict[str, str]:
         ow.UCI_CHANGES: "",
         ow.CONFIG_EXPORT: load_fixture("synthetic_openwrt_uci_export.txt"),
         ow.TEMPERATURE: "51200",
+        ow.USB_DEVICES: "1d6b:0002 xHCI Host Controller hub\n12d1:1506 HUAWEI Mobile\n",
     }
     for dev in ("phy0-ap0", "phy1-ap0", "phy1-ap1"):
         r[ow.iwinfo_info(dev)] = load_fixture(f"synthetic_openwrt_iwinfo_info_{dev}.json")
@@ -267,3 +268,7 @@ async def test_management_address_is_never_loopback(hass: HomeAssistant) -> None
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
     assert entry.runtime_data.data.mgt.ip_address == "192.168.1.1"
+
+
+async def test_openwrt_usb_devices(hass: HomeAssistant, ow_entry: MockConfigEntry) -> None:
+    assert ow_entry.runtime_data.data.panel.usb == [{"id": "12d1:1506", "name": "HUAWEI Mobile"}]

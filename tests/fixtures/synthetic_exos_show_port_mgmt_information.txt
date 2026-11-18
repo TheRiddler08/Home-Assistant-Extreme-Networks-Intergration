@@ -1,0 +1,8 @@
+Port:   Mgmt
+        Virtual-router: VR-Mgmt
+        Type:           UTP
+        Random Early drop:      Unsupported
+        Admin state:    Enabled with auto-speed sensing auto-duplex
+        Link State:     Active, 100Mbps, full-duplex
+        Link Ups:       3        Last: Sat Nov 14 10:01:12 2026
+        Link Downs:     2        Last: Sat Nov 14 10:00:40 2026

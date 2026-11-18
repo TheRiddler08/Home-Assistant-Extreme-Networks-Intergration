@@ -257,6 +257,9 @@ const ICON_PATHS = {
   clients: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18.5 20a6.5 6.5 0 0 0-3-5.5"/>',
   wifi: '<path d="M2 8.5a15 15 0 0 1 20 0M5 12a10.5 10.5 0 0 1 14 0M8.5 15.5a5.5 5.5 0 0 1 7 0M12 19h.01"/>',
   timer: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9.5 2h5"/>',
+  console: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/>',
+  usb: '<path d="M12 21V5M9 7.5 12 4l3 3.5M7 10v3l5 3M17 9v3l-5 3"/><circle cx="12" cy="19.5" r="1.5"/>',
+  power: '<path d="M12 3v8M7 6.3a7.5 7.5 0 1 0 10 0"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
@@ -373,6 +376,26 @@ button { font: inherit; color: inherit; }
   background: repeating-linear-gradient(135deg, var(--ah-port-down) 0 4px, color-mix(in srgb, var(--ah-text) 18%, var(--ah-card)) 4px 6px);
 }
 .port.s-np { background: transparent; border-style: dashed; }
+/* SFP cages: square, no RJ45 latch; an empty cage shows its slot. */
+.port.m-sfp, .port.m-sfp-empty { width: 24px; border-width: 2px; border-color: color-mix(in srgb, var(--ah-text) 40%, transparent); border-radius: 2px; }
+.port.m-sfp::after, .port.m-sfp-empty::after { display: none; }
+.port.m-sfp-empty { background: var(--ah-face); box-shadow: inset 0 0 0 3px var(--ah-face), inset 0 0 0 7px color-mix(in srgb, #000 30%, transparent); }
+/* Combo (copper or SFP): small square marker. */
+.port.m-combo::before {
+  content: ""; position: absolute; right: 2px; bottom: 2px; width: 6px; height: 6px; border-radius: 1px;
+  border: 1.5px solid color-mix(in srgb, var(--ah-text) 55%, transparent); background: var(--ah-face);
+}
+.fp-col .port.m-combo:last-of-type::before { bottom: auto; top: 2px; }
+.fp-block.hw { align-self: center; }
+.hw-tile {
+  position: relative; display: grid; place-items: center; width: 30px; height: 24px; border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--ah-text) 22%, transparent); background: var(--ah-port-down); color: var(--ah-muted);
+}
+.hw-tile .icon { width: 14px; height: 14px; }
+.hw-tile.ok { background: var(--ah-port-fast); color: #fff; border-color: transparent; }
+.hw-tile.err { background: var(--ah-err); color: #fff; border-color: transparent; }
+.hw-tile.vacant { background: transparent; border-style: dashed; }
+.hw-tile.info { background: color-mix(in srgb, var(--ah-accent) 16%, var(--ah-card)); color: var(--ah-accent); }
 .port.s-np::after { display: none; }
 .port.sel { outline: 2px solid var(--ah-accent); outline-offset: 2px; }
 .port.dim { opacity: 0.3; }
@@ -387,6 +410,9 @@ button { font: inherit; color: inherit; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 12px; color: var(--ah-muted); }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .legend i { display: inline-block; width: 14px; height: 11px; border-radius: 2px; border: 1px solid var(--ah-line); }
+.legend i.sfp { width: 11px; border: 2px solid color-mix(in srgb, var(--ah-text) 40%, transparent); background: var(--ah-port-fast); }
+.legend i.combo { position: relative; background: var(--ah-port-down); }
+.legend i.combo::before { content: ""; position: absolute; left: 1px; bottom: 1px; width: 4px; height: 4px; border: 1px solid var(--ah-muted); }
 
 .mini-fp { display: flex; flex-wrap: wrap; gap: 2px 6px; }
 .mini-fp .blk { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, 7px); gap: 2px; }
@@ -501,8 +527,24 @@ function portStatusText(port) {
   return ["Up", fmtSpeed(port.speed), port.duplex].filter(Boolean).join(" · ");
 }
 
+function mediaText(port) {
+  switch (port.media) {
+    case "sfp":
+      return `SFP${port.module ? ` (${port.module})` : ""}`;
+    case "sfp-empty":
+      return "SFP, no module";
+    case "combo":
+      return `combo: copper or SFP${port.module ? ` (${port.module} inserted)` : ""}`;
+    case "copper":
+      return "copper";
+    default:
+      return "";
+  }
+}
+
 function portTitle(port) {
   const parts = [`Port ${port.name}${port.label ? ` (${port.label})` : ""}: ${portStatusText(port)}`];
+  if (port.media && port.media !== "copper") parts.push(mediaText(port));
   if (port.poe && port.poe.delivering) parts.push(`PoE ${port.poe.power_w ?? 0} W`);
   if (port.neighbor && port.neighbor.name) parts.push(`→ ${port.neighbor.name}`);
   if (port.uplink) parts.push("uplink");
@@ -554,11 +596,13 @@ function renderFaceplate(device, { selected = null, filter = null } = {}) {
     return `<div class="faceplate" role="group" aria-label="Router ports">
       ${wan.length ? `<div class="fp-block">${wan.map((p, i) => col(p, wan.length > 1 ? `WAN${i + 1}` : "WAN")).join("")}</div>` : ""}
       <div class="fp-block ${wan.length ? "extra" : ""}">${lan.map((p) => col(p, portNumber(p.name))).join("")}</div>
+      ${renderHardware(device)}
     </div>`;
   }
-  return faceplateLayout(ports)
+  const rows = faceplateLayout(ports);
+  return rows
     .map(
-      (row) => `
+      (row, rowIndex) => `
       <div class="faceplate" role="group" aria-label="${esc(row.slot ? `Switch ${row.slot} ports` : "Switch ports")}">
         ${row.slot ? `<span class="fp-slot">Slot ${esc(row.slot)}</span>` : ""}
         ${row.blocks
@@ -579,13 +623,36 @@ function renderFaceplate(device, { selected = null, filter = null } = {}) {
           </div>`,
           )
           .join("")}
+        ${rowIndex === rows.length - 1 ? renderHardware(device) : ""}
       </div>`,
     )
     .join("");
 }
 
+/** Console, management port, USB and power supplies, where the device reports them. */
+function renderHardware(device) {
+  const hw = device.hardware || {};
+  const tiles = [];
+  const tile = (label, cls, iconName, title) =>
+    tiles.push(`<div class="fp-col"><span class="fp-num">${esc(label)}</span><div class="hw-tile ${cls}" title="${esc(title)}" aria-label="${esc(title)}">${icon(iconName)}</div></div>`);
+  if (hw.console) tile("CON", "info", "console", "Serial console port");
+  if (hw.mgmt) {
+    const link = hw.mgmt.link;
+    tile("MGMT", link ? "ok" : link === false ? "" : "info", "switch",
+      `Management port: ${link ? "link up" : link === false ? "no link" : "link unknown"}${hw.mgmt.ip ? `, ${hw.mgmt.ip}` : ""}`);
+  }
+  for (const dev of hw.usb || []) tile("USB", dev.up === false ? "" : "ok", "usb", `USB: ${dev.name}${dev.id ? ` (${dev.id})` : ""}`);
+  for (const psu of hw.psus || []) {
+    const state = String(psu.state || "");
+    const cls = /empty|not present/i.test(state) ? "vacant" : /fail|fault|unsupported|off/i.test(state) ? "err" : /on|ok|present/i.test(state) ? "ok" : "";
+    tile(psu.name, cls, "power", `${psu.name}: ${state}`);
+  }
+  return tiles.length ? `<div class="fp-block extra hw" role="group" aria-label="Other connectors">${tiles.join("")}</div>` : "";
+}
+
 function renderPort(port, selected, filter) {
   const classes = ["port", portState(port)];
+  if (port.media && port.media !== "copper") classes.push(`m-${port.media}`);
   if (selected === port.name) classes.push("sel");
   if (filter && !filter(port)) classes.push("dim");
   const badges = [
@@ -595,8 +662,11 @@ function renderPort(port, selected, filter) {
   return `<button class="${classes.join(" ")}" data-port="${esc(port.name)}" title="${esc(portTitle(port))}" aria-label="${esc(portTitle(port))}">${badges}</button>`;
 }
 
-function renderLegend() {
+function renderLegend(device) {
+  const media = new Set(((device && device.ports) || []).map((p) => p.media));
   return `<div class="legend" aria-hidden="true">
+    ${media.has("sfp") || media.has("sfp-empty") ? '<span><i class="sfp"></i>SFP</span>' : ""}
+    ${media.has("combo") ? '<span><i class="combo"></i>Copper or SFP</span>' : ""}
     <span><i style="background:var(--ah-port-fast)"></i>1 Gbit/s+</span>
     <span><i style="background:color-mix(in srgb, var(--ah-port-fast) 55%, var(--ah-port-slow))"></i>100 Mbit/s</span>
     <span><i style="background:var(--ah-port-slow)"></i>10 Mbit/s</span>
@@ -1196,6 +1266,7 @@ class AerohiveBase extends HTMLElement {
         <section>
           <dl class="kv">
             ${neighbor ? `<dt>Connected to</dt><dd><strong>${esc(neighbor.name || "Unknown")}</strong>${neighbor.port ? ` <span class="muted">port ${esc(neighbor.port)}</span>` : ""}${neighbor.address ? `<br><span class="mono">${esc(neighbor.address)}</span>` : ""}</dd>` : ""}
+            ${port.media ? `<dt>Port type</dt><dd>${esc(mediaText(port).replace(/^./, (c) => c.toUpperCase()))}</dd>` : ""}
             ${poe ? `<dt>PoE</dt><dd>${poe.delivering ? `<strong>${esc(poe.power_w ?? 0)} W</strong>` : esc(poe.status || "Off")}${poe.class ? ` <span class="muted">${esc(poe.class)}</span>` : ""}</dd>` : ""}
             <dt>Traffic</dt><dd class="num">↓ ${fmtRate(port.rx_kbps)} &nbsp; ↑ ${fmtRate(port.tx_kbps)}</dd>
             <dt>Total</dt><dd class="num">↓ ${fmtBytes(port.rx_bytes)} &nbsp; ↑ ${fmtBytes(port.tx_bytes)}</dd>
@@ -1884,7 +1955,7 @@ class AerohiveNetworkPanel extends AerohiveBase {
         <div class="row" style="margin-bottom:10px"><div class="section-title grow" style="margin:0">Front panel</div>
           <span class="muted num" style="font-size:13px">${up} of ${ports.length} connected · select a port to manage it</span></div>
         <div class="fp-scroll">${renderFaceplate(device, { selected, filter: this._portFilterFn() })}</div>
-        ${renderLegend()}
+        ${renderLegend(device)}
       </div>`;
   }
 
@@ -2224,7 +2295,7 @@ class AerohiveSwitchCard extends AerohiveCardBase {
     ].filter(Boolean);
     return `<style>${FLIP_CSS}</style>${this._head(device)}
       <div class="fp-scroll" data-device="${esc(device.entry_id)}">${renderFaceplate(device, { selected })}</div>
-      ${this._config.legend ? renderLegend() : ""}
+      ${this._config.legend ? renderLegend(device) : ""}
       ${foot.length ? `<div class="foot">${foot.map((f) => `<span>${f}</span>`).join("")}</div>` : ""}
       ${(device.problems || []).length || !device.online ? `<div class="chips">${problemChips(device)}</div>` : ""}`;
   }

@@ -46,6 +46,10 @@ from .const import (
 from .discovery import is_aerohive_mac
 from . import openwrt as ow
 from .parsers import (
+    combo_port_count,
+    media_kind,
+    parse_exos_mgmt_port,
+    parse_exos_port_media,
     model_ethernet_ports,
     dialect_from_version,
     BootParams,
@@ -178,6 +182,19 @@ def _sum_rates(rates: list[Throughput]) -> Throughput:
 
 
 @dataclass
+class PanelExtras:
+    """Front-panel hardware besides the data ports, where the device reports it.
+
+    None means unknown (not reported), never "not there".
+    """
+
+    console: bool | None = None
+    mgmt_link: bool | None = None  # out-of-band management port
+    mgmt_ip: str | None = None
+    usb: list[dict[str, Any]] | None = None
+
+
+@dataclass
 class AerohiveData:
     """Snapshot of everything read from the device in one poll."""
 
@@ -208,6 +225,7 @@ class AerohiveData:
     # ("port", name) / ("poe", name) / ("ssid", ssid, radio) / ("hidden", ssid) -> bool.
     overrides: dict[tuple[str, ...], bool] = field(default_factory=dict)
     save_error: str | None = None
+    panel: PanelExtras = field(default_factory=PanelExtras)
 
     @property
     def is_switch(self) -> bool:
@@ -459,6 +477,9 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._config_text: str | None = None
         self._environment: EnvironmentInfo | None = None
         self._vlans: dict[str, ExosVlan] = {}
+        self._port_media: dict[str, tuple[str, str | None]] = {}
+        self._mgmt_link: bool | None = None
+        self._usb: list[dict[str, Any]] | None = None
         # OpenWrt
         self._ow_cpu: tuple[int, int] | None = None
         self._ow_wifi: list[ow.WifiIface] = []
@@ -596,6 +617,11 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             return await self._fetch_exos(data)
         data.version = parse_show_version(version_out)
         data.interfaces = await self._read_interfaces()
+        usb = [
+            {"name": "USB modem", "id": n, "up": i.is_up}
+            for n, i in sorted(data.interfaces.items()) if n.startswith("usbnet")
+        ]
+        data.panel = PanelExtras(usb=usb or None)
         for name in model_ethernet_ports(data.version.platform):
             if name not in data.interfaces:
                 # Not in the summary (the BR100 lists only some ports): read it on its own below.
@@ -770,6 +796,12 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             data.details["mgt0"] = self._mgt
         data.config = self._config
         data.lldp = self._lldp
+        description = data.version.raw.get("system_description") or data.version.raw.get("machine_type")
+        if combos := combo_port_count(description):
+            front = [p for p in data.ports() if not p.startswith("0/")]
+            for port in front[-combos:]:
+                data.interfaces[port].extra["media"] = "combo"
+        data.panel = PanelExtras(console=True if self._config is not None and self._config.console else None)
         if self._config is not None and self._config.uptime_seconds is not None and self._config_read_at:
             # Uptime from the running-config header, aged by the time since it was read.
             data.version.uptime_seconds = self._config.uptime_seconds + int(now - self._config_read_at)
@@ -905,6 +937,11 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             self._slow_at = now
             self._config_dirty = True
             self._environment = EnvironmentInfo(temperature_c=ow.parse_temperature(await run(ow.TEMPERATURE)))
+            self._usb = ow.parse_usb_devices(await run(ow.USB_DEVICES))
+        data.panel = PanelExtras(usb=self._usb or None)
+        for name, iface in data.interfaces.items():
+            if iface.is_port and name.startswith("sfp"):
+                iface.extra["media"] = "sfp"
         data.environment = self._environment
         self._update_boot_time(data)
         await self._process_backup(data)
@@ -1120,6 +1157,10 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 self._serial = parse_exos_version(out)[0] or self._serial
             if out := await self._optional(commands.EXOS_SHOW_VLAN):
                 self._vlans = parse_exos_vlans(out)
+            if out := await self._optional(commands.EXOS_SHOW_PORT_CONFIG):
+                self._port_media = parse_exos_port_media(out) or self._port_media
+            if out := await self._optional(commands.EXOS_SHOW_MGMT_PORT):
+                self._mgmt_link = parse_exos_mgmt_port(out)
             env = EnvironmentInfo()
             if out := await self._optional(commands.EXOS_SHOW_TEMPERATURE):
                 env.temperature_c, env.temperature_status = parse_exos_temperature(out)
@@ -1132,6 +1173,20 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         data.environment = self._environment
         data.lldp = self._lldp
         data.vlans = self._vlans
+        for port, (primary, redundant) in self._port_media.items():
+            if (iface := data.interfaces.get(port)) is not None:
+                media, module = media_kind(primary, redundant)
+                if media:
+                    iface.extra["media"] = media
+                if module:
+                    iface.extra["module"] = module
+        mgmt_vlan = next((v for v in self._vlans.values() if v.name.lower() == "mgmt"), None)
+        data.panel = PanelExtras(
+            console=True,  # every ExtremeXOS switch has a serial console port
+            mgmt_link=self._mgmt_link if self._mgmt_link is not None
+            else (bool(mgmt_vlan.active_ports) if mgmt_vlan and mgmt_vlan.active_ports is not None else None),
+            mgmt_ip=mgmt_vlan.ip_address if mgmt_vlan else None,
+        )
         data.version.serial = self._serial
         if mgmt := self._management_vlan(self._vlans):
             data.details["mgt0"] = InterfaceDetail(

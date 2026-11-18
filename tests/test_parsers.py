@@ -798,3 +798,25 @@ def test_model_ethernet_ports() -> None:
     assert p.model_ethernet_ports("BR100") == ("eth0", "eth1", "eth2", "eth3", "eth4")
     assert p.model_ethernet_ports("br-100") == ("eth0", "eth1", "eth2", "eth3", "eth4")
     assert p.model_ethernet_ports("AP460C") == () and p.model_ethernet_ports(None) == ()
+
+
+def test_exos_port_media_and_mgmt_port() -> None:
+    media = p.parse_exos_port_media(load_fixture("synthetic_exos_show_ports_configuration.txt"))
+    assert media["1"] == ("UTP", None) and media["45"] == ("NONE", "UTP") and media["49"] == ("SX", None)
+    assert "51" not in media  # not present: no media columns
+    kinds = {port: p.media_kind(*m) for port, m in media.items()}
+    assert kinds["1"] == ("copper", None)
+    assert kinds["45"] == ("combo", None) and kinds["47"] == ("combo", "LX")
+    assert kinds["49"] == ("sfp", "SX") and kinds["50"] == ("sfp-empty", None)
+    # The reference's other layouts: restricted ("$") module names, stack ports.
+    assert p.parse_exos_port_media("3     VR-Default   E   R  OFF  10000  FULL    $Q+SR4") == {"3": ("Q+SR4", None)}
+    assert p.parse_exos_mgmt_port(load_fixture("synthetic_exos_show_port_mgmt_information.txt")) is True
+    assert p.parse_exos_mgmt_port("Mgmt     E-------  ready   -   0") is False
+    assert p.parse_exos_mgmt_port("% Invalid input") is None
+    assert p.combo_port_count("Aerohive SR2208P: 8 GE POE+ ports, 2 GE dual media ports, 1.0.1.28") == 2
+    assert p.combo_port_count("Aerohive AP460C") == 0
+
+
+def test_console_from_sr_config() -> None:
+    assert p.parse_running_config_summary(load_fixture("sr2208p_show_running_config.txt")).console is True
+    assert p.parse_running_config_summary("hostname x\n").console is False

@@ -3,6 +3,22 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.12.0] - 2026-11-18
+
+### Added
+- **Front panel shows more than data ports**, where the device reports it:
+  - **SFP cages** drawn as cages (filled with a module, its type in the tooltip and port
+    dialog; an empty slot without), and **combo** copper/SFP ports marked. ExtremeXOS reads
+    them from `show ports configuration`; SR switches from the model string (*2 GE dual media
+    ports*); OpenWrt from `sfp*` port names.
+  - **Console** (ExtremeXOS; SR switches from `line console` in their configuration),
+    **management port** with link and IP (ExtremeXOS), **USB** (a USB modem on BR100/APs,
+    attached devices on OpenWrt) and **power supplies** (ExtremeXOS PSU 1 / PSU 2, including
+    an empty backup-PSU slot or a failed one).
+  - A port's type is shown in its dialog.
+- Nothing is drawn that the device doesn't report: an unreported connector is unknown, not
+  absent.
+
 ## [0.11.0] - 2026-11-18
 
 ### Added

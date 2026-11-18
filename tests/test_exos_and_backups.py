@@ -39,6 +39,8 @@ def _exos_responses() -> dict[str, str]:
     return {
         "show version": load_fixture("synthetic_exos_show_version.txt"),
         "show vlan": load_fixture("synthetic_exos_show_vlan.txt"),
+        "show ports configuration no-refresh": load_fixture("synthetic_exos_show_ports_configuration.txt"),
+        "show port mgmt information": load_fixture("synthetic_exos_show_port_mgmt_information.txt"),
         "show switch": load_fixture("synthetic_exos_show_switch.txt"),
         "show ports no-refresh": load_fixture("synthetic_exos_show_ports.txt"),
         "show ports statistics no-refresh": load_fixture("synthetic_exos_show_ports_statistics.txt"),
@@ -682,3 +684,19 @@ async def test_scan_shows_what_other_devices_know(hass: HomeAssistant, exos_entr
     assert labels["192.168.9.73"].startswith("192.168.9.73 · AH-7c0680") and "on X450e-48p port 2" in labels["192.168.9.73"]
     assert "on X450e-48p port 4" in labels["192.168.8.61"] and "b8:a4:4f:00:d3:de" in labels["192.168.8.61"]
     assert "(already added)" in labels["192.168.9.65"]
+
+
+async def test_exos_front_panel_hardware(hass: HomeAssistant, hass_ws_client, exos_entry: MockConfigEntry) -> None:
+    data = exos_entry.runtime_data.data
+    assert data.interfaces["49"].extra["media"] == "sfp" and data.interfaces["49"].extra["module"] == "SX"
+    assert data.interfaces["48"].extra["media"] == "combo" and data.interfaces["1"].extra["media"] == "copper"
+    assert data.panel.console is True and data.panel.mgmt_link is True
+    client = await hass_ws_client(hass)
+    await client.send_json({"id": 1, "type": "aerohive_local/snapshot"})
+    device = (await client.receive_json())["result"]["devices"][0]
+    ports = {p["name"]: p for p in device["ports"]}
+    assert (ports["49"]["media"], ports["49"]["module"]) == ("sfp", "SX") and ports["48"]["media"] == "combo"
+    hw = device["hardware"]
+    assert hw["console"] is True and hw["mgmt"] == {"link": True, "ip": None}
+    assert hw["psus"] == [{"name": "PSU 1", "state": "Powered On"}, {"name": "PSU 2", "state": "Empty"}]
+    assert hw["usb"] is None  # not reported: unknown, not "none"

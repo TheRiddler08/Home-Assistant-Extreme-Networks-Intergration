@@ -37,6 +37,11 @@ _SECRET_OPTIONS = "key|password|sae_password|auth_secret|acct_secret|priv_key_pw
 UCI_WIRELESS = f"uci -X show wireless | grep -vE '\\.({_SECRET_OPTIONS})='"
 # Backups: everything, with secret values masked (restoring them would set the key to '***').
 CONFIG_EXPORT = f"uci export | sed -E \"s/^([[:space:]]*option ({_SECRET_OPTIONS})) .*/\\1 '***'/\""
+# USB devices from sysfs (root hubs, named usbN, are skipped).
+USB_DEVICES = (
+    "for d in /sys/bus/usb/devices/*-*; do [ -f \"$d/idVendor\" ] && "
+    "echo \"$(cat \"$d/idVendor\"):$(cat \"$d/idProduct\") $(cat \"$d/product\" 2>/dev/null)\"; done; true"
+)
 REBOOT = "reboot"
 WIFI_APPLY = "uci commit wireless && wifi reload"
 FAILED_MARK = "ERROR: OpenWrt did not accept the change"
@@ -44,7 +49,7 @@ FAILED_MARK = "ERROR: OpenWrt did not accept the change"
 _IFNAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,15}$")
 _SECTION_RE = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 _RADIO_RE = re.compile(r"^radio\d+$")
-_DSA_PORT_RE = re.compile(r"^(lan\d*|wan\d*)$")
+_DSA_PORT_RE = re.compile(r"^(lan\d*|wan\d*|sfp\d*)$")
 _ETH_PORT_RE = re.compile(r"^eth\d+$")
 
 
@@ -460,6 +465,17 @@ def parse_arp(text: str) -> list[tuple[str, str, str]]:
         parts = line.split()
         if len(parts) >= 6 and parts[2] != "0x0" and parts[3] != "00:00:00:00:00:00":
             result.append((parts[0], parts[3].lower(), parts[5]))
+    return result
+
+
+def parse_usb_devices(text: str) -> list[dict[str, str]]:
+    """'0bda:8153 USB 10/100/1000 LAN' -> [{'id': '0bda:8153', 'name': 'USB 10/100/1000 LAN'}] (hubs skipped)."""
+    result = []
+    for line in (text or "").splitlines():
+        m = re.match(r"^\s*([0-9a-fA-F]{4}:[0-9a-fA-F]{4})\s*(.*)$", line)
+        if not m or re.search(r"\bhub\b", m.group(2), re.IGNORECASE):
+            continue
+        result.append({"id": m.group(1).lower(), "name": m.group(2).strip() or m.group(1).lower()})
     return result
 
 

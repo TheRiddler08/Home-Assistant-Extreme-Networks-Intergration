@@ -88,6 +88,8 @@ what the parsers are tested against) and not yet confirmed on a device. Real out
 | `show lldp neighbors` + `show lldp neighbors detailed` | LLDP neighbours, their IP, capabilities and LLDP-MED model (every 15 min; one command for all ports) |
 | `show version` | Serial number (every 15 min) |
 | `show vlan` | VLANs and the management IP address (every 15 min) |
+| `show ports configuration no-refresh` | Port media: copper, SFP and module type, combo (every 15 min) |
+| `show port mgmt information` | Management port link (every 15 min) |
 | `show temperature`, `show fans`, `show power` | Environment sensors (every 15 min) |
 
 The prompt (`X450e-48p.3 #`, or `Slot-1 Stack.3 #` on a stack) is recognised automatically;

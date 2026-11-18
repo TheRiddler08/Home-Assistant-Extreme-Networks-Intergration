@@ -2148,6 +2148,83 @@ def parse_exos_cpu(text: str) -> SystemStats:
 
 
 # --------------------------------------------------------------------------
+# Front-panel hardware: port media, management port, combo ports
+# --------------------------------------------------------------------------
+
+MEDIA_COPPER = "copper"
+MEDIA_SFP = "sfp"  # fibre cage with a module
+MEDIA_SFP_EMPTY = "sfp-empty"  # fibre cage, no module
+MEDIA_COMBO = "combo"  # copper or SFP (dual media)
+
+_MEDIA_STOP = {"FULL", "HALF", "AUTO", "ON", "OFF", "E", "D", "R", "A", "NP", "L"}
+_MEDIA_TOKEN_RE = re.compile(r"^[$%!]?[A-Z0-9][A-Z0-9+_./-]*\*?$")
+
+
+def _media_token(token: str) -> bool:
+    return (
+        token.upper() not in _MEDIA_STOP
+        and not token.upper().startswith("VR-")
+        and bool(_MEDIA_TOKEN_RE.match(token))
+        and any(c.isalpha() for c in token)
+    )
+
+
+def parse_exos_port_media(text: str) -> dict[str, tuple[str, str | None]]:
+    """'show ports configuration no-refresh': port -> (primary media, redundant media).
+
+    The Media columns are last on each row: 'UTP' (copper), 'NONE' (a fibre
+    port without a module), a module type ('SX', 'LX', 'SF+_SR'...), and for
+    combo ports both ('NONE UTP': no SFP inserted, copper available). '$', '%'
+    and '!' prefixes (restricted / licensed / unsupported) are kept off.
+    """
+    result: dict[str, tuple[str, str | None]] = {}
+    for line in clean_output(text).split("\n"):
+        tokens = line.split()
+        if len(tokens) < 3 or not _EXOS_PORT_RE.match(tokens[0]) or not tokens[1].upper().startswith("VR-"):
+            continue
+        media = []
+        for token in reversed(tokens[2:]):
+            if len(media) == 2 or not _media_token(token):
+                break
+            media.insert(0, token.lstrip("$%!").rstrip("*"))
+        if media:
+            result[tokens[0]] = (media[0], media[1] if len(media) > 1 else None)
+    return result
+
+
+def media_kind(primary: str | None, redundant: str | None = None) -> tuple[str | None, str | None]:
+    """(media, module) from the ExtremeXOS media columns."""
+    pri = (primary or "").upper()
+    red = (redundant or "").upper()
+    if not pri:
+        return None, None
+    if red == "UTP" or (pri == "UTP" and red and red != "UTP"):
+        module = primary if pri not in ("UTP", "NONE") else (redundant if red not in ("UTP", "NONE") else None)
+        return MEDIA_COMBO, module
+    if pri == "UTP":
+        return MEDIA_COPPER, None
+    if pri == "NONE":
+        return MEDIA_SFP_EMPTY, None
+    return MEDIA_SFP, primary
+
+
+def parse_exos_mgmt_port(text: str) -> bool | None:
+    """'show port mgmt information': is the out-of-band management port linked?"""
+    text = clean_output(text)
+    if m := re.search(r"Link State:\s*(\w+)", text, re.IGNORECASE):
+        return m.group(1).lower() == "active"
+    if m := re.search(r"(?im)^\s*mgmt\b.*?\b(active|ready)\b", text):
+        return m.group(1).lower() == "active"
+    return None
+
+
+def combo_port_count(description: str | None) -> int:
+    """'Aerohive SR2208P: 8 GE POE+ ports, 2 GE dual media ports, ...' -> 2."""
+    m = re.search(r"(\d+)\s*(?:x\s*)?(?:GE|10G|1G)?\s*(?:dual[- ]media|combo)\s*ports?", description or "", re.IGNORECASE)
+    return int(m.group(1)) if m else 0
+
+
+# --------------------------------------------------------------------------
 # running-config summary (SSIDs, security, hidden)
 # --------------------------------------------------------------------------
 
@@ -2161,6 +2238,7 @@ class RunningConfigSummary:
     shutdown_ports: set[str] = field(default_factory=set)
     uptime_seconds: int | None = None  # SR switch: '!System Up Time "0 days 1 hrs 35 mins"'
     ssid_bindings: dict[str, set[str]] = field(default_factory=dict)  # radio -> SSIDs ("interface wifi0 ssid X")
+    console: bool = False  # "line console" (SR switches): there's a serial console port
 
     def ssid_security(self, ssid: str) -> str | None:
         obj = self.ssid_security_objects.get(ssid, ssid)
@@ -2185,6 +2263,9 @@ def parse_running_config_summary(config: str) -> RunningConfigSummary:
         stripped = line.strip().lower()
         if summary.uptime_seconds is None and (m := _UPTIME_COMMENT_RE.match(line)):
             summary.uptime_seconds = parse_uptime(m.group(1))
+            continue
+        if stripped == "line console":
+            summary.console = True
             continue
         if m := _BLOCK_IF_RE.match(line):
             block_port = m.group(1).lower()

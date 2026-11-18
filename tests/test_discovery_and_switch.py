@@ -980,3 +980,35 @@ async def test_br100_shows_all_five_ports_even_if_summary_lists_two(hass: HomeAs
     # Every port gets its entities, including the one in use that the summary left out.
     registry = er.async_get(hass)
     assert registry.async_get_entity_id("binary_sensor", DOMAIN, "00:19:77:00:11:20_iface_eth4")
+
+
+
+async def test_sr_switch_combo_ports_and_console(hass: HomeAssistant, switch_entry: MockConfigEntry) -> None:
+    """'2 GE dual media ports' in the model string: the last two ports take copper or SFP. 'line console' in the config."""
+    data = switch_entry.runtime_data.data
+    assert [p for p in data.ports() if data.interfaces[p].extra.get("media") == "combo"] == ["1/0/9", "1/0/10"]
+    assert data.panel.console is True
+
+
+async def test_usb_modem_on_branch_router(hass: HomeAssistant) -> None:
+    original_init = FakeClient.__init__
+
+    def init(self, *args: Any, **kwargs: Any) -> None:
+        original_init(self, *args, **kwargs)
+        self.responses["show version"] = "Version: HiveOS 6.5r8 build-123456\nPlatform: BR100\n"
+        self.responses["show interface"] = (
+            "Name        MAC addr       Mode     State Chan(Width) VLAN Radio     Hive    SSID\n"
+            "----------- -------------- -------- ----- ----------- ---- --------- ------- ---------\n"
+            "Mgt0        0019:7700:1120 -        U     -           1    -         hive0   -\n"
+            "Eth0        0019:7700:1121 wan      U     -           -    -         -       -\n"
+            "Usbnet0     0019:7700:1129 wan      U     -           -    -         -       -\n"
+        )
+
+    with patch.object(FakeClient, "__init__", init):
+        entry = MockConfigEntry(domain=DOMAIN, unique_id="00:19:77:00:11:20", data=USER_INPUT, title="BR")
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    data = entry.runtime_data.data
+    assert data.panel.usb == [{"name": "USB modem", "id": "usbnet0", "up": True}]
+    assert "usbnet0" not in data.ports()

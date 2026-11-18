@@ -42,6 +42,10 @@ ports[1]["neighbor"] = {"name": "AH-7c0680", "port": "eth0", "address": "192.168
 ports[20]["neighbor"] = {"name": "ap-upstairs", "port": "eth0", "address": "192.168.9.74", "ap": True, "network": False}
 ports[48]["neighbor"] = {"name": "core-switch", "port": "1:24", "address": "192.168.8.2", "ap": False, "network": True}
 ports[48]["clients"] = [{"mac": "02:00:00:aa:00:%02x" % i, "vlan": 1} for i in range(12)]
+for port in ports:
+    n = int(port["name"])
+    port["media"] = {45: "combo", 46: "combo", 47: "combo", 48: "combo", 49: "sfp", 50: "sfp-empty"}.get(n, "copper")
+    port["module"] = {47: "LX", 49: "SX"}.get(n)
 switch["ports"] = ports
 switch["poe"] = {"budget_w": 370.0, "used_w": round(sum(p["poe"]["power_w"] for p in ports if p["poe"]), 1), "remaining_w": None}
 switch["wired_clients"] = sum(len(p["clients"]) for p in ports if not p["uplink"])
@@ -66,7 +70,11 @@ for n in range(1, 11):
     if n > 8:
         port["poe"] = None
     sr_ports.append(port)
+for port in sr_ports:
+    port["media"] = "combo" if port["name"] in ("1/0/9", "1/0/10") else None
+    port["module"] = None
 sr["ports"] = sr_ports
+sr["hardware"] = {"console": True, "mgmt": None, "usb": None, "psus": []}
 sr["poe"] = {"budget_w": 125.0, "used_w": round(sum(p["poe"]["power_w"] for p in sr_ports if p["poe"]), 1), "remaining_w": None}
 sr["wired_clients"] = sum(len(p["clients"]) for p in sr_ports if not p["uplink"])
 
@@ -101,8 +109,14 @@ for n in range(5):
                 rx_kbps=round(random.uniform(50, 9000), 1) if up else None, tx_kbps=round(random.uniform(50, 3000), 1) if up else None,
                 clients=[{"mac": "02:00:00:bb:%02x:01" % n, "vlan": 1}] if up and n else [])
     br_ports.append(port)
+for port in br_ports:
+    port["media"] = None
+    port["module"] = None
 br["ports"] = br_ports
+br["hardware"] = {"console": None, "mgmt": None, "usb": [{"name": "USB modem", "id": "usbnet0", "up": True}], "psus": []}
 br["wired_clients"] = 2
+switch["hardware"]["mgmt"] = {"link": True, "ip": "10.0.0.20"}
+ap["hardware"] = ap2["hardware"] = {"console": None, "mgmt": None, "usb": None, "psus": []}
 snap["devices"] = [switch, sr, br, ap, ap2]
 snap["wifi_timers"] = []
 out = Path(__file__).with_name("demo.json")

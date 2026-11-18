@@ -20,6 +20,7 @@ every OpenWrt image has.
 | **Ports** | each Ethernet port (`wan`, `lan1`–`lan4` on most routers; `eth0`, `eth1`… on x86 and older targets): link, speed, duplex, traffic, errors. The WAN port is marked as the uplink. Shown, not switched (see below). |
 | **Wi-Fi** | radios (band, actual channel and width, transmit power, noise, clients), networks, and clients with signal strength, rates, connection time, and their name and IP from the DHCP leases |
 | **Wired clients** | devices on the LAN side that aren't on Wi-Fi |
+| **Front panel** | SFP ports (named `sfp*`) drawn as SFP cages; attached USB devices (modems, adapters, disks) |
 | **Wi-Fi control** | everything in the [Wi-Fi manager](wifi.md) and the Network panel's Wi-Fi tab: networks on/off (also for a while), bands, hidden name, password, max clients, add and delete; disconnect a client |
 | **Unsaved changes** | turns on when UCI has staged changes that weren't applied, e.g. LuCI changes without **Save & Apply** |
 | **Backups** | the configuration (`uci export`) is backed up like on every other device, with change-after-reboot alerts |

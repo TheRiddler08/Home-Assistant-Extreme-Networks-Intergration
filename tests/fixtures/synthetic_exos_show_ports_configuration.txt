@@ -1,0 +1,60 @@
+Port Configuration
+Port     Virtual    Port  Link  Auto   Speed      Duplex   Flow  Load   Media
+         router     State State Neg  Cfg Actual Cfg Actual Cntrl Master Pri Red
+================================================================================
+1        VR-Default  E      A    ON  AUTO  1000 AUTO FULL               UTP
+2        VR-Default  E      A    ON  AUTO  1000 AUTO FULL               UTP
+3        VR-Default  E      R    ON  AUTO       AUTO                    UTP
+4        VR-Default  E      A    ON  AUTO  1000 AUTO FULL               UTP
+5        VR-Default  D      R    ON  AUTO       AUTO                    UTP
+6        VR-Default  E      R    ON  AUTO       AUTO                    UTP
+7        VR-Default  E      R    ON  AUTO       AUTO                    UTP
+8        VR-Default  E      R    ON  AUTO       AUTO                    UTP
+9        VR-Default  E      R    ON  AUTO       AUTO                    UTP
+10       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+11       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+12       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+13       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+14       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+15       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+16       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+17       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+18       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+19       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+20       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+21       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+22       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+23       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+24       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+25       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+26       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+27       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+28       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+29       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+30       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+31       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+32       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+33       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+34       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+35       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+36       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+37       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+38       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+39       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+40       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+41       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+42       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+43       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+44       VR-Default  E      R    ON  AUTO       AUTO                    UTP
+45       VR-Default  E      R    ON  AUTO       AUTO                    NONE UTP
+46       VR-Default  E      R    ON  AUTO       AUTO                    NONE UTP
+47       VR-Default  E      R    ON  AUTO       AUTO                    LX UTP
+48       VR-Default  E      R    ON  AUTO       AUTO                    NONE UTP
+49       VR-Default  E      A    ON  AUTO  1000 AUTO FULL               SX
+50       VR-Default  E      R    ON  AUTO       AUTO                    NONE
+51       VR-Default  E      NP   ON  AUTO       AUTO
+52       VR-Default  E      NP   ON  AUTO       AUTO
+================================================================================
+Link State: A-Active, R-Ready, NP-Port Not Present, L-Loopback
+Port State: D-Disabled, E-Enabled, Media: %-Licensed,!-Unsupported, $-Restricted
+Media Red: * - use "show port info detail" for redundant media type
