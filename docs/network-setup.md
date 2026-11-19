@@ -79,7 +79,9 @@ key (PPSK). **Add device**, give it a name, choose the Wi-Fi network and optiona
 - **MAC address**: the key only works for that device;
 - your own **key** (otherwise one is made up, 12 characters, without look-alike letters).
 
-The key is shown once it's added, and again with **Key**. **Revoke** removes it: that device
+The key is shown once it's added, and again with **Key**, with a **QR code**: scan it with
+the device's camera to join without typing. Wi-Fi networks with a shared password have a
+**QR** button too (handy for guests). **Revoke** removes it: that device
 is disconnected and can't join again, everyone else stays connected. Timed keys are removed
 on their own when they run out, also after a restart (checked every minute).
 
@@ -134,9 +136,12 @@ them. Until then, use a WPA2 password for networks your Aerohive access points m
   Assistant configuration folder, or a full backup of it, has both files.
 - **Activity**: saves, applies (with results) and key changes are listed with time and user.
 
+## Onboarding portal
+
+New devices on the onboarding Wi-Fi ask for access on a page served by the router, and you
+approve them here. See [Onboarding portal](onboarding.md).
+
 ## Not part of this (yet)
 
-- The **onboarding portal** (homeOB captive portal): the Wi-Fi network and its isolation can
-  be set up here; the portal itself is a separate service.
-- **Dual WAN** (Starlink failover / load balancing) and IPv6 policy.
-- QR codes for keys.
+See the [roadmap](roadmap.md): Dual WAN is on hold; per-device keys, WPA3 and isolation on
+Aerohive access points wait for their commands to be confirmed.

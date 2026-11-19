@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from . import portal as portal_mod
 from .commands import InvalidArgument, quote, validate_psk, validate_radio, validate_ssid_name
 
 SECURITY = ("wpa2", "wpa2_wpa3", "wpa3", "open", "ppsk")
@@ -49,7 +50,17 @@ def empty_plan() -> dict[str, Any]:
         "wifi": [],
         "keys": [],
         "devices": {"router": None, "router_trunks": ["br-lan"], "switch_trunks": {}, "aps": None},
+        "onboarding": dict(ONBOARDING_DEFAULTS),
     }
+
+
+ONBOARDING_DEFAULTS: dict[str, Any] = {
+    "enabled": False,
+    "wifi": None,  # the onboarding Wi-Fi (e.g. homeOB)
+    "offer": [],  # Wi-Fi networks with per-device keys a device may ask for
+    "title": "Welcome",
+    "text": "Tell us what this device is, and it gets its own Wi-Fi password once approved.",
+}
 
 
 def normalize(plan: dict[str, Any] | None) -> dict[str, Any]:
@@ -60,6 +71,8 @@ def normalize(plan: dict[str, Any] | None) -> dict[str, Any]:
         result[key] = [dict(item) for item in plan.get(key) or [] if isinstance(item, dict)]
     devices = plan.get("devices") or {}
     result["devices"].update({k: v for k, v in devices.items() if k in result["devices"]})
+    onboarding = plan.get("onboarding") or {}
+    result["onboarding"].update({k: v for k, v in onboarding.items() if k in ONBOARDING_DEFAULTS})
     for net in result["networks"]:
         net.setdefault("dhcp", True)
         net.setdefault("dhcp_start", 50)
@@ -217,6 +230,23 @@ def validate(plan: dict[str, Any], secret: Callable[[str], str | None] | None = 
                 except InvalidArgument as err:
                     errors.append(f"Key {name}: {err}")
 
+    onboarding = plan["onboarding"]
+    if onboarding.get("enabled"):
+        wifi = next((w for w in plan["wifi"] if w.get("id") == onboarding.get("wifi")), None)
+        if not plan["devices"].get("router"):
+            errors.append("Onboarding portal: it runs on the OpenWrt router; choose the router under Devices")
+        if wifi is None:
+            errors.append("Onboarding portal: choose the onboarding Wi-Fi network")
+        elif wifi.get("security") == "ppsk":
+            errors.append("Onboarding portal: the onboarding Wi-Fi needs a shared password (or none), not per-device keys")
+        offered = [w for w in plan["wifi"] if w.get("id") in (onboarding.get("offer") or [])]
+        if not offered:
+            errors.append("Onboarding portal: choose at least one network devices may ask for")
+        if any(w.get("security") != "ppsk" for w in offered):
+            errors.append("Onboarding portal: devices can only ask for networks with per-device keys")
+        if len(str(onboarding.get("title") or "")) > 60 or len(str(onboarding.get("text") or "")) > 400:
+            errors.append("Onboarding portal: the title can have 60 characters and the text 400")
+
     devices = plan["devices"]
     for trunk in devices.get("router_trunks") or []:
         if not _IFNAME_RE.match(str(trunk)):
@@ -229,6 +259,25 @@ def validate(plan: dict[str, Any], secret: Callable[[str], str | None] | None = 
 
 def _net(plan: dict[str, Any], nid: str | None) -> dict[str, Any] | None:
     return next((n for n in plan["networks"] if n["id"] == nid), None)
+
+
+def onboarding_network(plan: dict[str, Any]) -> dict[str, Any] | None:
+    """The network the onboarding portal serves (None when the portal is off)."""
+    onboarding = plan.get("onboarding") or {}
+    if not onboarding.get("enabled"):
+        return None
+    wifi = next((w for w in plan["wifi"] if w["id"] == onboarding.get("wifi")), None)
+    return _net(plan, wifi["network"]) if wifi else None
+
+
+def portal_address(plan: dict[str, Any]) -> str | None:
+    net = onboarding_network(plan)
+    if net is None:
+        return None
+    try:
+        return str(_interface(net).ip)
+    except ValueError:
+        return None
 
 
 def active_keys(plan: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
@@ -424,6 +473,9 @@ def openwrt_lines(
                     cmds.append(_uci("firewall", rule, "proto", proto))
                     cmds.append(_uci("firewall", rule, "dest_port", port))
                     cmds.append(_uci("firewall", rule, "target", "ACCEPT"))
+            portal_net = onboarding_network(plan)
+            if portal_net is not None and portal_net["id"] == net["id"]:
+                cmds += portal_mod.firewall_lines(zname, vid, str(addr.ip))
             targets = ([WAN_ZONE] if net.get("internet") else []) + list(net.get("reach") or [])
             for target in targets:
                 if target in (WAN_ZONE, LAN):
@@ -701,4 +753,5 @@ def template() -> dict[str, Any]:
         ],
         "keys": [],
         "devices": {"router": None, "router_trunks": ["br-lan"], "switch_trunks": {}, "aps": None},
+        "onboarding": {**ONBOARDING_DEFAULTS, "enabled": False, "wifi": "homeob", "offer": ["home", "home5", "homeiso", "google"]},
     }

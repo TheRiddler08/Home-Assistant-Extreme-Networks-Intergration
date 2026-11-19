@@ -42,6 +42,10 @@ class Router:
             else:
                 self.sections[sec][opt] = val
         self.counter = 90000
+        self.portal_requests = {
+            "021122334455": {"mac": "02:11:22:33:44:55", "ip": "10.8.10.60", "name": "Living room TV", "kind": "tv",
+                             "wants": "homeiso", "tok": "abcdefghij012345", "time": "1700000000"},
+        }
 
     # ---- rendering ----
     def uci_show(self) -> str:
@@ -109,6 +113,20 @@ class Router:
             if kind == "info":
                 return fixture("synthetic_openwrt_iwinfo_info_phy0-ap0.json" if dev.startswith("phy0") else "synthetic_openwrt_iwinfo_info_phy1-ap0.json")
             return '{"results": []}'
+        if "HN_UHTTPD_OK" in line:
+            return "HN_UHTTPD_OK"
+        if "/tmp/hn_portal/req/*" in line:
+            # Onboarding portal: one pretend device waiting until it's answered.
+            return "".join(
+                f"== {rid}\n" + "".join(f"{k}={v}\n" for k, v in req.items()) for rid, req in self.portal_requests.items()
+            )
+        if "/tmp/hn_portal/" in line:
+            for rid in list(self.portal_requests):
+                if f"/tmp/hn_portal/req/{rid}" in line:
+                    self.portal_requests.pop(rid)
+            return ""
+        if "/www/hn-portal" in line or "uhttpd" in line:
+            return ""
         if "/tmp/hn_backup" in line or "uci -q changes" in line or "uci revert" in line or "init.d/network reload" in line:
             # Network setup: backup, rollback timer, commit, reload, confirm.
             return "HN_CONFIRMED" if "echo HN_CONFIRMED" in line else ""

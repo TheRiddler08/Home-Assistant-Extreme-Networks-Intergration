@@ -1714,6 +1714,9 @@ tbody tr.click:hover { background: color-mix(in srgb, var(--ah-accent) 6%, trans
 .chip.ok { color: var(--ah-ok); }
 .chip.bad { color: var(--ah-err); }
 .activity { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+.qr-box { display: flex; justify-content: center; margin: 14px 0 4px; }
+.qr-box svg { width: min(220px, 70vw); height: auto; border-radius: 8px; }
+.err-text { color: var(--ah-err); }
 @media (max-width: 900px) {
   .layout { grid-template-columns: minmax(0, 1fr); }
 }
@@ -2299,7 +2302,8 @@ const SetupMixin = {
 
   async _setupLoad(force = false) {
     const s = this._setupState();
-    if (!this._hass || s.loading || (!force && s.loadedAt && Date.now() - s.loadedAt < 30000)) return;
+    const every = s.state && s.state.portal && s.state.portal.on ? 15000 : 30000; // waiting devices show up within ~15 s
+    if (!this._hass || s.loading || (!force && s.loadedAt && Date.now() - s.loadedAt < every)) return;
     s.loading = true;
     try {
       this._setupTake(await this._hass.callWS({ type: `${DOMAIN}/plan/get` }));
@@ -2359,6 +2363,7 @@ const SetupMixin = {
         ${this._setupAccessCard(plan)}
         ${this._setupWifiCard(plan)}
         ${this._setupKeysCard(st)}
+        ${this._setupOnboardingCard(plan, st)}
         ${this._setupDevicesCard(plan, st)}
         ${this._setupActivityCard(st)}
       </div>`;
@@ -2411,12 +2416,13 @@ const SetupMixin = {
       .map(
         (w, i) => `<tr class="click" data-action="plan-wifi-edit" data-index="${i}" tabindex="0">
           <td><strong>${esc(w.ssid)}</strong>${w.enabled === false ? ' <span class="chip">Off</span>' : ""}${w.hidden ? ' <span class="chip">Hidden</span>' : ""}${w.isolate ? ' <span class="chip">Isolated</span>' : ""}</td>
-          <td>${esc(name(w.network))}</td><td>${esc(SECURITY_LABELS[w.security] || w.security)}</td><td class="hide-sm">${esc((w.bands || []).join(", "))}</td></tr>`,
+          <td>${esc(name(w.network))}</td><td>${esc(SECURITY_LABELS[w.security] || w.security)}</td><td class="hide-sm">${esc((w.bands || []).join(", "))}</td>
+          <td class="num">${["wpa2", "wpa2_wpa3", "wpa3", "open"].includes(w.security) && (w.security === "open" || (this._setupState().state.secrets || []).includes(`wifi:${w.id}`)) ? `<button class="btn small" data-action="plan-wifi-qr" data-wifi="${esc(w.id)}" title="Show the password and a QR code to join">${icon("eye")}QR</button>` : ""}</td></tr>`,
       )
       .join("");
     return `<div class="card panel-card"><div class="card-head"><h2 class="grow">Wi-Fi</h2>
         <button class="btn" data-action="plan-wifi-add" ${plan.networks.length ? "" : "disabled"}>${icon("plus")}Add</button></div>
-      ${plan.wifi.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Network</th><th>Security</th><th class="hide-sm">Bands</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${plan.networks.length ? "No Wi-Fi networks yet." : "Add a network first."}</p>`}
+      ${plan.wifi.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Network</th><th>Security</th><th class="hide-sm">Bands</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${plan.networks.length ? "No Wi-Fi networks yet." : "Add a network first."}</p>`}
     </div>`;
   },
 
@@ -2439,6 +2445,66 @@ const SetupMixin = {
       ${plan.keys.length ? `<div class="table-wrap"><table><thead><tr><th>Device</th><th>Wi-Fi</th><th class="hide-sm">Valid</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${ppsk.length ? "Give each device its own key: revoking one only disconnects that device." : "Save a Wi-Fi network with <em>Per-device keys</em> to hand out keys."}</p>`}
       <p class="muted" style="font-size:12px;margin:10px 0 0">Keys take effect straight away on the devices already set up (OpenWrt today). Timed keys are removed on their own, also after a restart.</p>
     </div>`;
+  },
+
+  _setupOnboardingCard(plan, st) {
+    const ob = plan.onboarding || {};
+    const portal = st.portal || {};
+    const shared = plan.wifi.filter((w) => w.security !== "ppsk");
+    const ppsk = plan.wifi.filter((w) => w.security === "ppsk");
+    const waiting = (st.requests || []).filter((r) => r.status === "pending");
+    const decided = (st.requests || []).filter((r) => r.status !== "pending").slice(0, 5);
+    const ssid = (id) => (plan.wifi.find((w) => w.id === id) || {}).ssid || "";
+    const kinds = { phone: "Phone or tablet", computer: "Computer", tv: "TV or streaming box", speaker: "Speaker or smart-home device", other: "Something else" };
+    const status = portal.on
+      ? `Running on the router at <span class="mono">${esc(portal.url)}</span>${portal.error ? ` · <span class="err-text">${esc(portal.error)}</span>` : ""}`
+      : ob.enabled ? "Turned on: press Review &amp; apply to put it on the router." : "Off";
+    return `<div class="card panel-card"><div class="card-head"><h2 class="grow">Onboarding portal</h2>
+        ${waiting.length ? `<span class="chip bad">${waiting.length} waiting</span>` : ""}</div>
+      <p class="muted" style="margin:0 0 6px;font-size:13px">New devices join the onboarding Wi-Fi, open any web page and ask for access. You approve them here, and the portal shows the device its own password and QR code. Onboarding devices only talk to the router, never to Home Assistant.</p>
+      <p class="muted" style="margin:0 0 4px;font-size:13px">${status}</p>
+      ${waiting.length ? `<div class="table-wrap"><table><thead><tr><th>Device</th><th>Asks for</th><th></th></tr></thead><tbody>${waiting
+        .map((r) => `<tr><td><strong>${esc(r.name)}</strong><br><span class="muted">${esc(kinds[r.kind] || r.kind)} · <span class="mono">${esc(r.mac)}</span></span></td>
+          <td>${esc(ssid(r.wants) || "Any")}</td>
+          <td class="num"><span class="row-actions"><button class="btn small primary" data-action="plan-ob-approve" data-request="${esc(r.id)}">${icon("check")}Approve</button>
+            <button class="btn small danger" data-action="plan-ob-decline" data-request="${esc(r.id)}">${icon("close")}Decline</button></span></td></tr>`)
+        .join("")}</tbody></table></div>` : portal.on ? '<p class="muted" style="font-size:13px">No device is waiting.</p>' : ""}
+      ${decided.length ? `<ul class="activity" style="margin-top:8px">${decided.map((r) => `<li><strong>${esc(r.name)}</strong> <span class="muted">${r.status === "approved" ? "approved" : "declined"}</span></li>`).join("")}</ul>` : ""}
+      <div class="form-row"><label class="toggle"><input type="checkbox" data-plan="ob_enabled" ${ob.enabled ? "checked" : ""}><span class="track"></span><span>Portal on</span></label></div>
+      <div class="form-row"><label class="section-title" for="ob-wifi">Onboarding Wi-Fi</label>
+        <select id="ob-wifi" class="plan-select" data-plan="ob_wifi"><option value="">Choose…</option>${shared.map((w) => `<option value="${esc(w.id)}" ${ob.wifi === w.id ? "selected" : ""}>${esc(w.ssid)}</option>`).join("")}</select>
+        <div class="hint">A Wi-Fi network with a shared password (or open), e.g. homeOB. Give it client isolation and a small client limit.</div></div>
+      <div class="form-row"><span class="section-title">Devices may ask for</span>${ppsk.length ? `<div class="checks">${ppsk
+        .map((w) => `<label><input type="checkbox" data-plan="ob_offer" data-wifi="${esc(w.id)}" ${(ob.offer || []).includes(w.id) ? "checked" : ""}>${esc(w.ssid)}</label>`)
+        .join("")}</div>` : '<div class="hint">Add a Wi-Fi network with per-device keys first.</div>'}</div>
+      <div class="form-row"><label class="section-title" for="ob-title">Portal title</label>
+        <div class="field"><input type="text" id="ob-title" data-plan="ob_title" maxlength="60" value="${esc(ob.title || "")}"></div></div>
+      <div class="form-row"><label class="section-title" for="ob-text">Welcome text</label>
+        <div class="field"><input type="text" id="ob-text" data-plan="ob_text" maxlength="400" value="${esc(ob.text || "")}"></div></div>
+    </div>`;
+  },
+
+  _planApproveDialog(d) {
+    const st = this._setupState().state;
+    const req = (st.requests || []).find((r) => r.id === d.request);
+    if (!req) return `<div class="dialog" role="dialog" aria-modal="true"><p>This request is no longer waiting.</p><div class="dlg-actions"><button class="btn" data-action="close">Close</button></div></div>`;
+    const plan = st.plan;
+    const f = (d.form = d.form || {});
+    const offered = plan.wifi.filter((w) => w.security === "ppsk");
+    const wifi = f.wifi || (offered.some((w) => w.id === req.wants) ? req.wants : offered[0] && offered[0].id);
+    const minutes = Number(f.minutes ?? 0);
+    const busy = this._isBusy("plan-ob-approve");
+    return `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+      ${this._dlgHead(`Approve ${req.name}`, `${req.mac}${req.ip ? ` · ${req.ip}` : ""}`)}
+      <div class="form-row" style="margin-top:0"><label class="section-title" for="ap-wifi">Wi-Fi network</label>
+        <select id="ap-wifi" class="plan-select" data-field="wifi">${offered.map((w) => `<option value="${esc(w.id)}" ${wifi === w.id ? "selected" : ""}>${esc(w.ssid)}${w.id === req.wants ? " (asked for)" : ""}</option>`).join("")}</select></div>
+      <div class="form-row"><label class="section-title" for="ap-net">Put it in</label>
+        <select id="ap-net" class="plan-select" data-field="network"><option value="">The Wi-Fi's own network</option>${plan.networks.map((n) => `<option value="${esc(n.id)}" ${f.network === n.id ? "selected" : ""}>${esc(n.name)} · VLAN ${esc(n.vlan)}</option>`).join("")}</select></div>
+      <div class="form-row"><span class="section-title">Valid for</span><div class="durations" role="radiogroup">${KEY_DURATIONS.map(([m, label]) => `<label class="choice"><input type="radio" name="ap-duration" data-field="minutes" value="${m}" ${m === minutes ? "checked" : ""}><span>${label}</span></label>`).join("")}</div></div>
+      ${this._toggleRow("bind", "Only for this device's MAC address", Boolean(f.bind))}
+      <div class="hint">Phones and laptops often use a different (private) address on each Wi-Fi network; leave this off for them.</div>
+      <div class="dlg-actions"><button class="btn" data-action="close">Cancel</button>
+        <button class="btn primary" data-action="plan-ob-approve-confirm" ${busy || !wifi ? "disabled" : ""}>${icon("check")}${busy ? "Approving…" : "Approve"}</button></div></div>`;
   },
 
   _setupDevicesCard(plan, st) {
@@ -2465,7 +2531,10 @@ const SetupMixin = {
 
   _setupActivityCard(st) {
     if (!st.audit.length) return "";
-    const labels = { plan_saved: "Setup saved", applied: "Applied", key_added: "Key added", key_revoked: "Key revoked", key_expired: "Key expired" };
+    const labels = {
+      plan_saved: "Setup saved", applied: "Applied", key_added: "Key added", key_revoked: "Key revoked", key_expired: "Key expired",
+      onboarding_request: "Device asked to join", onboarding_approved: "Device approved", onboarding_declined: "Device declined", onboarding_expired: "Request expired",
+    };
     return `<div class="card panel-card"><div class="card-head"><h2 class="grow">Activity</h2></div>
       <ul class="activity">${st.audit.slice(0, 12).map((a) => `<li><span class="muted">${esc(new Date(a.time).toLocaleString())}</span> <strong>${esc(labels[a.action] || a.action)}</strong> ${esc(a.detail || "")}${a.user ? ` <span class="muted">· ${esc(a.user)}</span>` : ""}</li>`).join("")}</ul></div>`;
   },
@@ -2491,6 +2560,18 @@ const SetupMixin = {
       plan.devices.router_trunks = target.value.split(/[,\s]+/).filter(Boolean);
     } else if (kind === "switch_trunk") {
       plan.devices.switch_trunks = { ...(plan.devices.switch_trunks || {}), [target.dataset.entry]: target.value.trim() };
+    } else if (kind.startsWith("ob_")) {
+      const ob = (plan.onboarding = { ...(plan.onboarding || {}) });
+      if (kind === "ob_enabled") ob.enabled = target.checked;
+      else if (kind === "ob_wifi") ob.wifi = target.value || null;
+      else if (kind === "ob_title") ob.title = target.value;
+      else if (kind === "ob_text") ob.text = target.value;
+      else if (kind === "ob_offer") {
+        const offer = new Set(ob.offer || []);
+        if (target.checked) offer.add(target.dataset.wifi);
+        else offer.delete(target.dataset.wifi);
+        ob.offer = [...offer];
+      }
     } else if (kind === "ap") {
       const all = s.state.devices.filter((d) => d.wireless).map((d) => d.entry_id);
       const on = new Set(plan.devices.aps == null ? all : plan.devices.aps);
@@ -2509,6 +2590,7 @@ const SetupMixin = {
     if (d.type === "plan-key-add") return this._planKeyAddDialog(d);
     if (d.type === "plan-key-show") return this._planKeyShowDialog(d);
     if (d.type === "plan-apply") return this._planApplyDialog(d);
+    if (d.type === "plan-approve") return this._planApproveDialog(d);
     return "";
   },
 
@@ -2615,7 +2697,8 @@ const SetupMixin = {
     return `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
       ${this._dlgHead(d.name, d.ssid ? `Wi-Fi: ${d.ssid}` : "")}
       <div class="key-box mono" id="key-value">${esc(d.value)}</div>
-      <p class="muted" style="font-size:13px">Enter this as the Wi-Fi password on ${esc(d.name)}. ${d.expires ? `It stops working in ${esc(timeLeft(d.expires).replace(" left", ""))}.` : ""}</p>
+      ${d.qr ? `<div class="qr-box" aria-label="QR code to join ${esc(d.ssid || "")}">${d.qr}</div>` : ""}
+      <p class="muted" style="font-size:13px">${d.wifiOnly ? `The password of ${esc(d.ssid)}.` : `Enter this as the Wi-Fi password on ${esc(d.name)}.`} ${d.qr ? "Or scan the code with the device's camera to join." : ""} ${d.expires ? `It stops working in ${esc(timeLeft(d.expires).replace(" left", ""))}.` : ""}</p>
       <div class="dlg-actions"><button class="btn" data-action="plan-copy">${icon("save")}Copy</button><button class="btn primary" data-action="close">Done</button></div></div>`;
   },
 
@@ -2836,6 +2919,63 @@ const SetupMixin = {
         }
         break;
       }
+      case "plan-wifi-qr": {
+        const wifi = s.state.plan.wifi.find((w) => w.id === el.dataset.wifi);
+        if (!wifi) return;
+        if (s.dirty) return this._toast("Save the setup first", true);
+        if (wifi.security === "open") {
+          this._toast(`${wifi.ssid} is open: no password needed`);
+          return;
+        }
+        this._setupWs({ type: `${DOMAIN}/plan/reveal`, ref: `wifi:${wifi.id}` }).then((r) => {
+          if (!r) return;
+          this._dialog = { type: "plan-key-show", name: wifi.ssid, ssid: wifi.ssid, value: r.value, qr: r.qr, wifiOnly: true, focus: '.dialog [data-action="close"]' };
+          this._render();
+        });
+        break;
+      }
+      case "plan-ob-approve":
+        if (s.dirty) return this._toast("Save the setup first", true);
+        this._openDialog({ type: "plan-approve", request: el.dataset.request });
+        break;
+      case "plan-ob-approve-confirm": {
+        const f = d.form || {};
+        const req = (s.state.requests || []).find((r) => r.id === d.request);
+        const offered = s.state.plan.wifi.filter((w) => w.security === "ppsk");
+        const wifi = f.wifi || (req && offered.some((w) => w.id === req.wants) ? req.wants : offered[0] && offered[0].id);
+        const msg = { type: `${DOMAIN}/plan/onboard_approve`, request_id: d.request, wifi, bind_mac: Boolean(f.bind) };
+        if (f.network) msg.network = f.network;
+        if (Number(f.minutes)) msg.minutes = Number(f.minutes);
+        this._setupWs(msg, "plan-ob-approve").then((r) => {
+          if (!r) return;
+          this._setupTake(r);
+          this._dialog = null;
+          const failed = (r.results || []).filter((x) => !x.ok);
+          if (failed.length) this._toast(`Approved, but the key isn't on ${failed.map((x) => x.name).join(", ")} yet: ${failed[0].error}`, true);
+          else this._toast(`${req ? req.name : "Device"} approved: the portal now shows its password`);
+          this._render();
+        });
+        break;
+      }
+      case "plan-ob-decline": {
+        const req = (s.state.requests || []).find((r) => r.id === el.dataset.request);
+        if (!req) return;
+        this._openDialog({
+          type: "confirm",
+          title: `Decline ${req.name}?`,
+          text: "The portal tells the device its request was declined. It can ask again in an hour.",
+          confirm: "Decline",
+          danger: true,
+          onYes: () =>
+            this._setupWs({ type: `${DOMAIN}/plan/onboard_decline`, request_id: req.id }, `decline:${req.id}`).then((r) => {
+              if (!r) return;
+              this._setupTake(r);
+              this._toast(`${req.name} declined`);
+              this._render();
+            }),
+        });
+        break;
+      }
       case "plan-review":
         (async () => {
           if (s.dirty && !(await this._planSave())) return;
@@ -2868,7 +3008,7 @@ const SetupMixin = {
     const r = await this._setupWs({ type: `${DOMAIN}/plan/reveal`, ref: `key:${keyId}` });
     if (!r || !key) return;
     const wifi = s.state.plan.wifi.find((w) => w.id === key.wifi);
-    this._dialog = { type: "plan-key-show", name: key.name, ssid: wifi && wifi.ssid, value: r.value, expires: key.expires, focus: '.dialog [data-action="close"]' };
+    this._dialog = { type: "plan-key-show", name: key.name, ssid: wifi && wifi.ssid, value: r.value, qr: r.qr, expires: key.expires, focus: '.dialog [data-action="close"]' };
     this._render();
   },
 };

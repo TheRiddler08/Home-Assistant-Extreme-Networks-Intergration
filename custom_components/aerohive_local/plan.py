@@ -28,12 +28,15 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.components import persistent_notification
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from . import commands
 from . import netplan
+from . import portal
+from . import qr
 from .const import DOMAIN
 from .parsers import radio_band
 
@@ -48,6 +51,9 @@ KEY_FILE = f"{DOMAIN}.vault_key"
 DATA_PLAN = f"{DOMAIN}_network_plan"
 SIGNAL_PLAN = f"{DOMAIN}_plan_changed"
 EXPIRY_INTERVAL = timedelta(minutes=1)
+PORTAL_INTERVAL = timedelta(seconds=15)
+REQUEST_TTL = timedelta(hours=1)  # unanswered requests, and approved pages, are removed after this
+EVENT_ONBOARDING = f"{DOMAIN}_onboarding_request"
 AUDIT_LIMIT = 200
 KEY_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
@@ -98,6 +104,9 @@ class PlanManager:
         self._fernet: Fernet | None = None
         self._lock = asyncio.Lock()
         self._unsub = None
+        self._unsub_portal = None
+        self.requests: dict[str, dict[str, Any]] = {}  # onboarding requests seen on the router
+        self.portal_error: str | None = None
 
     # ------------------------------------------------------------------ storage
 
@@ -123,13 +132,18 @@ class PlanManager:
         self.managed = dict(stored.get("managed") or {})
         self.audit = list(stored.get("audit") or [])[-AUDIT_LIMIT:]
         self.needs_apply = set(stored.get("needs_apply") or [])
+        self.requests = dict(stored.get("requests") or {})
         self._unsub = async_track_time_interval(self.hass, self._async_tick, EXPIRY_INTERVAL)
+        self._unsub_portal = async_track_time_interval(self.hass, self._async_portal_tick, PORTAL_INTERVAL)
 
     @callback
     def async_unload(self) -> None:
         if self._unsub:
             self._unsub()
             self._unsub = None
+        if self._unsub_portal:
+            self._unsub_portal()
+            self._unsub_portal = None
 
     async def _async_save(self) -> None:
         await self._store.async_save(
@@ -141,6 +155,7 @@ class PlanManager:
                 "managed": self.managed,
                 "audit": self.audit[-AUDIT_LIMIT:],
                 "needs_apply": sorted(self.needs_apply),
+                "requests": self.requests,
             }
         )
         async_dispatcher_send(self.hass, SIGNAL_PLAN)
@@ -167,6 +182,25 @@ class PlanManager:
             return
         assert self._fernet is not None
         self._secrets[ref] = self._fernet.encrypt(value.encode()).decode()
+
+    def reveal(self, ref: str) -> dict[str, Any] | None:
+        """A stored password or key, with a QR code to join its Wi-Fi network."""
+        value = self.secret(ref)
+        if value is None:
+            return None
+        kind, _, item_id = ref.partition(":")
+        wifi = None
+        if kind == "key":
+            key = next((k for k in self.plan["keys"] if k["id"] == item_id), None)
+            wifi = next((w for w in self.plan["wifi"] if key and w["id"] == key["wifi"]), None)
+        elif kind == "wifi":
+            wifi = next((w for w in self.plan["wifi"] if w["id"] == item_id), None)
+            if wifi is not None and wifi["security"] == "ppsk":
+                return {"value": value, "ssid": wifi["ssid"], "qr": None}  # the base key isn't for joining
+        if wifi is None:
+            return {"value": value, "ssid": None, "qr": None}
+        payload = qr.wifi_payload(wifi["ssid"], value, wifi["security"], bool(wifi.get("hidden")))
+        return {"value": value, "ssid": wifi["ssid"], "qr": qr.svg(payload)}
 
     def secrets_set(self) -> list[str]:
         return sorted(ref for ref in self._secrets if self.secret(ref))
@@ -338,8 +372,160 @@ class PlanManager:
             return result
         if built.managed:
             self.managed[entry_id] = {**self.managed.get(entry_id, {}), **built.managed}
+        if role == ROLE_ROUTER and not wireless_only:
+            try:
+                await self._async_install_portal(coordinator, plan)
+            except HomeAssistantError as err:
+                result["error"] = f"Network applied, but the onboarding portal failed: {err}"
+                return result
         result["ok"] = True
         return result
+
+    # ------------------------------------------------------------------ onboarding portal
+
+    def _router(self, plan: dict[str, Any] | None = None) -> AerohiveCoordinator | None:
+        plan = plan or self.applied or self.plan
+        router_id = plan["devices"].get("router") if plan else None
+        for c in _coordinators(self.hass):
+            if c.config_entry.entry_id == router_id and c.is_openwrt and c.data is not None and c.last_update_success:
+                return c
+        return None
+
+    def _portal_offer(self, plan: dict[str, Any]) -> list[tuple[str, str]]:
+        offer = plan["onboarding"].get("offer") or []
+        return [(w["id"], w["ssid"]) for w in plan["wifi"] if w["id"] in offer and w["security"] == "ppsk"]
+
+    async def _async_install_portal(self, coordinator: AerohiveCoordinator, plan: dict[str, Any]) -> None:
+        address = netplan.portal_address(plan)
+        if address is None:
+            await coordinator.async_run_router_lines([*portal.remove_lines(), portal.UHTTPD_RELOAD])
+            return
+        check = await coordinator.async_run_router_lines([portal.UHTTPD_CHECK])
+        if "HN_UHTTPD_OK" not in check:
+            raise HomeAssistantError("the router's web server (uhttpd) isn't installed: opkg install uhttpd")
+        onboarding = plan["onboarding"]
+        lines = portal.install_lines(
+            address=address, title=onboarding.get("title") or "Welcome", text=onboarding.get("text") or "", offer=self._portal_offer(plan)
+        )
+        await coordinator.async_run_router_lines([*lines, portal.UHTTPD_RELOAD])
+
+    def _portal_on(self) -> bool:
+        return bool(self.applied and netplan.onboarding_network(self.applied) is not None)
+
+    async def _async_portal_tick(self, _now: Any = None) -> None:
+        """Read new requests from the router; tidy up old ones."""
+        router = self._router()
+        if not self._portal_on() or router is None:
+            return
+        try:
+            out = await router.async_run_router_lines([portal.LIST_REQUESTS])
+        except HomeAssistantError as err:
+            self.portal_error = str(err)
+            return
+        self.portal_error = None
+        now = dt_util.utcnow()
+        seen = {r.id: r for r in portal.parse_requests(out)}
+        changed = False
+        for rid, req in seen.items():
+            known = self.requests.get(rid)
+            if known and known.get("status") == "pending" and known.get("token") == req.token:
+                continue
+            if known and known.get("status") != "pending" and known.get("token") == req.token:
+                continue
+            self.requests[rid] = {**portal.as_dict(req), "token": req.token, "status": "pending", "seen": now.isoformat()}
+            changed = True
+            self._announce(self.requests[rid])
+        stale = []
+        for rid, item in self.requests.items():
+            age = now - dt_util.parse_datetime(item.get("decided") or item["seen"])
+            if item["status"] == "pending" and rid not in seen:
+                stale.append(rid)  # gone from the router (it restarted, or it was removed there)
+            elif age > REQUEST_TTL:
+                stale.append(rid)
+        for rid in stale:
+            item = self.requests.pop(rid)
+            persistent_notification.async_dismiss(self.hass, f"{DOMAIN}_onboard_{rid}")
+            changed = True
+            try:
+                await router.async_run_router_lines(portal.forget_lines(rid))
+            except HomeAssistantError:
+                pass
+            if item["status"] == "pending":
+                self._log("onboarding_expired", item.get("name") or rid)
+        if changed:
+            await self._async_save()
+
+    def _announce(self, item: dict[str, Any]) -> None:
+        kind = portal.KINDS.get(item["kind"], item["kind"])
+        wants = next((w["ssid"] for w in self.plan["wifi"] if w["id"] == item.get("wants")), None)
+        persistent_notification.async_create(
+            self.hass,
+            f"**{item['name']}** ({kind}, {item['mac']}) asks to join"
+            + (f" **{wants}**" if wants else " the network")
+            + ". [Approve or decline it](/aerohive-network/setup).",
+            title="New device waiting for approval",
+            notification_id=f"{DOMAIN}_onboard_{item['id']}",
+        )
+        self.hass.bus.async_fire(
+            EVENT_ONBOARDING, {k: item.get(k) for k in ("id", "name", "kind", "mac", "ip", "wants")}
+        )
+        self._log("onboarding_request", f"{item['name']} ({kind})")
+
+    def _pending_request(self, request_id: str) -> dict[str, Any]:
+        item = self.requests.get(request_id)
+        if item is None or item.get("status") != "pending":
+            raise HomeAssistantError("That request is no longer waiting")
+        return item
+
+    async def async_approve(
+        self,
+        request_id: str,
+        *,
+        wifi: str,
+        network: str | None = None,
+        minutes: int | None = None,
+        bind_mac: bool = False,
+        user: str | None = None,
+    ) -> dict[str, Any]:
+        item = self._pending_request(request_id)
+        router = self._router()
+        if router is None:
+            raise HomeAssistantError("The router isn't reachable")
+        added = await self.async_add_key(
+            name=item["name"], wifi=wifi, network=network, minutes=minutes, mac=item["mac"] if bind_mac else None, user=user
+        )
+        key_id = added["id"]
+        value = self.secret(f"key:{key_id}") or ""
+        target = next(w for w in self.plan["wifi"] if w["id"] == wifi)
+        svg = qr.svg(qr.wifi_payload(target["ssid"], value, target["security"], bool(target.get("hidden"))))
+        page = portal.approved_page(
+            title=self.plan["onboarding"].get("title") or "Welcome",
+            name=item["name"],
+            ssid=target["ssid"],
+            key=value,
+            qr_svg=svg,
+            expires_text=f"This password works for {minutes} minutes." if minutes else None,
+        )
+        try:
+            await router.async_run_router_lines(portal.approve_lines(request_id, item["token"], page), [value])
+        except HomeAssistantError as err:
+            raise HomeAssistantError(f"The key was created, but the portal couldn't show it: {err}") from err
+        item.update(status="approved", decided=dt_util.utcnow().isoformat(), key_id=key_id)
+        persistent_notification.async_dismiss(self.hass, f"{DOMAIN}_onboard_{request_id}")
+        self._log("onboarding_approved", f"{item['name']} → {target['ssid']}", user)
+        await self._async_save()
+        return {"key_id": key_id, "results": added["results"]}
+
+    async def async_decline(self, request_id: str, user: str | None = None) -> None:
+        item = self._pending_request(request_id)
+        router = self._router()
+        if router is None:
+            raise HomeAssistantError("The router isn't reachable")
+        await router.async_run_router_lines(portal.decline_lines(request_id))
+        item.update(status="declined", decided=dt_util.utcnow().isoformat())
+        persistent_notification.async_dismiss(self.hass, f"{DOMAIN}_onboard_{request_id}")
+        self._log("onboarding_declined", item["name"], user)
+        await self._async_save()
 
     async def async_apply(self, entry_ids: list[str] | None = None, user: str | None = None) -> list[dict[str, Any]]:
         errors = netplan.validate(self.plan, self.secret)
@@ -494,6 +680,16 @@ class PlanManager:
             "needs_apply": sorted(self.needs_apply),
             "audit": self.audit[-50:][::-1],
             "now": dt_util.utcnow().isoformat(),
+            "portal": {
+                "on": self._portal_on(),
+                "url": f"http://{netplan.portal_address(self.applied)}:{portal.PORT}/" if self._portal_on() else None,
+                "error": self.portal_error,
+            },
+            "requests": sorted(
+                ({k: v for k, v in r.items() if k != "token"} for r in self.requests.values()),
+                key=lambda r: r["seen"],
+                reverse=True,
+            ),
         }
 
 

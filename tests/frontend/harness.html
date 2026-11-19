@@ -55,9 +55,12 @@
   const planState = {
     plan: { networks: [], wifi: [], keys: [], devices: { router: null, router_trunks: ["br-lan"], switch_trunks: {}, aps: null } },
     errors: [], pending: false, applied_at: null, last_results: [], needs_apply: [], audit: [],
+    requests: [{ id: "021122334455", mac: "02:11:22:33:44:55", ip: "10.8.10.60", name: "Living room TV", kind: "tv", wants: "homeiso", time: 1, status: "pending", seen: new Date().toISOString() }],
   };
+  const fakeQr = '<svg viewBox="0 0 21 21"><rect width="21" height="21" fill="#fff"/><rect x="1" y="1" width="7" height="7" fill="#000"/><rect x="13" y="1" width="7" height="7" fill="#000"/><rect x="1" y="13" width="7" height="7" fill="#000"/></svg>';
   const planErrors = () => planState.plan.wifi.filter((w) => ["wpa2", "wpa2_wpa3", "wpa3"].includes(w.security) && !planSecrets[`wifi:${w.id}`]).map((w) => `${w.ssid}: needs a password`);
-  const planView = () => structuredClone({ ...planState, devices: planDevices(), secrets: Object.keys(planSecrets), errors: planErrors(), now: new Date().toISOString() });
+  const planView = () => structuredClone({ ...planState, devices: planDevices(), secrets: Object.keys(planSecrets), errors: planErrors(), now: new Date().toISOString(),
+    portal: { on: Boolean(planState.applied_at && planState.plan.onboarding && planState.plan.onboarding.enabled), url: "http://10.8.10.1:8099/", error: null } });
   function planMock(msg) {
     const t = msg.type.replace("aerohive_local/plan/", "");
     const log = (action, detail) => planState.audit.unshift({ time: new Date().toISOString(), action, detail, user: "Tester" });
@@ -69,7 +72,8 @@
         { id: "iso", name: "homeISO", vlan: 70, subnet: "10.99.199.1/24", dhcp: true, dhcp_start: 50, dhcp_limit: 150, lease: "12h", internet: true, router_access: false, reach: [], switch_ports: {} },
       ],
       wifi: [{ id: "homeiso", ssid: "homeISO", network: "iso", security: "ppsk", bands: ["2.4 GHz"], hidden: false, isolate: true, max_clients: null, enabled: true }],
-      keys: [], devices: { router: null, router_trunks: ["br-lan"], switch_trunks: {}, aps: null } } };
+      keys: [], devices: { router: null, router_trunks: ["br-lan"], switch_trunks: {}, aps: null },
+      onboarding: { enabled: false, wifi: null, offer: ["homeiso"], title: "Welcome", text: "Tell us what this device is." } } };
     if (t === "save") {
       for (const [ref, value] of Object.entries(msg.secrets || {})) {
         if (value && value.length < 8) throw new Error("Wi-Fi key must be 8-63 printable ASCII characters without double quotes");
@@ -107,7 +111,21 @@
     }
     if (t === "reveal") {
       if (!planSecrets[msg.ref]) throw new Error("No password or key stored for this");
-      return { value: planSecrets[msg.ref] };
+      return { value: planSecrets[msg.ref], ssid: "x", qr: fakeQr };
+    }
+    if (t === "onboard_approve" || t === "onboard_decline") {
+      const req = planState.requests.find((r) => r.id === msg.request_id && r.status === "pending");
+      if (!req) throw new Error("That request is no longer waiting");
+      req.status = t === "onboard_approve" ? "approved" : "declined";
+      if (t === "onboard_approve") {
+        const id = req.name.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 10);
+        planState.plan.keys.push({ id, name: req.name, wifi: msg.wifi, network: msg.network || null, mac: msg.bind_mac ? req.mac : null, expires: null });
+        planSecrets[`key:${id}`] = "Kx7mPq2vR9tw";
+        log("onboarding_approved", req.name);
+        return { key_id: id, results: [], ...planView() };
+      }
+      log("onboarding_declined", req.name);
+      return planView();
     }
     throw new Error(`unknown command ${msg.type}`);
   }

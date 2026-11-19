@@ -38,7 +38,7 @@ def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_wifi_create)
     websocket_api.async_register_command(hass, ws_wifi_delete)
     websocket_api.async_register_command(hass, ws_wifi_timer_cancel)
-    for command in (ws_plan_get, ws_plan_save, ws_plan_preview, ws_plan_apply, ws_plan_reveal, ws_plan_template, ws_key_add, ws_key_revoke):
+    for command in (ws_plan_get, ws_plan_save, ws_plan_preview, ws_plan_apply, ws_plan_reveal, ws_plan_template, ws_key_add, ws_key_revoke, ws_onboard_approve, ws_onboard_decline):
         websocket_api.async_register_command(hass, command)
 
 
@@ -243,11 +243,11 @@ async def ws_plan_apply(hass: HomeAssistant, connection: websocket_api.ActiveCon
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_plan_reveal(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
-    value = plan_mod.get_plan(hass).secret(msg["ref"])
-    if value is None:
+    result = plan_mod.get_plan(hass).reveal(msg["ref"])
+    if result is None:
         connection.send_error(msg["id"], "not_found", "No password or key stored for this")
         return
-    connection.send_result(msg["id"], {"value": value})
+    connection.send_result(msg["id"], result)
 
 
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/plan/template"})
@@ -299,5 +299,47 @@ async def ws_key_revoke(hass: HomeAssistant, connection: websocket_api.ActiveCon
     async def run() -> dict[str, Any]:
         results = await manager.async_revoke_key(msg["key_id"], _user(connection))
         return {"results": results, **manager.state()}
+
+    await _plan_call(connection, msg, run())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/plan/onboard_approve",
+        vol.Required("request_id"): str,
+        vol.Required("wifi"): str,
+        vol.Optional("network"): vol.Any(str, None),
+        vol.Optional("minutes"): vol.Any(None, vol.All(int, vol.Range(min=1, max=366 * 24 * 60))),
+        vol.Optional("bind_mac", default=False): bool,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_onboard_approve(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    manager = plan_mod.get_plan(hass)
+
+    async def run() -> dict[str, Any]:
+        approved = await manager.async_approve(
+            msg["request_id"],
+            wifi=msg["wifi"],
+            network=msg.get("network") or None,
+            minutes=msg.get("minutes"),
+            bind_mac=msg["bind_mac"],
+            user=_user(connection),
+        )
+        return {**approved, **manager.state()}
+
+    await _plan_call(connection, msg, run())
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/plan/onboard_decline", vol.Required("request_id"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_onboard_decline(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    manager = plan_mod.get_plan(hass)
+
+    async def run() -> dict[str, Any]:
+        await manager.async_decline(msg["request_id"], _user(connection))
+        return manager.state()
 
     await _plan_call(connection, msg, run())

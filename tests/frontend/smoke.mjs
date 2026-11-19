@@ -166,8 +166,33 @@ check((await panel().locator(".apply-row").count()) === 4, "review lists the swi
 await panel().locator('[data-action="plan-apply"]').click();
 await page.waitForTimeout(900);
 check((await panel().locator(".chip.ok").count()) === 4, "every device reports done");
+await panel().locator('.dialog [data-action="close"]').last().click();
+// Key dialog has a QR code; Wi-Fi with a password has a QR button.
+await panel().locator('[data-action="plan-key-show"]').first().click();
+await page.waitForTimeout(500);
+check((await panel().locator(".qr-box svg").count()) === 1, "key dialog shows a QR code");
+await panel().locator('.dialog [data-action="close"]').last().click();
+await panel().locator('[data-action="plan-wifi-qr"][data-wifi="guest"]').click();
+await page.waitForTimeout(500);
+check(((await panel().locator(".key-box").textContent()) || "").trim() === "guest-pass-1" && (await panel().locator(".qr-box svg").count()) === 1, "Wi-Fi QR shows its password and code");
+await panel().locator('.dialog [data-action="close"]').last().click();
+// Onboarding: turn the portal on, approve the waiting device.
+await panel().locator('input[data-plan="ob_enabled"]').evaluate((el) => el.click());
+await panel().locator("#ob-wifi").selectOption("guest");
+await panel().locator('[data-action="plan-save"]').click();
+await page.waitForTimeout(700);
+await panel().locator('[data-action="plan-ob-approve"]').click();
+await panel().locator("#ap-net").selectOption("iot");
+await panel().locator('[data-action="plan-ob-approve-confirm"]').click();
+await page.waitForTimeout(800);
+check(((await panel().locator(".toast").textContent()) || "").includes("Living room TV approved"), "approving confirms with a message");
+check((await panel().locator('[data-action="plan-ob-approve"]').count()) === 0, "no device left waiting");
 const planCalls = await page.evaluate(() => window.serviceCalls.map((c) => c.data));
-const saved = planCalls.find((c) => c.type === "aerohive_local/plan/save");
+const approve = planCalls.find((c) => c.type === "aerohive_local/plan/onboard_approve");
+check(approve && approve.request_id === "021122334455" && approve.wifi === "homeiso" && approve.network === "iot" && approve.bind_mac === false, `approve request: ${JSON.stringify(approve)}`);
+const obSave = planCalls.filter((c) => c.type === "aerohive_local/plan/save").pop();
+check(obSave && obSave.plan.onboarding.enabled === true && obSave.plan.onboarding.wifi === "guest", "onboarding settings are saved");
+const saved = planCalls.filter((c) => c.type === "aerohive_local/plan/save")[0];
 check(saved && saved.secrets["wifi:guest"] === "guest-pass-1", "the Wi-Fi password is sent with the save");
 check(saved && saved.plan.networks.find((n) => n.id === "iso").reach.includes("iot"), "the access matrix is saved");
 check(saved && saved.plan.devices.switch_trunks && Object.values(saved.plan.devices.switch_trunks).includes("47-48"), "switch trunk ports are saved");

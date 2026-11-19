@@ -122,6 +122,15 @@ See [Network setup](network-setup.md#what-each-device-does).
 | Aerohive APs | `user-profile hn<VLAN> qos-policy def-user-qos vlan-id <VLAN> attribute <VLAN>`, `security-object <name> default-user-profile-attr <VLAN>`, `security-object <name> security protocol-suite wpa2-aes-psk ascii-key …`, `ssid <name>`, `ssid <name> security-object <name>`, `[no] ssid <name> hide-ssid`, `ssid <name> max-client <n>`, `[no] interface wifiN ssid <name>` |
 | ExtremeXOS | `create vlan <name>`, `configure vlan <name> tag <VLAN>`, `configure vlan <name> add ports <list> tagged/untagged`, `configure vlan Default delete ports <list>`, `delete vlan <name>` |
 
+### Onboarding portal (OpenWrt router)
+
+All 🧪. Put on the router with the setup: the portal script written with `printf … >>`
+(one line per command) to `/www/hn-portal/cgi-bin/portal`, a `uhttpd.hn_portal` instance,
+`uci commit uhttpd`, `/etc/init.d/uhttpd reload`, and firewall `hn_portal<VLAN>_in` (rule) and
+`hn_portal<VLAN>_dnat` (redirect). Requests are read with
+`for f in /tmp/hn_portal/req/*; do … cat "$f"; done`; approve and decline write
+`/tmp/hn_portal/ok/<mac>.html` / `.tok` or `/tmp/hn_portal/no/<mac>`.
+
 ## Configuration backups (all devices)
 
 `show running-config` (HiveOS, SR switches) or `show configuration` (ExtremeXOS) is read to

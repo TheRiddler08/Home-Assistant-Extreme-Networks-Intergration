@@ -3,6 +3,26 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.14.0] - 2026-11-19
+
+### Added
+- **Onboarding portal (phase 1).** New devices on the onboarding Wi-Fi (e.g. homeOB) open
+  any web page and get a sign-in page served by the OpenWrt router: name, kind of device,
+  which network. Home Assistant reads the requests over SSH (about every 15 s), shows them
+  in the Setup tab with a notification and the `aerohive_local_onboarding_request` event.
+  Approve (Wi-Fi network, VLAN, how long, optionally tied to the MAC) creates a per-device
+  key, and the portal shows that device its password and QR code; decline tells it so.
+  Onboarding devices never reach Home Assistant; only the asking browser (MAC + random
+  token) sees the password; input is cleaned on the router; requests expire after an hour.
+  Set up in the Setup tab's new *Onboarding portal* card. [Details](docs/onboarding.md)
+- **QR codes** to join Wi-Fi: in a device key's dialog and with the new *QR* button on Wi-Fi
+  networks that have a shared password.
+- [Roadmap](docs/roadmap.md): what's planned and on hold (Dual WAN), and what the Aerohive
+  per-device keys, WPA3 and client isolation need before they can be finished.
+
+### Changed
+- New requirement: `segno` (pure-Python QR codes).
+
 ## [0.13.0] - 2026-11-19
 
 ### Added

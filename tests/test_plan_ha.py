@@ -90,7 +90,8 @@ async def test_save_preview_apply_on_openwrt(hass: HomeAssistant, hass_ws_client
 
     # The key is only shown on request, to admins.
     reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/reveal", "ref": "wifi:guest"})
-    assert reply["result"] == {"value": "guest-pass-1"}
+    assert reply["result"]["value"] == "guest-pass-1" and reply["result"]["ssid"] == "Guest Wifi"
+    assert reply["result"]["qr"].startswith("<svg")
 
 
 async def test_apply_refused_or_rolled_back(hass: HomeAssistant, hass_ws_client, ow_entry: MockConfigEntry) -> None:  # noqa: F811
@@ -206,3 +207,69 @@ async def test_plan_is_admin_only_and_survives_restart(hass: HomeAssistant, hass
     assert again.secret("wifi:guest") == "guest-pass-1"
     reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/save", "plan": _plan(None), "secrets": {"wifi:guest": "short"}})
     assert not reply["success"] and "8-63" in reply["error"]["message"]
+
+
+def _portal_plan(router: str) -> dict:
+    plan = _plan(router)
+    plan["networks"].append({"id": "onboard", "name": "homeOB", "vlan": 80, "subnet": "10.8.10.1/24", "internet": False})
+    plan["wifi"].append({"id": "homeob", "ssid": "homeOB", "network": "onboard", "security": "wpa2", "bands": ["2.4 GHz"], "max_clients": 5, "isolate": True})
+    plan["onboarding"] = {"enabled": True, "wifi": "homeob", "offer": ["home"], "title": "Welcome home", "text": "Hi"}
+    return plan
+
+
+async def test_onboarding_portal(hass: HomeAssistant, hass_ws_client, ow_entry: MockConfigEntry) -> None:  # noqa: F811
+    from custom_components.aerohive_local import portal
+
+    mark = "ERROR: OpenWrt did not accept the change"
+    manager = get_plan(hass)
+    await manager.async_save_plan(_portal_plan(ow_entry.entry_id), {"wifi:guest": "guest-pass-1", "wifi:homeob": "homeob-pass-1"})
+    assert manager.state()["errors"] == []
+    client = _client()
+    client.responses[CONFIRM] = "HN_CONFIRMED"
+    client.responses[f"{portal.UHTTPD_CHECK} || echo '{mark}'"] = "HN_UHTTPD_OK"
+    results = await manager.async_apply()
+    assert results[0]["ok"], results
+    sent = "\n".join(client.commands)
+    assert "uci set firewall.hn_portal80_dnat.target=DNAT" in sent
+    assert "uci add_list uhttpd.hn_portal.listen_http=10.8.10.1:8099" in sent and "/www/hn-portal/cgi-bin/portal.new" in sent
+    assert manager.state()["portal"] == {"on": True, "url": "http://10.8.10.1:8099/", "error": None}
+
+    # A device asks on the portal; Home Assistant picks it up, notifies and fires an event.
+    events = []
+    hass.bus.async_listen("aerohive_local_onboarding_request", lambda e: events.append(e.data))
+    listing = f"{portal.LIST_REQUESTS} || echo '{mark}'"
+    client.responses[listing] = (
+        "== 021122334455\nmac=02:11:22:33:44:55\nip=10.8.10.60\nname=Living room TV\nkind=tv\nwants=home\ntok=abcdefghij012345\ntime=1\n"
+        "== 021122334466\nmac=02:11:22:33:44:66\nip=10.8.10.61\nname=Stranger\nkind=other\nwants=\ntok=bbbbbbbbbbbbbbbb\ntime=1\n"
+    )
+    await manager._async_portal_tick()
+    await hass.async_block_till_done()
+    state = manager.state()
+    assert {r["name"] for r in state["requests"]} == {"Living room TV", "Stranger"}
+    assert all("token" not in r for r in state["requests"])
+    assert {e["name"] for e in events} == {"Living room TV", "Stranger"}
+    await manager._async_portal_tick()  # seen again: no second notification
+    assert len(events) == 2
+
+    # Approve: a key is made and pushed, and the portal page with key and QR is written to the router.
+    client.commands.clear()
+    reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/onboard_approve", "request_id": "021122334455", "wifi": "home", "network": "iot", "minutes": 60})
+    assert reply["success"], reply
+    key = manager.secret(f"key:{reply['result']['key_id']}")
+    sent = "\n".join(client.commands)
+    assert f"wireless.hn_k_{reply['result']['key_id']}_radio0.vid=30" in sent
+    assert "/tmp/hn_portal/ok/021122334455.html.new" in sent and key in sent and "&lt;svg" not in sent and "svg" in sent
+    assert "printf '%s' abcdefghij012345 >> /tmp/hn_portal/ok/021122334455.tok.new" in sent
+    assert next(r for r in reply["result"]["requests"] if r["id"] == "021122334455")["status"] == "approved"
+
+    # Decline the other one.
+    reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/onboard_decline", "request_id": "021122334466"})
+    assert reply["success"]
+    assert "mkdir -p /tmp/hn_portal/no && : > /tmp/hn_portal/no/021122334466 && rm -f /tmp/hn_portal/req/021122334466 || echo" in "\n".join(client.commands)
+    reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/onboard_decline", "request_id": "021122334466"})
+    assert not reply["success"] and "no longer waiting" in reply["error"]["message"]
+
+    # Reveal gives a QR code for a device key.
+    reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/reveal", "ref": f"key:{manager.plan['keys'][0]['id']}"})
+    assert reply["result"]["ssid"] == "home" and reply["result"]["qr"].startswith("<svg")
+    assert [a["action"] for a in manager.audit][-2:] == ["onboarding_approved", "onboarding_declined"]

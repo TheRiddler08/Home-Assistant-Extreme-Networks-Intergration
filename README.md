@@ -23,7 +23,10 @@ HiveManager, ExtremeCloud IQ or an OpenWrt controller.
   (VLANs) with addresses and DHCP, a grid of who can reach what (the firewall), Wi-Fi
   networks, and a key per device (per-device keys, timed keys, revoke). Review the commands
   per device, then apply them to the OpenWrt router, ExtremeXOS switches and access points,
-  with automatic rollback on OpenWrt. [More →](docs/network-setup.md)
+  with automatic rollback on OpenWrt. QR codes to join. [More →](docs/network-setup.md)
+- **Onboarding portal:** new devices on the onboarding Wi-Fi ask for access on a page served
+  by the router; approve them in Home Assistant and the page shows the device its own
+  password and QR code. [More →](docs/onboarding.md)
 - **Wi-Fi manager:** list, add, edit and delete SSIDs from the Network panel or a dashboard
   card. Change passwords, choose bands, hide networks, set max clients, on one AP or all of
   them, and turn a network off or on for a while (e.g. guest Wi-Fi for 2 hours).
@@ -76,6 +79,8 @@ Networks (Local SSH)**, and choose **Scan my network** or **Enter IP address man
 | [Entities](docs/entities.md) | Every sensor, switch and control, with a dashboard example |
 | [Network panel and cards](docs/dashboard.md) | The sidebar panel, switch front panel and dashboard cards |
 | [Network setup](docs/network-setup.md) | Networks, VLANs, firewall grid, Wi-Fi and per-device keys, applied to every device |
+| [Onboarding portal](docs/onboarding.md) | Approving new devices from the onboarding Wi-Fi |
+| [Roadmap](docs/roadmap.md) | What's planned, on hold, and what open items need |
 | [Wi-Fi manager](docs/wifi.md) | Managing SSIDs and passwords |
 | [Network overview](docs/overview.md) | The combined *Aerohive Network* device |
 | [OpenWrt](docs/openwrt.md) | OpenWrt routers and access points: what's read, Wi-Fi control, limits |

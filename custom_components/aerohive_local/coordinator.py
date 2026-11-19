@@ -1142,7 +1142,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
 
         async def run(cmd: str, timeout: float | None = None) -> str:
             try:
-                return await self.client.run(cmd, timeout=timeout)
+                return await self.client.run(cmd, timeout=timeout, hide=secrets)
             except AerohiveError as err:
                 raise HomeAssistantError(f"Error communicating with {host}: {scrub(str(err))}") from err
 
@@ -1187,6 +1187,31 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             await asyncio.sleep(CONFIRM_RETRY_SECONDS)
         _LOGGER.info("%s: network setup applied and confirmed", host)
         await self.async_request_refresh()
+
+    async def async_run_router_lines(self, lines: list[str], secrets: list[str] | None = None) -> str:
+        """Run shell lines on an OpenWrt device (joined into a few SSH lines); raise if one fails.
+
+        Returns the combined output (used to read the onboarding portal's requests).
+        """
+        hide = [s for s in secrets or [] if s]
+
+        def scrub(text: str) -> str:
+            text = commands.redact(text)
+            for value in hide:
+                text = text.replace(value, "***")
+            return text
+
+        outputs = []
+        for chunk in netplan_mod.chunks(lines):
+            try:
+                out = await self.client.run(f"{chunk} || echo '{ow.FAILED_MARK}'", hide=hide)
+            except AerohiveError as err:
+                raise HomeAssistantError(f"Error communicating with {self.client.host}: {scrub(str(err))}") from err
+            if ow.FAILED_MARK in out:
+                detail = scrub(out.replace(ow.FAILED_MARK, "").strip()) or "a command failed"
+                raise HomeAssistantError(f"{self.client.host}: {detail}")
+            outputs.append(out)
+        return "\n".join(outputs)
 
     async def async_apply_cli_plan(self, cmds: list[str], secrets: list[str]) -> None:
         """Apply network-plan CLI commands (HiveOS, ExtremeXOS); saved like any other change."""

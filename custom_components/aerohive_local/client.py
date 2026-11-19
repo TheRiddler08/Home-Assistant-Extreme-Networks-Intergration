@@ -406,6 +406,7 @@ class AerohiveClient:
         retry: bool = True,
         check: bool = False,
         keep_mode: bool = False,
+        hide: tuple[str, ...] | list[str] = (),
     ) -> str:
         """Run one command and return its output (echo and prompt removed).
 
@@ -422,7 +423,12 @@ class AerohiveClient:
                         await self._open()
                     elif self.dialect == DIALECT_SWITCH and not keep_mode:
                         await self._ensure_privileged()
-                    _LOGGER.debug("%s: > %s", self._host, redact(command))
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        shown = redact(command)
+                        for value in hide:
+                            if value:
+                                shown = shown.replace(value, "***")
+                        _LOGGER.debug("%s: > %s", self._host, shown)
                     output = await self._exec(command, timeout, confirm=confirm)
                     if self.dialect == DIALECT_SWITCH and not keep_mode and (
                         self.prompt_mode == ">" or IDLE_TIMEOUT_RE.search(output)
