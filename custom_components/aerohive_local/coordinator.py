@@ -169,20 +169,6 @@ def _lldp_model(neighbor: LldpNeighbor) -> str | None:
     return _short_model(neighbor)
 
 
-def _chunks(lines: list[str], limit: int = 1500) -> list[str]:
-    """Join shell commands with && into lines of at most ``limit`` characters (fewer round trips)."""
-    result: list[str] = []
-    current = ""
-    for line in lines:
-        if current and len(current) + len(line) + 4 > limit:
-            result.append(current)
-            current = ""
-        current = f"{current} && {line}" if current else line
-    if current:
-        result.append(current)
-    return result
-
-
 def _prefix_to_netmask(prefix: int | None) -> str | None:
     if prefix is None or not 0 <= prefix <= 32:
         return None
@@ -1169,7 +1155,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         if mark in out:
             raise HomeAssistantError(f"{host}: could not back up the current settings; nothing was changed")
         _LOGGER.info("%s: applying network setup (%d command(s))", host, len(lines))
-        for chunk in _chunks(lines):
+        for chunk in netplan_mod.chunks(lines):
             out = await run(f"{chunk} || echo '{mark}'")
             if mark in out or re.search(r"^uci: ", out, re.MULTILINE):
                 await run(netplan_mod.openwrt_revert(configs))

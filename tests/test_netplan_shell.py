@@ -19,7 +19,6 @@ from pathlib import Path
 import pytest
 
 from custom_components.aerohive_local import netplan as n
-from custom_components.aerohive_local.coordinator import _chunks
 
 pytestmark = pytest.mark.skipif(shutil.which("sh") is None, reason="needs a POSIX shell")
 
@@ -105,7 +104,7 @@ def test_cleanup_and_quoting(router) -> None:
     })
     key = 'p@ss $HOME "q" `x`'
     out = n.openwrt_lines(plan, lambda ref: key, is_router=True, radios={"radio0": "2.4 GHz"}, now=datetime.now(UTC))
-    for chunk in _chunks(out.commands):
+    for chunk in n.chunks(out.commands):
         result = router(f"{chunk} || echo 'ERROR: OpenWrt did not accept the change'")
         assert "ERROR" not in result.stdout, (result.stdout, result.stderr)
     store = json.loads(router.store.read_text())

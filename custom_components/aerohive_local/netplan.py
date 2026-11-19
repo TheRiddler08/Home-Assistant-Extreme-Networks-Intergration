@@ -346,6 +346,20 @@ def openwrt_commit(configs: tuple[str, ...] = OPENWRT_CONFIGS) -> str:
     )
 
 
+def chunks(lines: list[str], limit: int = 1500) -> list[str]:
+    """Join shell commands with && into lines of at most ``limit`` characters (fewer round trips)."""
+    result: list[str] = []
+    current = ""
+    for line in lines:
+        if current and len(current) + len(line) + 4 > limit:
+            result.append(current)
+            current = ""
+        current = f"{current} && {line}" if current else line
+    if current:
+        result.append(current)
+    return result
+
+
 def _radio_short(radio: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", radio)[-6:]
 

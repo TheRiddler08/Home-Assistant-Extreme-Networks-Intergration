@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from custom_components.aerohive_local import netplan as n
-from custom_components.aerohive_local.coordinator import _chunks
 
 NOW = datetime(2026, 11, 19, 12, 0, tzinfo=UTC)
 
@@ -155,5 +154,5 @@ def test_key_expiry_helpers_and_chunks() -> None:
     plan = _plan()
     assert [k["id"] for k in n.expired_keys(plan, NOW)] == ["old"]
     assert [k["id"] for k in n.active_keys(plan, NOW)] == ["tv", "cam"]
-    chunks = _chunks(["a" * 700, "b" * 700, "c" * 700, "d"])
+    chunks = n.chunks(["a" * 700, "b" * 700, "c" * 700, "d"])
     assert chunks == ["a" * 700 + " && " + "b" * 700, "c" * 700 + " && d"]
