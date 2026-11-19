@@ -38,7 +38,7 @@ def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_wifi_create)
     websocket_api.async_register_command(hass, ws_wifi_delete)
     websocket_api.async_register_command(hass, ws_wifi_timer_cancel)
-    for command in (ws_plan_get, ws_plan_save, ws_plan_preview, ws_plan_apply, ws_plan_reveal, ws_plan_template, ws_key_add, ws_key_revoke, ws_onboard_approve, ws_onboard_decline):
+    for command in (ws_plan_get, ws_plan_save, ws_plan_preview, ws_plan_apply, ws_plan_reveal, ws_plan_template, ws_key_add, ws_key_revoke, ws_onboard_approve, ws_onboard_decline, ws_portal_preview, ws_portal_template):
         websocket_api.async_register_command(hass, command)
 
 
@@ -343,3 +343,26 @@ async def ws_onboard_decline(hass: HomeAssistant, connection: websocket_api.Acti
         return manager.state()
 
     await _plan_call(connection, msg, run())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/plan/portal_preview",
+        vol.Optional("onboarding", default={}): dict,
+        vol.Optional("page", default="form"): vol.In(["form", "waiting", "approved", "declined"]),
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_portal_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    html = plan_mod.get_plan(hass).portal_preview(msg["onboarding"], msg["page"])
+    connection.send_result(msg["id"], {"html": html})
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/plan/portal_template"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_portal_template(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    from . import portal  # noqa: PLC0415
+
+    connection.send_result(msg["id"], {"template": portal.DEFAULT_TEMPLATE, "placeholders": list(portal.PLACEHOLDERS)})

@@ -17,6 +17,7 @@ and nothing else.
 
 from __future__ import annotations
 
+import copy
 import ipaddress
 import re
 import shlex
@@ -50,7 +51,7 @@ def empty_plan() -> dict[str, Any]:
         "wifi": [],
         "keys": [],
         "devices": {"router": None, "router_trunks": ["br-lan"], "switch_trunks": {}, "aps": None},
-        "onboarding": dict(ONBOARDING_DEFAULTS),
+        "onboarding": copy.deepcopy(ONBOARDING_DEFAULTS),
     }
 
 
@@ -58,8 +59,13 @@ ONBOARDING_DEFAULTS: dict[str, Any] = {
     "enabled": False,
     "wifi": None,  # the onboarding Wi-Fi (e.g. homeOB)
     "offer": [],  # Wi-Fi networks with per-device keys a device may ask for
-    "title": "Welcome",
-    "text": "Tell us what this device is, and it gets its own Wi-Fi password once approved.",
+    "ask_network": True,  # let the device choose among the offered networks
+    **portal_mod.TEXT_DEFAULTS,  # title, text, button, waiting/approved/declined text, footer
+    "kinds": list(portal_mod.DEFAULT_KINDS),
+    "logo": None,  # data:image/...;base64,...
+    "colors": dict(portal_mod.THEME_DEFAULTS),
+    "use_custom": False,  # your own page
+    "custom_html": "",
 }
 
 
@@ -73,6 +79,7 @@ def normalize(plan: dict[str, Any] | None) -> dict[str, Any]:
     result["devices"].update({k: v for k, v in devices.items() if k in result["devices"]})
     onboarding = plan.get("onboarding") or {}
     result["onboarding"].update({k: v for k, v in onboarding.items() if k in ONBOARDING_DEFAULTS})
+    result["onboarding"]["colors"] = {**portal_mod.THEME_DEFAULTS, **(onboarding.get("colors") or {})} if isinstance(onboarding.get("colors") or {}, dict) else dict(portal_mod.THEME_DEFAULTS)
     for net in result["networks"]:
         net.setdefault("dhcp", True)
         net.setdefault("dhcp_start", 50)
@@ -244,8 +251,7 @@ def validate(plan: dict[str, Any], secret: Callable[[str], str | None] | None = 
             errors.append("Onboarding portal: choose at least one network devices may ask for")
         if any(w.get("security") != "ppsk" for w in offered):
             errors.append("Onboarding portal: devices can only ask for networks with per-device keys")
-        if len(str(onboarding.get("title") or "")) > 60 or len(str(onboarding.get("text") or "")) > 400:
-            errors.append("Onboarding portal: the title can have 60 characters and the text 400")
+        errors += portal_mod.validate_look(onboarding)
 
     devices = plan["devices"]
     for trunk in devices.get("router_trunks") or []:
@@ -753,5 +759,5 @@ def template() -> dict[str, Any]:
         ],
         "keys": [],
         "devices": {"router": None, "router_trunks": ["br-lan"], "switch_trunks": {}, "aps": None},
-        "onboarding": {**ONBOARDING_DEFAULTS, "enabled": False, "wifi": "homeob", "offer": ["home", "home5", "homeiso", "google"]},
+        "onboarding": {**copy.deepcopy(ONBOARDING_DEFAULTS), "enabled": False, "wifi": "homeob", "offer": ["home", "home5", "homeiso", "google"]},
     }

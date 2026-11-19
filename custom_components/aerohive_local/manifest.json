@@ -74,5 +74,5 @@
     "asyncssh>=2.21.0",
     "segno>=1.6.1"
   ],
-  "version": "0.14.0"
+  "version": "0.15.0"
 }

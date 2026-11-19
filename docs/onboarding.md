@@ -11,8 +11,8 @@ password and a QR code. (Screenshots use demo data.)
 1. A device joins the onboarding Wi-Fi with its shared password.
 2. It opens any web page (phones do this by themselves and show *Sign in to network*). The
    router sends it to the portal.
-3. The portal asks for a **name**, **what it is** (phone, computer, TV, speaker…) and **which
-   network** it wants, from the ones you offer.
+3. The portal asks for a **name**, **what it is** (from your list of device kinds) and,
+   if you allow it, **which network** it wants from the ones you offer.
 4. Home Assistant picks up the request within about 15 seconds. It shows it in the Setup tab,
    creates a notification and fires the event `aerohive_local_onboarding_request`.
 5. **Approve**: choose the Wi-Fi network, which network (VLAN) the device lands in, how long
@@ -51,13 +51,48 @@ You need the OpenWrt router chosen under **Devices** in the Setup tab (see
      without internet (untick *Internet* in the grid);
    - one or more **Wi-Fi networks with per-device keys** that devices may ask for (home,
      homeISO, …).
-2. In **Onboarding portal**: turn the portal on, choose the onboarding Wi-Fi, tick the
-   networks devices may ask for, and set the title and welcome text.
+2. In **Onboarding portal**: turn the portal on, choose the onboarding Wi-Fi and tick the
+   networks devices may ask for. **Customise portal** sets the texts, look and questions
+   (see below).
 3. **Save**, then **Review & apply**. The review shows the portal's firewall rules; the
    apply puts the portal on the router and reports *Done*.
 
 *Start from the home layout* prefills the portal (homeOB; home, home5, homeISO and
 Google-Auth-Home on offer); it only needs turning on.
+
+## Making it your own
+
+The portal is generic: every text, the questions, the look and even the whole page can be
+changed. In the Onboarding portal card, press **Customise portal**. The preview on the
+right shows each page (*Ask*, *Waiting*, *Approved*, *Declined*) as a device will see it,
+and updates when you leave a field.
+
+![Customise the portal](images/panel-portal-customise.png)
+
+- **Text:** title, welcome text, button, the waiting / approved / declined messages and a
+  footer (house rules, who to ask). In the approved message, `{device}` and `{network}` are
+  filled in; the password and QR code follow it.
+- **Look:** a logo (PNG, JPEG, GIF, WebP or SVG, up to 70 KB) and colours for the button,
+  background, text and fields. The logo is built into the page, because the onboarding
+  network has no internet.
+- **Questions:** your own list of device kinds (up to 12, one per line), and whether
+  devices choose the network or you decide when approving.
+- **Your own page:** turn on *Use my own page* and write the whole page in HTML (*Start from
+  the standard page* gives you the default to edit). Placeholders:
+
+  | Placeholder | Becomes |
+  | --- | --- |
+  | `{{content}}` | **Required, once.** The form, the waiting message, or the password and QR code. |
+  | `{{title}}` | The title (escaped). |
+  | `{{style}}` | The standard styles with your colours (for the form, password box and QR code). Leave it out to style everything yourself. |
+  | `{{logo}}` | Your logo as an `<img class="logo">`, or nothing. |
+  | `{{footer}}` | The footer text, or nothing. |
+
+  Everything has to be inside the page (no links to fonts, images or scripts on the
+  internet: onboarding devices can't reach them). Your page is used as written; the parts
+  the integration fills in (and everything devices type) are escaped.
+
+Changes take effect on the router when you **Save** and **Review & apply**.
 
 ## Approving from an automation
 
@@ -91,4 +126,4 @@ Approving and declining happen in the Setup tab (administrators).
 - On **Aerohive access points**, per-device keys aren't sent yet (see the
   [roadmap](roadmap.md)), so approved devices join networks broadcast by OpenWrt.
 - Not yet: rules by device type (e.g. TVs always to homeISO), approving straight from a
-  phone notification, a limit of requests per hour.
+  phone notification, a limit of requests per hour, more than one language.

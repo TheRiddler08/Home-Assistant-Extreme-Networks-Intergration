@@ -3,6 +3,29 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.15.0] - 2026-11-19
+
+### Added
+- **Customise the onboarding portal** (*Customise portal* in the Setup tab), with a live
+  preview of each page (ask, waiting, approved, declined):
+  - every text: title, welcome text, button, waiting / approved (`{device}`, `{network}`) /
+    declined messages, footer;
+  - a logo (built into the page) and colours for button, background, text and fields;
+  - your own list of device kinds, and whether devices choose the network;
+  - **your own page** in HTML with `{{content}}` (required), `{{title}}`, `{{style}}`,
+    `{{logo}}` and `{{footer}}`; *Start from the standard page* gives the default to edit.
+  [Details](docs/onboarding.md#making-it-your-own)
+
+### Changed
+- The portal is generic: nothing in it is tied to a particular home layout, and the
+  defaults are neutral. Title and welcome text moved from the card into *Customise portal*.
+- Waiting page refreshes with an HTTP `Refresh` header as well, so it works with your own
+  page.
+
+### Fixed
+- Panel dialogs: switching an option that reshapes a dialog (e.g. *Use my own page*) right
+  after typing in a text box now redraws the dialog.
+
 ## [0.14.0] - 2026-11-19
 
 ### Added

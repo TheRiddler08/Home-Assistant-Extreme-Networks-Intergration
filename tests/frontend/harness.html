@@ -55,7 +55,7 @@
   const planState = {
     plan: { networks: [], wifi: [], keys: [], devices: { router: null, router_trunks: ["br-lan"], switch_trunks: {}, aps: null } },
     errors: [], pending: false, applied_at: null, last_results: [], needs_apply: [], audit: [],
-    requests: [{ id: "021122334455", mac: "02:11:22:33:44:55", ip: "10.8.10.60", name: "Living room TV", kind: "tv", wants: "homeiso", time: 1, status: "pending", seen: new Date().toISOString() }],
+    requests: [{ id: "021122334455", mac: "02:11:22:33:44:55", ip: "10.8.10.60", name: "Living room TV", kind: "tv_or_streaming_box", kind_label: "TV or streaming box", wants: "homeiso", time: 1, status: "pending", seen: new Date().toISOString() }],
   };
   const fakeQr = '<svg viewBox="0 0 21 21"><rect width="21" height="21" fill="#fff"/><rect x="1" y="1" width="7" height="7" fill="#000"/><rect x="13" y="1" width="7" height="7" fill="#000"/><rect x="1" y="13" width="7" height="7" fill="#000"/></svg>';
   const planErrors = () => planState.plan.wifi.filter((w) => ["wpa2", "wpa2_wpa3", "wpa3"].includes(w.security) && !planSecrets[`wifi:${w.id}`]).map((w) => `${w.ssid}: needs a password`);
@@ -73,7 +73,10 @@
       ],
       wifi: [{ id: "homeiso", ssid: "homeISO", network: "iso", security: "ppsk", bands: ["2.4 GHz"], hidden: false, isolate: true, max_clients: null, enabled: true }],
       keys: [], devices: { router: null, router_trunks: ["br-lan"], switch_trunks: {}, aps: null },
-      onboarding: { enabled: false, wifi: null, offer: ["homeiso"], title: "Welcome", text: "Tell us what this device is." } } };
+      onboarding: { enabled: false, wifi: null, offer: ["homeiso"], ask_network: true, title: "Welcome", text: "Tell us what this device is.", button: "Ask for access",
+        waiting_text: "Thanks! Your request is waiting for approval.", approved_text: "{device} may now join {network} with this password:", declined_text: "Sorry, this request was declined.",
+        footer: "", kinds: ["Phone or tablet", "Computer", "TV or streaming box", "Speaker or smart-home device", "Something else"], logo: null,
+        colors: { accent: "#0a84c1", background: "#f4f6f8", text: "#1c1c1c", card: "#ffffff" }, use_custom: false, custom_html: "" } } };
     if (t === "save") {
       for (const [ref, value] of Object.entries(msg.secrets || {})) {
         if (value && value.length < 8) throw new Error("Wi-Fi key must be 8-63 printable ASCII characters without double quotes");
@@ -112,6 +115,16 @@
     if (t === "reveal") {
       if (!planSecrets[msg.ref]) throw new Error("No password or key stored for this");
       return { value: planSecrets[msg.ref], ssid: "x", qr: fakeQr };
+    }
+    if (t === "portal_template") return { template: "<!doctype html>\n<html><head><title>{{title}}</title><style>{{style}}</style></head><body><main>{{logo}}{{content}}{{footer}}</main></body></html>\n", placeholders: ["{{title}}", "{{style}}", "{{logo}}", "{{content}}", "{{footer}}"] };
+    if (t === "portal_preview") {
+      const o = msg.onboarding || {};
+      const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+      const body = { form: `<p>${esc(o.text)}</p><button style="background:${esc((o.colors || {}).accent)}">${esc(o.button)}</button>`, waiting: `<p>${esc(o.waiting_text)}</p>`,
+        approved: `<p>${esc(o.approved_text)}</p><div class="key">Kx7mPq2vR9tw</div>`, declined: `<p>${esc(o.declined_text)}</p>` }[msg.page] || "";
+      const content = `<h1>${esc(o.title)}</h1>${body}`;
+      const page = o.use_custom && o.custom_html ? o.custom_html.replace("{{content}}", content) : `<!doctype html><html><body><main>${content}<footer>${esc(o.footer)}</footer></main></body></html>`;
+      return { html: page };
     }
     if (t === "onboard_approve" || t === "onboard_decline") {
       const req = planState.requests.find((r) => r.id === msg.request_id && r.status === "pending");

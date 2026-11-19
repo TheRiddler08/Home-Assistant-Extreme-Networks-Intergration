@@ -273,3 +273,12 @@ async def test_onboarding_portal(hass: HomeAssistant, hass_ws_client, ow_entry: 
     reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/reveal", "ref": f"key:{manager.plan['keys'][0]['id']}"})
     assert reply["result"]["ssid"] == "home" and reply["result"]["qr"].startswith("<svg")
     assert [a["action"] for a in manager.audit][-2:] == ["onboarding_approved", "onboarding_declined"]
+
+
+async def test_portal_preview_and_template(hass: HomeAssistant, hass_ws_client, entry: MockConfigEntry) -> None:  # noqa: F811
+    reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/portal_template"})
+    assert "{{content}}" in reply["result"]["template"] and "{{logo}}" in reply["result"]["placeholders"]
+    reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/portal_preview", "page": "approved",
+                                             "onboarding": {"title": "Acme", "colors": {"accent": "#ff6600"}}})
+    page = reply["result"]["html"]
+    assert "<h1>Acme</h1>" in page and "--accent:#ff6600" in page and "<svg" in page and "Kx7mPq2vR9tw" in page

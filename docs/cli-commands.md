@@ -127,7 +127,8 @@ See [Network setup](network-setup.md#what-each-device-does).
 All 🧪. Put on the router with the setup: the portal script written with `printf … >>`
 (one line per command) to `/www/hn-portal/cgi-bin/portal`, a `uhttpd.hn_portal` instance,
 `uci commit uhttpd`, `/etc/init.d/uhttpd reload`, and firewall `hn_portal<VLAN>_in` (rule) and
-`hn_portal<VLAN>_dnat` (redirect). Requests are read with
+`hn_portal<VLAN>_dnat` (redirect). Your texts, logo, colours and own page are built into the
+portal script. Requests are read with
 `for f in /tmp/hn_portal/req/*; do … cat "$f"; done`; approve and decline write
 `/tmp/hn_portal/ok/<mac>.html` / `.tok` or `/tmp/hn_portal/no/<mac>`.
 

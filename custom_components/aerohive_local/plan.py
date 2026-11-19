@@ -404,9 +404,7 @@ class PlanManager:
         if "HN_UHTTPD_OK" not in check:
             raise HomeAssistantError("the router's web server (uhttpd) isn't installed: opkg install uhttpd")
         onboarding = plan["onboarding"]
-        lines = portal.install_lines(
-            address=address, title=onboarding.get("title") or "Welcome", text=onboarding.get("text") or "", offer=self._portal_offer(plan)
-        )
+        lines = portal.install_lines(address=address, look=portal.look_from(onboarding), offer=self._portal_offer(plan))
         await coordinator.async_run_router_lines([*lines, portal.UHTTPD_RELOAD])
 
     def _portal_on(self) -> bool:
@@ -456,7 +454,7 @@ class PlanManager:
             await self._async_save()
 
     def _announce(self, item: dict[str, Any]) -> None:
-        kind = portal.KINDS.get(item["kind"], item["kind"])
+        kind = self.kind_label(item["kind"])
         wants = next((w["ssid"] for w in self.plan["wifi"] if w["id"] == item.get("wants")), None)
         persistent_notification.async_create(
             self.hass,
@@ -470,6 +468,17 @@ class PlanManager:
             EVENT_ONBOARDING, {k: item.get(k) for k in ("id", "name", "kind", "mac", "ip", "wants")}
         )
         self._log("onboarding_request", f"{item['name']} ({kind})")
+
+    def kind_label(self, kind_id: str) -> str:
+        return dict(portal.kind_choices(self.plan["onboarding"].get("kinds"))).get(kind_id, kind_id)
+
+    def portal_preview(self, settings: dict[str, Any], page: str) -> str:
+        """The portal page as a device would see it, from (unsaved) onboarding settings."""
+        merged = netplan.normalize({**self.plan, "onboarding": {**self.plan["onboarding"], **settings}})
+        look = portal.look_from(merged["onboarding"])
+        offer = self._portal_offer(merged) or [("example", "Example Wi-Fi")]
+        svg = qr.svg(qr.wifi_payload(offer[0][1], "Kx7mPq2vR9tw", "wpa2")) if page == "approved" else None
+        return portal.preview(look, offer, page, qr_svg=svg)
 
     def _pending_request(self, request_id: str) -> dict[str, Any]:
         item = self.requests.get(request_id)
@@ -499,7 +508,7 @@ class PlanManager:
         target = next(w for w in self.plan["wifi"] if w["id"] == wifi)
         svg = qr.svg(qr.wifi_payload(target["ssid"], value, target["security"], bool(target.get("hidden"))))
         page = portal.approved_page(
-            title=self.plan["onboarding"].get("title") or "Welcome",
+            look=portal.look_from(self.plan["onboarding"]),
             name=item["name"],
             ssid=target["ssid"],
             key=value,
@@ -686,7 +695,7 @@ class PlanManager:
                 "error": self.portal_error,
             },
             "requests": sorted(
-                ({k: v for k, v in r.items() if k != "token"} for r in self.requests.values()),
+                ({**{k: v for k, v in r.items() if k != "token"}, "kind_label": self.kind_label(r["kind"])} for r in self.requests.values()),
                 key=lambda r: r["seen"],
                 reverse=True,
             ),

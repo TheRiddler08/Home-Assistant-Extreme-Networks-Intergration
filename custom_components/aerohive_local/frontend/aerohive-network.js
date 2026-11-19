@@ -844,12 +844,14 @@ class AerohiveBase extends HTMLElement {
   /* Rendering keeps an input that has focus (e.g. renaming a port) intact. */
   _dialogHasFocus() {
     const active = this.shadowRoot.activeElement;
-    return Boolean(active && active.closest && active.closest(".dialog") && active.matches("input[type=text], input[type=password], input[type=number]"));
+    return Boolean(active && active.closest && active.closest(".dialog") && active.matches("input[type=text], input[type=password], input[type=number], textarea"));
   }
 
   _renderDialogInto(host) {
     if (!host) return;
-    if (this._dialogHasFocus()) return;
+    const force = this._forceDialog;
+    this._forceDialog = false;
+    if (!force && this._dialogHasFocus()) return;
     // Keep keyboard focus on the same control across re-renders.
     const active = this.shadowRoot.activeElement;
     let keep = null;
@@ -1395,7 +1397,10 @@ class AerohiveBase extends HTMLElement {
   _onChange(ev) {
     const target = ev.target;
     if (this._captureField(target)) {
-      if (target.dataset.rerender !== undefined) this._render();
+      if (target.dataset.rerender !== undefined) {
+        this._forceDialog = true; // the user changed a control that reshapes the dialog: redraw even if a text field has focus
+        this._render();
+      }
       return;
     }
     if (target.dataset.wifiToggle !== undefined) {
@@ -1715,6 +1720,21 @@ tbody tr.click:hover { background: color-mix(in srgb, var(--ah-accent) 6%, trans
 .chip.bad { color: var(--ah-err); }
 .activity { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
 .qr-box { display: flex; justify-content: center; margin: 14px 0 4px; }
+.portal-dialog { width: min(1040px, 100%); }
+.portal-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 380px); gap: 20px; align-items: start; }
+.portal-settings h3 { margin: 18px 0 0; font-size: 14px; font-weight: 600; }
+.portal-settings h3:first-child { margin-top: 0; }
+.portal-preview-col { position: sticky; top: 0; }
+.portal-preview { width: 100%; height: 560px; border: 1px solid var(--ah-line); border-radius: 12px; background: #fff; }
+.dialog textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--ah-line); background: var(--ah-bg); color: var(--ah-text); font: inherit; resize: vertical; }
+.dialog textarea#pt-html { font-family: var(--code-font-family, ui-monospace, Menlo, monospace); font-size: 12px; }
+.colors { display: flex; flex-wrap: wrap; gap: 10px 18px; }
+.color-pick { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }
+.color-pick input { width: 36px; height: 28px; padding: 0; border: 1px solid var(--ah-line); border-radius: 6px; background: none; }
+.logo-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.logo-thumb { max-height: 40px; max-width: 120px; border-radius: 6px; background: #fff; padding: 2px; }
+.file-btn { position: relative; overflow: hidden; }
+.file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .qr-box svg { width: min(220px, 70vw); height: auto; border-radius: 8px; }
 .err-text { color: var(--ah-err); }
 @media (max-width: 900px) {
@@ -1730,6 +1750,8 @@ tbody tr.click:hover { background: color-mix(in srgb, var(--ah-accent) 6%, trans
   .hide-sm { display: none; }
   .port { width: 26px; height: 22px; }
   .two, .three { grid-template-columns: minmax(0, 1fr); }
+  .portal-grid { grid-template-columns: minmax(0, 1fr); }
+  .portal-preview { height: 460px; }
 }
 `;
 
@@ -2190,7 +2212,24 @@ class AerohiveNetworkPanel extends AerohiveBase {
       this._planInput(target);
       return;
     }
+    if (target.dataset && target.dataset.logo !== undefined && this._dialog && this._dialog.type === "plan-portal") {
+      const file = target.files && target.files[0];
+      if (!file) return;
+      if (file.size > 70 * 1024) return this._toast("The logo can be up to 70 KB", true);
+      const reader = new FileReader();
+      reader.onload = () => {
+        this._portalForm(this._dialog).logo = String(reader.result);
+        this._render();
+        this._portalPreview();
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
     super._onChange(ev);
+    if (this._dialog && this._dialog.type === "plan-portal" && target.dataset && target.dataset.field) {
+      clearTimeout(this._previewTimer);
+      this._previewTimer = setTimeout(() => this._portalPreview(), 250);
+    }
   }
 
   _onData(data) {
@@ -2455,7 +2494,6 @@ const SetupMixin = {
     const waiting = (st.requests || []).filter((r) => r.status === "pending");
     const decided = (st.requests || []).filter((r) => r.status !== "pending").slice(0, 5);
     const ssid = (id) => (plan.wifi.find((w) => w.id === id) || {}).ssid || "";
-    const kinds = { phone: "Phone or tablet", computer: "Computer", tv: "TV or streaming box", speaker: "Speaker or smart-home device", other: "Something else" };
     const status = portal.on
       ? `Running on the router at <span class="mono">${esc(portal.url)}</span>${portal.error ? ` · <span class="err-text">${esc(portal.error)}</span>` : ""}`
       : ob.enabled ? "Turned on: press Review &amp; apply to put it on the router." : "Off";
@@ -2464,7 +2502,7 @@ const SetupMixin = {
       <p class="muted" style="margin:0 0 6px;font-size:13px">New devices join the onboarding Wi-Fi, open any web page and ask for access. You approve them here, and the portal shows the device its own password and QR code. Onboarding devices only talk to the router, never to Home Assistant.</p>
       <p class="muted" style="margin:0 0 4px;font-size:13px">${status}</p>
       ${waiting.length ? `<div class="table-wrap"><table><thead><tr><th>Device</th><th>Asks for</th><th></th></tr></thead><tbody>${waiting
-        .map((r) => `<tr><td><strong>${esc(r.name)}</strong><br><span class="muted">${esc(kinds[r.kind] || r.kind)} · <span class="mono">${esc(r.mac)}</span></span></td>
+        .map((r) => `<tr><td><strong>${esc(r.name)}</strong><br><span class="muted">${esc(r.kind_label || r.kind)} · <span class="mono">${esc(r.mac)}</span></span></td>
           <td>${esc(ssid(r.wants) || "Any")}</td>
           <td class="num"><span class="row-actions"><button class="btn small primary" data-action="plan-ob-approve" data-request="${esc(r.id)}">${icon("check")}Approve</button>
             <button class="btn small danger" data-action="plan-ob-decline" data-request="${esc(r.id)}">${icon("close")}Decline</button></span></td></tr>`)
@@ -2477,11 +2515,91 @@ const SetupMixin = {
       <div class="form-row"><span class="section-title">Devices may ask for</span>${ppsk.length ? `<div class="checks">${ppsk
         .map((w) => `<label><input type="checkbox" data-plan="ob_offer" data-wifi="${esc(w.id)}" ${(ob.offer || []).includes(w.id) ? "checked" : ""}>${esc(w.ssid)}</label>`)
         .join("")}</div>` : '<div class="hint">Add a Wi-Fi network with per-device keys first.</div>'}</div>
-      <div class="form-row"><label class="section-title" for="ob-title">Portal title</label>
-        <div class="field"><input type="text" id="ob-title" data-plan="ob_title" maxlength="60" value="${esc(ob.title || "")}"></div></div>
-      <div class="form-row"><label class="section-title" for="ob-text">Welcome text</label>
-        <div class="field"><input type="text" id="ob-text" data-plan="ob_text" maxlength="400" value="${esc(ob.text || "")}"></div></div>
+      <div class="form-row"><span class="section-title">Look and text</span>
+        <div class="muted" style="font-size:13px;margin-bottom:8px">${esc(ob.title || "Welcome")} · ${ob.use_custom ? "your own page" : "standard page"}${ob.logo ? " · logo" : ""}</div>
+        <button class="btn" data-action="plan-portal-edit">${icon("edit")}Customise portal</button></div>
     </div>`;
+  },
+
+  _portalForm(d) {
+    if (!d.form) {
+      const ob = this._setupState().draft.onboarding || {};
+      const colors = ob.colors || {};
+      d.form = {
+        title: ob.title ?? "Welcome", text: ob.text ?? "", button: ob.button ?? "Ask for access",
+        waiting_text: ob.waiting_text ?? "", approved_text: ob.approved_text ?? "", declined_text: ob.declined_text ?? "", footer: ob.footer ?? "",
+        kinds: (ob.kinds || []).join("\n"), ask_network: ob.ask_network !== false, logo: ob.logo || null,
+        color_accent: colors.accent || "#0a84c1", color_background: colors.background || "#f4f6f8", color_text: colors.text || "#1c1c1c", color_card: colors.card || "#ffffff",
+        use_custom: Boolean(ob.use_custom), custom_html: ob.custom_html || "",
+      };
+    }
+    return d.form;
+  },
+
+  _portalSettings(f) {
+    return {
+      title: f.title, text: f.text, button: f.button, waiting_text: f.waiting_text, approved_text: f.approved_text,
+      declined_text: f.declined_text, footer: f.footer,
+      kinds: String(f.kinds || "").split("\n").map((k) => k.trim()).filter(Boolean),
+      ask_network: Boolean(f.ask_network), logo: f.logo || null,
+      colors: { accent: f.color_accent, background: f.color_background, text: f.color_text, card: f.color_card },
+      use_custom: Boolean(f.use_custom), custom_html: f.custom_html || "",
+    };
+  },
+
+  async _portalPreview() {
+    const d = this._dialog;
+    if (!d || d.type !== "plan-portal") return;
+    const r = await this._setupWs({ type: `${DOMAIN}/plan/portal_preview`, onboarding: this._portalSettings(this._portalForm(d)), page: d.page || "form" });
+    if (!r || this._dialog !== d) return;
+    d.previewHtml = r.html;
+    const frame = this.shadowRoot.querySelector("iframe.portal-preview");
+    if (frame) frame.srcdoc = r.html; // in place: doesn't disturb a field being typed in
+    else this._render();
+  },
+
+  _planPortalDialog(d) {
+    const f = this._portalForm(d);
+    const area = (id, label, field, rows, hint = "") => `<div class="form-row"><label class="section-title" for="${id}">${esc(label)}</label>
+      <textarea id="${id}" data-field="${field}" rows="${rows}" spellcheck="true">${esc(f[field] ?? "")}</textarea>${hint ? `<div class="hint">${hint}</div>` : ""}</div>`;
+    const color = (key, label) => `<label class="color-pick"><input type="color" data-field="color_${key}" value="${esc(f[`color_${key}`])}"><span>${esc(label)}</span></label>`;
+    const pages = [["form", "Ask"], ["waiting", "Waiting"], ["approved", "Approved"], ["declined", "Declined"]];
+    return `<div class="dialog portal-dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+      ${this._dlgHead("Customise the portal", "What new devices see on the onboarding Wi-Fi")}
+      <div class="portal-grid">
+        <div class="portal-settings">
+          <h3>Text</h3>
+          ${this._textRow("pt-title", "Title", "title", f.title, {})}
+          ${area("pt-text", "Welcome text", "text", 2)}
+          ${this._textRow("pt-button", "Button", "button", f.button, {})}
+          ${area("pt-waiting", "While waiting", "waiting_text", 2)}
+          ${area("pt-approved", "When approved", "approved_text", 2, "<span class=\"mono\">{device}</span> and <span class=\"mono\">{network}</span> are filled in. The password and QR code follow.")}
+          ${area("pt-declined", "When declined", "declined_text", 2)}
+          ${area("pt-footer", "Footer", "footer", 2, "E.g. house rules or who to ask. Shown on every page.")}
+          <h3>Look</h3>
+          <div class="form-row"><span class="section-title">Logo</span>
+            <div class="logo-row">${f.logo ? `<img src="${esc(f.logo)}" alt="Logo" class="logo-thumb"><button class="btn small" data-action="plan-portal-logo-remove">${icon("trash")}Remove</button>` : '<span class="muted">None</span>'}
+              <label class="btn small file-btn">${icon("plus")}${f.logo ? "Replace" : "Choose image"}<input type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" data-logo></label></div>
+            <div class="hint">PNG, JPEG, GIF, WebP or SVG, up to 70 KB. It's built into the page (the onboarding network has no internet).</div></div>
+          <div class="form-row"><span class="section-title">Colours</span><div class="colors">
+            ${color("accent", "Button")}${color("background", "Background")}${color("text", "Text")}${color("card", "Fields")}</div></div>
+          <h3>Questions</h3>
+          ${area("pt-kinds", "Kinds of device (one per line)", "kinds", 4, "Up to 12. The last one is used when a device picks none.")}
+          ${this._toggleRow("ask_network", "Let devices choose the network (from the ones offered)", f.ask_network)}
+          <h3>Your own page</h3>
+          ${this._toggleRow("use_custom", "Use my own page (HTML)", f.use_custom, true)}
+          ${f.use_custom ? `${area("pt-html", "Page", "custom_html", 12, "Put <span class=\"mono\">{{content}}</span> where the form, waiting message or password go (required, once). Optional: <span class=\"mono\">{{title}}</span>, <span class=\"mono\">{{style}}</span> (the colours above), <span class=\"mono\">{{logo}}</span>, <span class=\"mono\">{{footer}}</span>. Everything must be inside the page: the onboarding network has no internet.")}
+            <button class="btn small" data-action="plan-portal-default">${icon("restore")}Start from the standard page</button>` : ""}
+        </div>
+        <div class="portal-preview-col">
+          <div class="filters" role="tablist">${pages.map(([k, label]) => `<button class="filter" role="tab" data-action="plan-portal-page" data-page="${k}" aria-pressed="${(d.page || "form") === k}">${label}</button>`).join("")}
+            <button class="filter" data-action="plan-portal-refresh" title="Update the preview">${icon("reboot")}</button></div>
+          <iframe class="portal-preview" sandbox="" title="Portal preview" srcdoc="${esc(d.previewHtml || "<p style='font-family:sans-serif;color:#888'>Loading preview…</p>")}"></iframe>
+          <div class="hint">The preview updates when you leave a field.</div>
+        </div>
+      </div>
+      <div class="dlg-actions"><button class="btn" data-action="close">Cancel</button>
+        <button class="btn primary" data-action="plan-portal-done">${icon("check")}Done</button></div></div>`;
   },
 
   _planApproveDialog(d) {
@@ -2591,6 +2709,7 @@ const SetupMixin = {
     if (d.type === "plan-key-show") return this._planKeyShowDialog(d);
     if (d.type === "plan-apply") return this._planApplyDialog(d);
     if (d.type === "plan-approve") return this._planApproveDialog(d);
+    if (d.type === "plan-portal") return this._planPortalDialog(d);
     return "";
   },
 
@@ -2932,6 +3051,41 @@ const SetupMixin = {
           this._dialog = { type: "plan-key-show", name: wifi.ssid, ssid: wifi.ssid, value: r.value, qr: r.qr, wifiOnly: true, focus: '.dialog [data-action="close"]' };
           this._render();
         });
+        break;
+      }
+      case "plan-portal-edit":
+        this._openDialog({ type: "plan-portal", page: "form" });
+        this._portalPreview();
+        break;
+      case "plan-portal-page":
+        d.page = el.dataset.page;
+        this._render();
+        this._portalPreview();
+        break;
+      case "plan-portal-refresh":
+        this._portalPreview();
+        break;
+      case "plan-portal-logo-remove":
+        this._portalForm(d).logo = null;
+        this._render();
+        this._portalPreview();
+        break;
+      case "plan-portal-default":
+        this._setupWs({ type: `${DOMAIN}/plan/portal_template` }).then((r) => {
+          if (!r || this._dialog !== d) return;
+          this._portalForm(d).custom_html = r.template;
+          this._render();
+          this._portalPreview();
+        });
+        break;
+      case "plan-portal-done": {
+        const f = this._portalForm(d);
+        const settings = this._portalSettings(f);
+        if (settings.use_custom && (settings.custom_html.match(/\{\{content\}\}/g) || []).length !== 1) return this._toast("Your own page needs {{content}} exactly once", true);
+        if (settings.kinds.length > 12) return this._toast("Up to 12 kinds of device", true);
+        plan.onboarding = { ...(plan.onboarding || {}), ...settings };
+        this._dialog = null;
+        this._setupDirty();
         break;
       }
       case "plan-ob-approve":

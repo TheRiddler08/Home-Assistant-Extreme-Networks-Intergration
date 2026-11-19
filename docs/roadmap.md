@@ -43,6 +43,8 @@ every AP (`clear auth roaming-cache mac <mac> hive-neighbors`).
 
 ## Done
 
+- 0.15.0: the onboarding portal is fully customisable: texts, logo, colours, device kinds,
+  whether devices choose the network, or your own HTML page; live preview.
 - 0.14.0: QR codes for keys and Wi-Fi passwords; onboarding portal phase 1 (served by the
   router, requests approved in Home Assistant, the device shown its key and QR code).
 - 0.13.0: network setup (networks, access grid, Wi-Fi, per-device keys, review & apply with

@@ -33,7 +33,6 @@ WWW = "/www/hn-portal"
 CGI = f"{WWW}/cgi-bin/portal"
 ARP = "/proc/net/arp"
 MARK = "ERROR: OpenWrt did not accept the change"
-KINDS = {"phone": "Phone or tablet", "computer": "Computer", "tv": "TV or streaming box", "speaker": "Speaker or smart-home device", "other": "Something else"}
 MAX_PENDING = 20
 _ID_RE = re.compile(r"^[0-9a-f]{12}$")
 _MAC_RE = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
@@ -42,19 +41,229 @@ _SAFE_RE = re.compile(r"[^A-Za-z0-9 ._-]")
 
 LIST_REQUESTS = f'for f in {TMP}/req/*; do [ -f "$f" ] && {{ echo "== ${{f##*/}}"; cat "$f"; }}; done; true'
 
-CSS = (
-    "body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f4f6f8;color:#1c1c1c}"
-    "main{max-width:420px;margin:0 auto;padding:28px 18px}h1{font-size:22px;font-weight:600;margin:0 0 10px}"
-    "p{line-height:1.45}label{display:block;font-weight:600;margin:16px 0 6px}"
-    "input,select{width:100%;box-sizing:border-box;height:44px;padding:0 12px;border:1px solid #c8ced6;border-radius:10px;font:inherit;background:#fff}"
-    "button{margin-top:22px;width:100%;height:46px;border:0;border-radius:23px;background:#0a84c1;color:#fff;font:inherit;font-weight:600}"
-    ".key{font:600 24px ui-monospace,Menlo,monospace;letter-spacing:1px;background:#fff;border-radius:12px;padding:14px;text-align:center;word-break:break-all}"
-    ".qr{text-align:center;margin:16px 0}.qr svg{width:min(240px,80vw);height:auto}.muted{color:#5e6875;font-size:14px}"
-)
+DEFAULT_KINDS = ["Phone or tablet", "Computer", "TV or streaming box", "Speaker or smart-home device", "Something else"]
+THEME_DEFAULTS = {"accent": "#0a84c1", "background": "#f4f6f8", "text": "#1c1c1c", "card": "#ffffff"}
+TEXT_DEFAULTS = {
+    "title": "Welcome",
+    "text": "Tell us what this device is, and it gets its own Wi-Fi password once approved.",
+    "button": "Ask for access",
+    "waiting_text": "Thanks! Your request is waiting for approval.",
+    "approved_text": "{device} may now join {network} with this password:",
+    "declined_text": "Sorry, this request was declined.",
+    "footer": "",
+}
+MAX_TEMPLATE = 30_000
+MAX_LOGO = 96_000
+LOGO_RE = re.compile(r"^data:image/(png|jpeg|gif|webp|svg\+xml);base64,[A-Za-z0-9+/]+=*$")
+COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+PLACEHOLDERS = ("{{title}}", "{{style}}", "{{logo}}", "{{content}}", "{{footer}}")
+
+# Your own page starts from this. {{content}} (required) becomes the form, the
+# waiting message, or the password and QR code; the others are optional.
+DEFAULT_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{title}}</title>
+<style>{{style}}</style>
+</head>
+<body>
+<main>
+{{logo}}
+{{content}}
+{{footer}}
+</main>
+</body>
+</html>
+"""
 
 
 def _clean(value: str | None, limit: int = 40) -> str:
     return _SAFE_RE.sub("", value or "")[:limit].strip()
+
+
+def _slug(label: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")[:16]
+
+
+@dataclass
+class Look:
+    """How the portal looks and what it says (from the setup's onboarding settings)."""
+
+    title: str
+    text: str
+    button: str
+    waiting_text: str
+    approved_text: str
+    declined_text: str
+    footer: str
+    logo: str | None
+    colors: dict[str, str]
+    kinds: list[tuple[str, str]]  # (id, label)
+    ask_network: bool
+    template: str  # the page around {{content}}
+
+
+def kind_choices(labels: list[str] | None) -> list[tuple[str, str]]:
+    """Device kinds as (id, label); ids are made from the labels (unique, safe in the script)."""
+    result: list[tuple[str, str]] = []
+    for label in [str(x).strip()[:40] for x in labels or [] if str(x).strip()] or DEFAULT_KINDS:
+        base = _slug(label) or "kind"
+        kid, n = base, 2
+        while kid in {k for k, _ in result}:
+            kid, n = f"{base[:13]}_{n}", n + 1
+        result.append((kid, label))
+    return result[:12]
+
+
+def look_from(settings: dict[str, Any]) -> Look:
+    def text(key: str) -> str:
+        value = settings.get(key)
+        return TEXT_DEFAULTS[key] if value is None else str(value)
+
+    raw = settings.get("colors") if isinstance(settings.get("colors"), dict) else {}
+    colors = {k: str(raw[k]) if COLOR_RE.match(str(raw.get(k) or "")) else default for k, default in THEME_DEFAULTS.items()}
+    logo = settings.get("logo")
+    template = settings.get("custom_html") if settings.get("use_custom") and settings.get("custom_html") else DEFAULT_TEMPLATE
+    return Look(
+        title=text("title").replace("\n", " ").strip() or "Welcome",
+        text=text("text"),
+        button=text("button").strip() or TEXT_DEFAULTS["button"],
+        waiting_text=text("waiting_text"),
+        approved_text=text("approved_text"),
+        declined_text=text("declined_text"),
+        footer=text("footer"),
+        logo=logo if isinstance(logo, str) and LOGO_RE.match(logo) and len(logo) <= MAX_LOGO else None,
+        colors=colors,
+        kinds=kind_choices(settings.get("kinds")),
+        ask_network=settings.get("ask_network", True) is not False,
+        template=str(template),
+    )
+
+
+def validate_look(settings: dict[str, Any]) -> list[str]:
+    """Problems with the portal's look settings (empty: fine)."""
+    errors = []
+    for key, limit in (("title", 60), ("text", 400), ("button", 40), ("waiting_text", 300), ("approved_text", 300), ("declined_text", 300), ("footer", 400)):
+        if len(str(settings.get(key) or "")) > limit:
+            errors.append(f"Onboarding portal: the {key.replace('_', ' ')} can have {limit} characters")
+    logo = settings.get("logo")
+    if logo and (not isinstance(logo, str) or not LOGO_RE.match(logo)):
+        errors.append("Onboarding portal: the logo must be a PNG, JPEG, GIF, WebP or SVG image")
+    elif logo and len(logo) > MAX_LOGO:
+        errors.append("Onboarding portal: the logo is too big (about 70 KB at most)")
+    colors = settings.get("colors") or {}
+    if not isinstance(colors, dict) or any(v and not COLOR_RE.match(str(v)) for v in colors.values()):
+        errors.append("Onboarding portal: colours must look like #0a84c1")
+    kinds = settings.get("kinds")
+    if kinds is not None and (not isinstance(kinds, list) or len(kinds) > 12 or any(len(str(k)) > 40 for k in kinds)):
+        errors.append("Onboarding portal: up to 12 device kinds of 40 characters each")
+    if settings.get("use_custom"):
+        page = str(settings.get("custom_html") or "")
+        if page.count("{{content}}") != 1:
+            errors.append("Onboarding portal: your own page needs {{content}} exactly once")
+        if len(page) > MAX_TEMPLATE:
+            errors.append("Onboarding portal: your own page can have 30,000 characters")
+    return errors
+
+
+def css(look: Look) -> str:
+    c = look.colors
+    return (
+        f":root{{--accent:{c['accent']};--bg:{c['background']};--text:{c['text']};--card:{c['card']}}}"
+        "body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text)}"
+        "main{max-width:420px;margin:0 auto;padding:28px 18px}h1{font-size:22px;font-weight:600;margin:0 0 10px}"
+        "p{line-height:1.45}label{display:block;font-weight:600;margin:16px 0 6px}"
+        "input,select{width:100%;box-sizing:border-box;height:44px;padding:0 12px;border:1px solid rgba(127,127,127,.45);border-radius:10px;font:inherit;background:var(--card);color:inherit}"
+        "button{margin-top:22px;width:100%;height:46px;border:0;border-radius:23px;background:var(--accent);color:#fff;font:inherit;font-weight:600}"
+        ".key{font:600 24px ui-monospace,Menlo,monospace;letter-spacing:1px;background:var(--card);border-radius:12px;padding:14px;text-align:center;word-break:break-all}"
+        ".qr{text-align:center;margin:16px 0}.qr svg{width:min(240px,80vw);height:auto;border-radius:8px}"
+        ".muted{opacity:.72;font-size:14px}.logo{display:block;max-width:180px;max-height:80px;margin:0 0 18px}"
+        ".footer{margin-top:28px;font-size:13px;opacity:.7}"
+    )
+
+
+def _para(text: str) -> str:
+    return html.escape(text.strip()).replace("\r", "").replace("\n", "<br>")
+
+
+def frame(look: Look) -> tuple[str, str]:
+    """The page before and after {{content}}."""
+    logo = f'<img class="logo" src="{look.logo}" alt="">' if look.logo else ""
+    footer = f'<div class="footer">{_para(look.footer)}</div>' if look.footer.strip() else ""
+    page = (
+        look.template.replace("{{title}}", html.escape(look.title))
+        .replace("{{style}}", css(look))
+        .replace("{{logo}}", logo)
+        .replace("{{footer}}", footer)
+    )
+    top, sep, bottom = page.partition("{{content}}")
+    if not sep:  # not validated: fall back to the default page
+        return frame(Look(**{**look.__dict__, "template": DEFAULT_TEMPLATE}))
+    return top, bottom
+
+
+def _h1(look: Look) -> str:
+    return f"<h1>{html.escape(look.title)}</h1>"
+
+
+def form_html(look: Look, offer: list[tuple[str, str]]) -> str:
+    kinds = "".join(f'<option value="{k}">{html.escape(v)}</option>' for k, v in look.kinds)
+    options = "".join(f'<option value="{html.escape(i)}">{html.escape(label)}</option>' for i, label in offer)
+    text = _para(look.text)
+    return (
+        _h1(look) + (f"<p>{text}</p>" if text else "")
+        + '<form method="post" action="/cgi-bin/portal">'
+        + '<label for="name">Name for this device</label><input id="name" name="name" maxlength="40" required placeholder="e.g. Living room TV">'
+        + f'<label for="kind">What is it?</label><select id="kind" name="kind">{kinds}</select>'
+        + (f'<label for="wants">Which network?</label><select id="wants" name="wants">{options}</select>' if options and look.ask_network else "")
+        + f'<button type="submit">{html.escape(look.button)}</button></form>'
+    )
+
+
+def waiting_html(look: Look) -> str:
+    return (
+        '<meta http-equiv="refresh" content="5">' + _h1(look) + f"<p>{_para(look.waiting_text)}</p>"
+        + '<p class="muted">Keep this page open: it updates by itself.</p>'
+    )
+
+
+def declined_html(look: Look) -> str:
+    return _h1(look) + f"<p>{_para(look.declined_text)}</p>"
+
+
+def unknown_html(look: Look) -> str:
+    return _h1(look) + "<p>Your device couldn't be recognised. Turn Wi-Fi off and on, then open this page again.</p>"
+
+
+def other_browser_html(look: Look) -> str:
+    return _h1(look) + "<p>Your request was approved. Open this page in the browser you used to ask, to see the details.</p>"
+
+
+def approved_page(*, look: Look, name: str, ssid: str, key: str, qr_svg: str | None, expires_text: str | None) -> str:
+    """What the portal shows the approved device (written to the router by Home Assistant)."""
+    intro = _para(look.approved_text).replace("{device}", html.escape(name)).replace("{network}", f"<strong>{html.escape(ssid)}</strong>")
+    parts = [_h1(look), f"<p>{intro}</p>", f'<div class="key">{html.escape(key)}</div>']
+    if qr_svg:
+        parts.append(f'<div class="qr">{qr_svg}</div><p class="muted">Or scan this code with the device\'s camera.</p>')
+    if expires_text:
+        parts.append(f'<p class="muted">{html.escape(expires_text)}</p>')
+    parts.append('<p class="muted">Then forget this onboarding network on the device.</p>')
+    return "".join(parts).replace("\n", " ")
+
+
+def preview(look: Look, offer: list[tuple[str, str]], page: str, *, qr_svg: str | None = None) -> str:
+    """A whole page as a device would see it (for the panel's preview)."""
+    top, bottom = frame(look)
+    body = {
+        "form": lambda: form_html(look, offer),
+        "waiting": lambda: waiting_html(look).replace('<meta http-equiv="refresh" content="5">', ""),
+        "declined": lambda: declined_html(look),
+        "approved": lambda: approved_page(look=look, name="Living room TV", ssid=offer[0][1] if offer else "home",
+                                          key="Kx7mPq2vR9tw", qr_svg=qr_svg, expires_text=None),
+    }.get(page, lambda: form_html(look, offer))()
+    return top + body + bottom
 
 
 # --------------------------------------------------------------------------
@@ -62,27 +271,30 @@ def _clean(value: str | None, limit: int = 40) -> str:
 # --------------------------------------------------------------------------
 
 
-def cgi_script(*, title: str, text: str, offer: list[tuple[str, str]]) -> str:
+def cgi_script(look: Look, offer: list[tuple[str, str]]) -> str:
     """The portal script (busybox ash). ``offer``: [(wifi id, label)] devices may ask for.
 
-    Everything that comes from the setup is HTML-escaped here; everything that
-    comes from a device is reduced to letters, digits, space, '.', '_' and '-'
-    by the script before it's stored.
+    Everything that comes from the setup is HTML-escaped here (your own page is
+    used as you wrote it); everything that comes from a device is reduced to
+    letters, digits, space, '.', '_' and '-' by the script before it's stored.
     """
-    title_h = html.escape(title.replace("\n", " ").strip() or "Welcome")
-    text_h = html.escape(text.strip()).replace("\r", "").replace("\n", "<br>")
-    offer_ids = " ".join(i for i, _ in offer if re.match(r"^[a-z][a-z0-9_]{0,15}$", i))
-    options = "".join(f'<option value="{html.escape(i)}">{html.escape(label)}</option>' for i, label in offer)
-    kinds = "".join(f'<option value="{k}">{html.escape(v)}</option>' for k, v in KINDS.items())
-    kind_ids = "|".join(KINDS)
+    offer_ids = " ".join(i for i, _ in offer if re.match(r"^[a-z][a-z0-9_]{0,15}$", i)) if look.ask_network else ""
+    kind_ids = "|".join(k for k, _ in look.kinds)
+    fallback_kind = look.kinds[-1][0]
+    top, bottom = frame(look)
+
+    def body(content: str) -> list[str]:
+        # Contents are single lines, so the here-document can't be ended early.
+        return ["  page <<'HNEOF'", content.replace("\n", " "), "HNEOF"]
+
     lines = [
         "#!/bin/sh",
         "# Onboarding portal, written by Home Assistant (aerohive_local). Replaced on every apply.",
         f"D={TMP}",
-        f"TITLE={shlex.quote(title_h)}",
-        f"CSS={shlex.quote(CSS)}",
+        f"TOP={shlex.quote(top)}",
+        f"BOTTOM={shlex.quote(bottom)}",
         f"OFFER={shlex.quote(offer_ids)}",
-        "HEAD=; EXTRA=",
+        "EXTRA=; REFRESH=",
         "umask 077",
         'mkdir -p "$D/req" "$D/ok" "$D/no"',
         f"mac=$(awk -v ip=\"$REMOTE_ADDR\" '$1 == ip {{ print tolower($4) }}' {ARP} | head -n 1)",
@@ -93,27 +305,22 @@ def cgi_script(*, title: str, text: str, offer: list[tuple[str, str]]) -> str:
         "page() {",
         "  printf 'Content-Type: text/html; charset=utf-8\\r\\nCache-Control: no-store\\r\\n'",
         "  [ -n \"$EXTRA\" ] && printf '%s\\r\\n' \"$EXTRA\"",
-        "  printf '\\r\\n<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">%s<title>%s</title><style>%s</style></head><body><main>' \"$HEAD\" \"$TITLE\" \"$CSS\"",
+        "  [ -n \"$REFRESH\" ] && printf 'Refresh: %s\\r\\n' \"$REFRESH\"",
+        "  printf '\\r\\n%s' \"$TOP\"",
         "  cat",
-        "  printf '</main></body></html>\\n'",
+        "  printf '%s' \"$BOTTOM\"",
         "}",
         'if [ -z "$id" ]; then',
-        "  page <<'HNEOF'",
-        f"<h1>{title_h}</h1><p>Your device couldn't be recognised. Turn Wi-Fi off and on, then open this page again.</p>",
-        "HNEOF",
+        *body(unknown_html(look)),
         "  exit 0",
         "fi",
         'if [ -f "$D/ok/$id.html" ]; then',
         '  if [ -n "$tok" ] && [ "$tok" = "$(cat "$D/ok/$id.tok" 2>/dev/null)" ]; then page < "$D/ok/$id.html"; exit 0; fi',
-        "  page <<'HNEOF'",
-        f"<h1>{title_h}</h1><p>Your request was approved. Open this page in the browser you used to ask, to see the details.</p>",
-        "HNEOF",
+        *body(other_browser_html(look)),
         "  exit 0",
         "fi",
         'if [ -f "$D/no/$id" ]; then',
-        "  page <<'HNEOF'",
-        f"<h1>{title_h}</h1><p>Sorry, this request was declined.</p>",
-        "HNEOF",
+        *body(declined_html(look)),
         "  exit 0",
         "fi",
         'if [ "$REQUEST_METHOD" = POST ] && [ ! -f "$D/req/$id" ]; then',
@@ -121,7 +328,7 @@ def cgi_script(*, title: str, text: str, offer: list[tuple[str, str]]) -> str:
         '  body=$(head -c "$len")',
         "  field() { printf '%s\\n' \"$body\" | tr '&' '\\n' | sed -n \"s/^$1=//p\" | head -n 1 | clean; }",
         "  name=$(field name); kind=$(field kind); wants=$(field wants)",
-        f'  case "$kind" in {kind_ids}) ;; *) kind=other ;; esac',
+        f'  case "$kind" in {kind_ids}) ;; *) kind={fallback_kind} ;; esac',
         '  case " $OFFER " in *" $wants "*) ;; *) wants= ;; esac',
         f'  if [ -n "$name" ] && [ "$(ls "$D/req" | wc -l)" -lt {MAX_PENDING} ]; then',
         "    tok=$(tr -dc 'a-z0-9' < /dev/urandom | head -c 16)",
@@ -130,37 +337,13 @@ def cgi_script(*, title: str, text: str, offer: list[tuple[str, str]]) -> str:
         "  fi",
         "fi",
         'if [ -f "$D/req/$id" ]; then',
-        "  HEAD='<meta http-equiv=\"refresh\" content=\"5\">'",
-        "  page <<'HNEOF'",
-        f"<h1>{title_h}</h1><p>Thanks! Your request is waiting for approval.</p><p class=\"muted\">Keep this page open: it updates by itself.</p>",
-        "HNEOF",
+        "  REFRESH=5",
+        *body(waiting_html(look)),
         "  exit 0",
         "fi",
-        "page <<'HNEOF'",
-        f"<h1>{title_h}</h1>" + (f"<p>{text_h}</p>" if text_h else "")
-        + '<form method="post" action="/cgi-bin/portal">'
-        + '<label for="name">Name for this device</label><input id="name" name="name" maxlength="40" required placeholder="e.g. Living room TV">'
-        + f'<label for="kind">What is it?</label><select id="kind" name="kind">{kinds}</select>'
-        + (f'<label for="wants">Which network?</label><select id="wants" name="wants">{options}</select>' if options else "")
-        + "<button type=\"submit\">Ask for access</button></form>",
-        "HNEOF",
+        *[line.removeprefix("  ") for line in body(form_html(look, offer))],
     ]
     return "\n".join(lines) + "\n"
-
-
-def approved_page(*, title: str, name: str, ssid: str, key: str, qr_svg: str | None, expires_text: str | None) -> str:
-    """What the portal shows the approved device (written to the router by Home Assistant)."""
-    parts = [
-        f"<h1>{html.escape(title or 'Welcome')}</h1>",
-        f"<p>{html.escape(name)} may now join <strong>{html.escape(ssid)}</strong> with this password:</p>",
-        f'<div class="key">{html.escape(key)}</div>',
-    ]
-    if qr_svg:
-        parts.append(f'<div class="qr">{qr_svg}</div><p class="muted">Or scan this code with the device\'s camera.</p>')
-    if expires_text:
-        parts.append(f'<p class="muted">{html.escape(expires_text)}</p>')
-    parts.append('<p class="muted">Then forget this onboarding network on the device.</p>')
-    return "".join(parts)
 
 
 # --------------------------------------------------------------------------
@@ -200,10 +383,10 @@ UHTTPD_RELOAD = "(trap '' HUP INT TERM; sleep 1; /etc/init.d/uhttpd reload) </de
 UHTTPD_CHECK = "[ -f /etc/config/uhttpd ] && echo HN_UHTTPD_OK"
 
 
-def install_lines(*, address: str, title: str, text: str, offer: list[tuple[str, str]]) -> list[str]:
+def install_lines(*, address: str, look: Look, offer: list[tuple[str, str]]) -> list[str]:
     """Put the portal on the router and have uhttpd serve it on ``address``:PORT only."""
     cmds = [f"mkdir -p {WWW}/cgi-bin"]
-    cmds += _write_file(CGI, cgi_script(title=title, text=text, offer=offer), mode="755")
+    cmds += _write_file(CGI, cgi_script(look, offer), mode="755")
     cmds += [
         _uhttpd_cleanup(),
         "uci set uhttpd.hn_portal=uhttpd",
@@ -286,7 +469,7 @@ def parse_requests(text: str) -> list[Request]:
         name = _clean(fields.get("name"))
         if not name:
             continue
-        kind = fields.get("kind") if fields.get("kind") in KINDS else "other"
+        kind = fields.get("kind") if re.match(r"^[a-z0-9_]{1,16}$", fields.get("kind", "")) else "other"
         ip = fields.get("ip") if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", fields.get("ip", "")) else None
         wants = fields.get("wants") if re.match(r"^[a-z][a-z0-9_]{0,15}$", fields.get("wants", "")) else None
         stamp = fields.get("time", "")
