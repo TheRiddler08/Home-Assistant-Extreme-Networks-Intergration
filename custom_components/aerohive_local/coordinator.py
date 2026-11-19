@@ -86,6 +86,7 @@ from .parsers import (
     parse_exos_temperature,
     parse_exos_version,
     parse_exos_vlans,
+    parse_fastpath_vlans,
     fan_rpms,
     ExosVlan,
     parse_key_values,
@@ -801,6 +802,9 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             self._config_dirty = True
             if out := await self._optional(commands.SW_SHOW_NETWORK):
                 self._mgt = parse_show_network(out)
+            out = await self._optional(commands.SW_SHOW_VLAN) or await self._optional(commands.SW_SHOW_VLAN_FALLBACK)
+            if out:
+                self._vlans = parse_fastpath_vlans(out) or self._vlans
             if out := await self._optional(commands.SW_LLDP):
                 neighbors = parse_lldp_neighbors(out)
                 # The summary has no management address/capabilities: read the detail.
@@ -814,6 +818,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             data.details["mgt0"] = self._mgt
         data.config = self._config
         data.lldp = self._lldp
+        data.vlans = self._vlans
         description = data.version.raw.get("system_description") or data.version.raw.get("machine_type")
         if combos := combo_port_count(description):
             front = [p for p in data.ports() if not p.startswith("0/")]
@@ -1214,11 +1219,12 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return "\n".join(outputs)
 
     async def async_apply_cli_plan(self, cmds: list[str], secrets: list[str]) -> None:
-        """Apply network-plan CLI commands (HiveOS, ExtremeXOS); saved like any other change."""
+        """Apply network-plan CLI commands (HiveOS, ExtremeXOS, SR switches); saved like any other change."""
         if not cmds:
             return
         _LOGGER.info("%s: applying network setup (%d command(s))", self.client.host, len(cmds))
-        await self._apply(cmds, secret=secrets)
+        # SR switches: one mode-dependent sequence (vlan database / configure / interface).
+        await self._apply(cmds, secret=secrets, sequence=self.is_switch_cli)
         await self.async_request_refresh()
 
 

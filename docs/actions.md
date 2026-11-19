@@ -153,6 +153,26 @@ data:
   save_changes: true
 ```
 
+## Onboarding portal
+
+### `aerohive_local.approve_device`
+
+Approve a device waiting on the [onboarding portal](onboarding.md): it gets its own Wi-Fi key
+and the portal shows it the password and QR code. Administrators only (automations may call
+it).
+
+| Field | |
+| --- | --- |
+| `request_id` | Required. The `id` from the `aerohive_local_onboarding_request` event. |
+| `wifi` | ID of a Wi-Fi network with per-device keys. Default: the kind's rule, what the device asked for, or the first offered network. |
+| `network` | ID of the network (VLAN) it lands in. Default: the rule's, else the Wi-Fi's own. |
+| `minutes` | Minutes until the key stops working. Default: permanent (or the rule's). |
+| `bind_mac` | Tie the key to the device's MAC address (off by default; phones use private addresses). |
+
+### `aerohive_local.decline_device`
+
+Decline a waiting device; the portal tells it so. Field: `request_id`.
+
 ## Configuration backups
 
 See [Power-loss protection and backups](backups.md) for the full picture.

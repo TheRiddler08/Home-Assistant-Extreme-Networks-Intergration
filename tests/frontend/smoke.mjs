@@ -162,10 +162,10 @@ check(((await panel().locator(".key-box").textContent()) || "").trim() === "Kx7m
 await panel().locator('.dialog [data-action="close"]').last().click();
 await panel().locator('[data-action="plan-review"]').click();
 await page.waitForTimeout(900);
-check((await panel().locator(".apply-row").count()) === 4, "review lists the switch and access points");
+check((await panel().locator(".apply-row").count()) === 5, "review lists both switches and the access points");
 await panel().locator('[data-action="plan-apply"]').click();
 await page.waitForTimeout(900);
-check((await panel().locator(".chip.ok").count()) === 4, "every device reports done");
+check((await panel().locator(".chip.ok").count()) === 5, "every device reports done");
 await panel().locator('.dialog [data-action="close"]').last().click();
 // Key dialog has a QR code; Wi-Fi with a password has a QR button.
 await panel().locator('[data-action="plan-key-show"]').first().click();
@@ -176,13 +176,42 @@ await panel().locator('[data-action="plan-wifi-qr"][data-wifi="guest"]').click()
 await page.waitForTimeout(500);
 check(((await panel().locator(".key-box").textContent()) || "").trim() === "guest-pass-1" && (await panel().locator(".qr-box svg").count()) === 1, "Wi-Fi QR shows its password and code");
 await panel().locator('.dialog [data-action="close"]').last().click();
+// Key rotation: a permanent key changed every 6 months; start a new key now, then "Device updated".
+await panel().locator('[data-action="plan-key-add"]').click();
+await panel().locator("#key-name").fill("Nest speaker");
+await panel().locator("#key-rotate").selectOption("182");
+await panel().locator('[data-action="plan-key-create"]').click();
+await page.waitForTimeout(900);
+await panel().locator('.dialog [data-action="close"]').last().click();
+check(((await panel().locator(".content").textContent()) || "").includes("changes every 6 months"), "the schedule shows on the key");
+await panel().locator('[data-action="plan-key-rotate"]').first().click();
+await panel().locator("#rot-cutoff").selectOption("14");
+await panel().locator('[data-action="plan-key-rotate-start"]').click();
+await page.waitForTimeout(900);
+check(((await panel().locator(".key-box").textContent()) || "").trim() === "Nw3wKeyAbc12", "the new key is shown after starting a rotation");
+await panel().locator('.dialog [data-action="close"]').last().click();
+check((await panel().locator('[data-action="plan-key-rotate-finish"]').count()) === 1, "a rotating key offers Device updated");
+await panel().locator('[data-action="plan-key-rotate-finish"]').click();
+await panel().locator('[data-action="confirm-yes"]').click();
+await page.waitForTimeout(700);
+check((await panel().locator('[data-action="plan-key-rotate-finish"]').count()) === 0, "finishing the rotation clears it");
+check((await panel().locator('input[data-plan="switch_trunk"]').count()) === 2, "both switches (ExtremeXOS and SR) get trunk ports");
+// Rules: TVs go to homeISO in the IoT network, automatically.
+await panel().locator('[data-action="plan-rules-edit"]').click();
+await panel().locator('[data-action="plan-rule-add"]').click();
+await panel().locator('select[data-rule="0"][data-rule-field="kind"]').selectOption("tv_or_streaming");
+await panel().locator('select[data-rule="0"][data-rule-field="network"]').selectOption("iot");
+await panel().locator('input[data-rule="0"][data-rule-field="auto"]').evaluate((el) => el.click());
+await panel().locator('[data-action="plan-rules-done"]').click();
+await panel().locator("#ob-hour").fill("5");
+await panel().locator("#ob-hour").dispatchEvent("change");
 // Onboarding: turn the portal on, approve the waiting device.
 await panel().locator('input[data-plan="ob_enabled"]').evaluate((el) => el.click());
 await panel().locator("#ob-wifi").selectOption("guest");
 await panel().locator('[data-action="plan-save"]').click();
 await page.waitForTimeout(700);
 await panel().locator('[data-action="plan-ob-approve"]').click();
-await panel().locator("#ap-net").selectOption("iot");
+check((await panel().locator("#ap-net").inputValue()) === "iot", "approve starts with the rule's network");
 await panel().locator('[data-action="plan-ob-approve-confirm"]').click();
 await page.waitForTimeout(800);
 check(((await panel().locator(".toast").textContent()) || "").includes("Living room TV approved"), "approving confirms with a message");
@@ -217,6 +246,12 @@ const looked = planCalls.filter((c) => c.type === "aerohive_local/plan/save").po
 check(looked.title === "Acme guest access" && looked.button === "Let me in" && looked.colors.accent === "#ff6600" && JSON.stringify(looked.kinds) === '["Laptop","Console"]' && looked.use_custom === true && looked.custom_html.includes("{{content}}"), `portal look saved: ${JSON.stringify(looked).slice(0, 300)}`);
 const approve = planCalls.find((c) => c.type === "aerohive_local/plan/onboard_approve");
 check(approve && approve.request_id === "021122334455" && approve.wifi === "homeiso" && approve.network === "iot" && approve.bind_mac === false, `approve request: ${JSON.stringify(approve)}`);
+const scheduled = planCalls.find((c) => c.type === "aerohive_local/plan/key_add" && c.name === "Nest speaker");
+check(scheduled && scheduled.rotate_days === 182 && scheduled.cutoff_days === undefined, `scheduled key: ${JSON.stringify(scheduled)}`);
+const rot = planCalls.find((c) => c.type === "aerohive_local/plan/key_rotate");
+check(rot && rot.cutoff_days === 14 && rot.key_ids.length === 1, `rotate request: ${JSON.stringify(rot)}`);
+const ruleSave = planCalls.filter((c) => c.type === "aerohive_local/plan/save").pop().plan.onboarding;
+check(JSON.stringify(ruleSave.rules) === JSON.stringify([{ kind: "tv_or_streaming", wifi: "homeiso", network: "iot", minutes: null, auto: true }]) && ruleSave.max_per_hour === 5, `rules saved: ${JSON.stringify(ruleSave.rules)} ${ruleSave.max_per_hour}`);
 const obSave = planCalls.filter((c) => c.type === "aerohive_local/plan/save").pop();
 check(obSave && obSave.plan.onboarding.enabled === true && obSave.plan.onboarding.wifi === "guest", "onboarding settings are saved");
 const saved = planCalls.filter((c) => c.type === "aerohive_local/plan/save")[0];

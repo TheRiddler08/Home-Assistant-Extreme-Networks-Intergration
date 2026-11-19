@@ -85,6 +85,22 @@ the device's camera to join without typing. Wi-Fi networks with a shared passwor
 is disconnected and can't join again, everyone else stays connected. Timed keys are removed
 on their own when they run out, also after a restart (checked every minute).
 
+### Changing keys (rotation)
+
+A key can be replaced without the device dropping off. **New key** on a key makes a new one
+that works **alongside** the old one: put it on the device (shown with a QR code), then
+press **Device updated** and the old key stops. **Keep old** throws the new key away.
+
+- **The old key works** until you confirm, or for 1 more week, 2 weeks or a month: then the
+  switch-over happens by itself.
+- **All keys on a network** at once: tick *All N keys on …* in the *New key* dialog (e.g. the
+  Google devices' network).
+- **On a schedule:** when adding a device, *Change the key every* 3 months, 6 months or a
+  year. A new key is then made by itself, with a notification ("Wi-Fi key to update") and
+  the event `aerohive_local_key_rotation` (`key_id`, `name`, `wifi`, `ssid`, `cutoff`), and
+  *Old key then works* sets the default switch-over. Google and Nest devices may need setting
+  up again after a Wi-Fi password change, which is why the default is *until I confirm*.
+
 Keys take effect straight away, without pressing Apply, on the devices the setup was already
 applied to: only the Wi-Fi configuration is rewritten and only Wi-Fi is reloaded (clients
 reconnect for a moment). If a device can't be reached, it's retried every minute and the
@@ -97,8 +113,8 @@ Setup tab says so.
   access points.
 - **Router ports to the switch**: the interface(s) that carry every VLAN tagged
   (`br-lan` by default, or e.g. `eth1` on a router with separate ports).
-- **Trunk ports** on each ExtremeXOS switch: the ports to the router and access points; every
-  VLAN is tagged on them.
+- **Trunk ports** on each ExtremeXOS or SR switch: the ports to the router and access points;
+  every VLAN is tagged on them. Port numbers like `47-48` (SR switches also take `1/0/9`).
 - **Access points** that broadcast the Wi-Fi (all by default).
 
 ## What each device does
@@ -109,7 +125,7 @@ Setup tab says so.
 | **OpenWrt access point** (not the router) | The same bridges without addresses (the router does DHCP), and the Wi-Fi networks and keys. |
 | **Aerohive access point** | Per network a user profile `hn<VLAN>` (VLAN ID), per Wi-Fi network its security object pointing to it, password, hidden name, max clients and bands. |
 | **ExtremeXOS switch** | Creates the VLANs (or reuses one that already has the tag), tags them on the trunk ports, puts the access ports in their VLAN. VLANs it created and that leave the setup are deleted. |
-| SR switches | Not set up from here yet. |
+| **SR switch** (SR2208P) 🧪 | Creates and names the VLANs (`vlan database`), tags them on the trunk ports, and sets access ports (untagged, PVID). VLAN 1 (default and management) is never changed. VLANs it created and that leave the setup are deleted. **The commands are assumed** (FASTPATH style, which the switch's configuration shows) and not yet confirmed on a real SR2208P: the review says so, check it before applying. |
 
 **Not on Aerohive access points yet:** per-device keys (that Wi-Fi network is skipped on them,
 with a note), WPA3-only, and client isolation. The access points support local per-device

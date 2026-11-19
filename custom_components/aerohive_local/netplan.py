@@ -37,7 +37,8 @@ PREFIX = "hn_"
 OPENWRT_CONFIGS = ("network", "dhcp", "firewall", "wireless")
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,15}$")
 _LEASE_RE = re.compile(r"^\d{1,5}[mhd]?$")
-_PORTS_RE = re.compile(r"^\d+(?::\d+)?(?:-\d+(?::\d+)?)?(?:,\d+(?::\d+)?(?:-\d+(?::\d+)?)?)*$")
+_PORT_TOKEN = r"\d+(?:[:/]\d+){0,2}"
+_PORTS_RE = re.compile(rf"^{_PORT_TOKEN}(?:-{_PORT_TOKEN})?(?:,{_PORT_TOKEN}(?:-{_PORT_TOKEN})?)*$")
 _IFNAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,12}$")
 _MAC_RE = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
 _EXOS_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,31}$")
@@ -66,6 +67,8 @@ ONBOARDING_DEFAULTS: dict[str, Any] = {
     "colors": dict(portal_mod.THEME_DEFAULTS),
     "use_custom": False,  # your own page
     "custom_html": "",
+    "rules": [],  # [{"kind", "wifi", "network", "minutes", "auto"}]: what each kind of device gets
+    "max_per_hour": 10,  # requests the portal accepts per hour (all devices together)
 }
 
 
@@ -100,11 +103,19 @@ def normalize(plan: dict[str, Any] | None) -> dict[str, Any]:
         key.setdefault("network", None)
         key.setdefault("mac", None)
         key.setdefault("expires", None)
+        key.setdefault("rotate_days", None)  # start a new key this often (None: never)
+        key.setdefault("cutoff_days", None)  # old key stops this long after a rotation starts (None: when confirmed)
+        key.setdefault("rotation", None)  # {"started", "cutoff"} while old and new keys both work
+        key.setdefault("rotated", None)
     return result
 
 
 def secret_refs(plan: dict[str, Any]) -> set[str]:
-    return {f"wifi:{w['id']}" for w in plan["wifi"]} | {f"key:{k['id']}" for k in plan["keys"]}
+    refs = {f"wifi:{w['id']}" for w in plan["wifi"]} | {f"key:{k['id']}" for k in plan["keys"]}
+    return refs | {f"key:{k['id']}:next" for k in plan["keys"] if k.get("rotation")}
+
+
+ROTATE_CHOICES = (90, 182, 365)  # every 3 months, 6 months, a year
 
 
 # --------------------------------------------------------------------------
@@ -227,6 +238,10 @@ def validate(plan: dict[str, Any], secret: Callable[[str], str | None] | None = 
                 datetime.fromisoformat(str(key["expires"]))
             except ValueError:
                 errors.append(f"Key {name}: invalid expiry time")
+        for field, limit in (("rotate_days", 3650), ("cutoff_days", 365)):
+            value = key.get(field)
+            if value is not None and not (isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= limit):
+                errors.append(f"Key {name}: {field.replace('_', ' ')} must be 1-{limit} days")
         if secret is not None:
             value = secret(f"key:{kid}")
             if not value:
@@ -252,6 +267,26 @@ def validate(plan: dict[str, Any], secret: Callable[[str], str | None] | None = 
         if any(w.get("security") != "ppsk" for w in offered):
             errors.append("Onboarding portal: devices can only ask for networks with per-device keys")
         errors += portal_mod.validate_look(onboarding)
+        kind_ids = {k for k, _ in portal_mod.kind_choices(onboarding.get("kinds"))}
+        per_hour = onboarding.get("max_per_hour")
+        if not (isinstance(per_hour, int) and not isinstance(per_hour, bool) and 1 <= per_hour <= 100):
+            errors.append("Onboarding portal: requests per hour must be 1-100")
+        seen_kinds: set[str] = set()
+        for rule in onboarding.get("rules") or []:
+            label = rule.get("kind")
+            if rule.get("kind") not in kind_ids:
+                errors.append(f"Onboarding rule: {label!r} isn't one of the device kinds")
+            if rule.get("kind") in seen_kinds:
+                errors.append(f"Onboarding rule: two rules for {label!r}")
+            seen_kinds.add(rule.get("kind"))
+            target = next((w for w in plan["wifi"] if w.get("id") == rule.get("wifi")), None)
+            if target is None or target.get("security") != "ppsk":
+                errors.append(f"Onboarding rule for {label!r}: choose a Wi-Fi network with per-device keys")
+            if rule.get("network") and rule["network"] not in ids:
+                errors.append(f"Onboarding rule for {label!r}: unknown network")
+            minutes = rule.get("minutes")
+            if minutes is not None and not (isinstance(minutes, int) and 1 <= minutes <= 366 * 24 * 60):
+                errors.append(f"Onboarding rule for {label!r}: invalid duration")
 
     devices = plan["devices"]
     for trunk in devices.get("router_trunks") or []:
@@ -545,17 +580,22 @@ def openwrt_lines(
                 if not value:
                     out.errors.append(f"Key {item.get('name') or item['id']}: no key set")
                     continue
-                out.secrets.append(value)
-                sta = f"{PREFIX}k_{item['id']}_{_radio_short(radio)}"
-                cmds.append(_uci("wireless", sta, value="wifi-station"))
-                cmds.append(_uci("wireless", sta, "iface", sec))
-                cmds.append(_uci("wireless", sta, "key", value))
-                if item.get("mac"):
-                    cmds.append(_uci("wireless", sta, "mac", str(item["mac"]).lower()))
+                # While a key is being rotated, the old and the new key both work.
+                variants = [("", value)]
+                if item.get("rotation") and (upcoming := secret(f"key:{item['id']}:next")):
+                    variants.append(("n", upcoming))
                 other = _net(plan, item.get("network"))
-                if other is not None and other["vlan"] != net["vlan"]:
-                    cmds.append(_uci("wireless", sta, "vid", other["vlan"]))
-                    vids.add(other["vlan"])
+                for suffix, key_value in variants:
+                    out.secrets.append(key_value)
+                    sta = f"{PREFIX}k_{item['id']}{suffix}_{_radio_short(radio)}"
+                    cmds.append(_uci("wireless", sta, value="wifi-station"))
+                    cmds.append(_uci("wireless", sta, "iface", sec))
+                    cmds.append(_uci("wireless", sta, "key", key_value))
+                    if item.get("mac"):
+                        cmds.append(_uci("wireless", sta, "mac", str(item["mac"]).lower()))
+                    if other is not None and other["vlan"] != net["vlan"]:
+                        cmds.append(_uci("wireless", sta, "vid", other["vlan"]))
+                        vids.add(other["vlan"])
             for vid in sorted(vids):
                 vsec = f"{PREFIX}v_{wifi['id']}_{_radio_short(radio)}_{vid}"
                 cmds.append(_uci("wireless", vsec, value="wifi-vlan"))
@@ -709,6 +749,116 @@ def exos_commands(
             cmds.append(f"delete vlan {quote(name, 'VLAN')}")
     out.managed["vlans"] = kept
     return out
+
+
+# --------------------------------------------------------------------------
+# SR-series switches (FASTPATH CLI, e.g. SR2208P)
+# --------------------------------------------------------------------------
+# ASSUMED commands: the SR2208P's running configuration shows FASTPATH's
+# "vlan database" block, and these follow the FASTPATH command set
+# (vlan database: "vlan <id>", "vlan name <id> <name>", "no vlan <id>";
+# interface mode: "vlan participation include <id>", "vlan tagging <id>",
+# "vlan pvid <id>"). Not yet confirmed on a real SR2208P: see docs/roadmap.md.
+
+SR_ASSUMED = "These SR switch VLAN commands are assumed (FASTPATH style) and not yet confirmed on a real SR2208P: check them in the review"
+
+
+def expand_ports(text: str, available: list[str]) -> list[str]:
+    """'1-4,9' or '1/0/1-1/0/4' -> the switch's port names, in order. Raises ValueError for unknown ports."""
+    text = str(text or "").replace(" ", "")
+    if not text:
+        return []
+    by_number: dict[int, str] = {}
+    for name in available:
+        parts = name.split("/")
+        if len(parts) == 3 and parts[0] == "1" and parts[2].isdigit():  # unit 1 (the first switch of a stack)
+            by_number.setdefault(int(parts[2]), name)
+
+    def one(token: str) -> str:
+        if "/" in token:
+            if token not in available:
+                raise ValueError(f"port {token} doesn't exist on this switch")
+            return token
+        number = int(token)
+        if number not in by_number:
+            raise ValueError(f"port {token} doesn't exist on this switch")
+        return by_number[number]
+
+    result: list[str] = []
+    for token in text.split(","):
+        start, sep, end = token.partition("-")
+        if not sep:
+            result.append(one(start))
+            continue
+        first, last = one(start), one(end)
+        lo, hi = int(first.rsplit("/", 1)[-1]), int(last.rsplit("/", 1)[-1])
+        prefix = first.rsplit("/", 1)[0]
+        if prefix != last.rsplit("/", 1)[0] or lo > hi:
+            raise ValueError(f"invalid port range {token}")
+        result += [name for n in range(lo, hi + 1) if (name := f"{prefix}/{n}") in available]
+    return list(dict.fromkeys(result))
+
+
+def sr_commands(
+    plan: dict[str, Any],
+    *,
+    entry_id: str,
+    existing: dict[str, int | None],
+    ports: list[str],
+    managed: list[str],
+) -> DevicePlan:
+    """VLANs on an SR switch: create them, tag them on the trunk ports, set access ports.
+
+    One mode-dependent sequence (privileged -> vlan database -> back; then
+    configure -> interface -> back). VLAN 1 (the default and management VLAN) is
+    never changed. ``existing``: VLAN name -> ID on the switch now; ``managed``:
+    IDs (as text) an earlier apply created.
+    """
+    out = DevicePlan()
+    out.warnings.append(SR_ASSUMED)
+    have = {vid for vid in existing.values() if vid is not None}
+    wanted = {net["vlan"]: net for net in plan["networks"]}
+    try:
+        trunks = expand_ports((plan["devices"].get("switch_trunks") or {}).get(entry_id) or "", ports)
+        access: dict[str, int] = {}
+        for net in plan["networks"]:
+            for port in expand_ports((net.get("switch_ports") or {}).get(entry_id) or "", ports):
+                if port in access:
+                    raise ValueError(f"port {port} is an access port of two networks")
+                if port in trunks:
+                    raise ValueError(f"port {port} is both a trunk and an access port")
+                access[port] = net["vlan"]
+    except ValueError as err:
+        out.errors.append(str(err))
+        return out
+    database = []
+    for vid, net in sorted(wanted.items()):
+        if vid not in have:
+            database.append(f"vlan {vid}")
+        database.append(f"vlan name {vid} {quote(_clean_vlan_name(net['name']), 'VLAN name')}")
+    gone = sorted(int(v) for v in managed if v.isdigit() and int(v) not in wanted and int(v) in have and int(v) != 1)
+    database += [f"no vlan {vid}" for vid in gone]
+    cmds = out.commands
+    if database:
+        cmds += ["vlan database", *database, "exit"]
+    interface_lines: list[str] = []
+    for port in trunks:
+        interface_lines += [f"interface {port}"]
+        for vid in sorted(wanted):
+            interface_lines += [f"vlan participation include {vid}", f"vlan tagging {vid}"]
+        interface_lines.append("exit")
+    for port, vid in access.items():
+        interface_lines += [f"interface {port}", f"vlan participation include {vid}", f"no vlan tagging {vid}", f"vlan pvid {vid}", "exit"]
+    if interface_lines:
+        cmds += ["configure", *interface_lines, "exit"]
+    if not trunks:
+        out.warnings.append("No trunk ports set: the VLANs are created but not carried to the router or access points")
+    out.managed["vlans"] = [str(v) for v in sorted(wanted) if v not in have or str(v) in managed]
+    return out
+
+
+def _clean_vlan_name(name: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^A-Za-z0-9 ._-]", "", name or ""))[:32].strip() or "vlan"
 
 
 # --------------------------------------------------------------------------

@@ -225,6 +225,8 @@ SW_LLDP = "show lldp remote-device all"
 SW_LLDP_DETAIL = "show lldp remote-device detail {port}"
 SW_PORT_DETAIL = "show interface ethernet {port}"
 SW_SAVE = "write memory"
+SW_SHOW_VLAN = "show vlan brief"  # assumed (FASTPATH); "show vlan" as a fallback
+SW_SHOW_VLAN_FALLBACK = "show vlan"
 SW_REBOOT = "reload"
 
 _USP_CMD_RE = re.compile(r"^[1-9]\d*/\d+/\d+$")

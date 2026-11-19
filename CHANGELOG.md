@@ -3,6 +3,32 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.16.0] - 2026-11-19
+
+### Added
+- **Key rotation.** *New key* on a device's key makes a new one that works alongside the old
+  one; *Device updated* switches over, *Keep old* cancels. The old key can also stop by
+  itself after a week, two weeks or a month. Rotate all keys of a network at once, or on a
+  schedule (every 3 months, 6 months or a year) with a notification and the
+  `aerohive_local_key_rotation` event. [Details](docs/network-setup.md#changing-keys-rotation)
+- **Onboarding rules by kind of device**: Wi-Fi network, network (VLAN) and duration per kind;
+  the approve dialog starts with them, and *Approve automatically* lets that kind in without
+  asking. [Details](docs/onboarding.md#rules-by-kind-of-device)
+- **Approve from a phone notification**: the actions `aerohive_local.approve_device` and
+  `aerohive_local.decline_device` (administrators and automations), and richer
+  `aerohive_local_onboarding_request` events (`kind_label`, `suggested_wifi`,
+  `auto_approved`), with an example automation for Approve / Decline buttons.
+- **Requests per hour** limit on the portal (default 10).
+- **SR2208P VLANs in the network setup (assumed commands).** VLANs are read with
+  `show vlan brief`, created and named in `vlan database`, tagged on trunk ports and set on
+  access ports (PVID), and VLANs it created are removed when they leave the setup. VLAN 1 is
+  never changed. The commands follow FASTPATH (which the switch's configuration shows) and
+  aren't confirmed on a real SR2208P yet: the review says so.
+
+### Changed
+- Device-kind IDs no longer end with `_` when a long label is cut short (requests waiting
+  with the old ID still show their kind's ID).
+
 ## [0.15.0] - 2026-11-19
 
 ### Added

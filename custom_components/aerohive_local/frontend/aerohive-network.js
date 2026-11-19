@@ -1721,6 +1721,9 @@ tbody tr.click:hover { background: color-mix(in srgb, var(--ah-accent) 6%, trans
 .activity { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
 .qr-box { display: flex; justify-content: center; margin: 14px 0 4px; }
 .portal-dialog { width: min(1040px, 100%); }
+.rules { display: grid; gap: 10px; margin-bottom: 12px; }
+.rule-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto auto; gap: 8px; align-items: center; padding: 10px; border: 1px solid var(--ah-line); border-radius: 10px; }
+.rule-row .toggle { font-size: 13px; }
 .portal-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 380px); gap: 20px; align-items: start; }
 .portal-settings h3 { margin: 18px 0 0; font-size: 14px; font-weight: 600; }
 .portal-settings h3:first-child { margin-top: 0; }
@@ -1751,6 +1754,7 @@ tbody tr.click:hover { background: color-mix(in srgb, var(--ah-accent) 6%, trans
   .port { width: 26px; height: 22px; }
   .two, .three { grid-template-columns: minmax(0, 1fr); }
   .portal-grid { grid-template-columns: minmax(0, 1fr); }
+  .rule-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .portal-preview { height: 460px; }
 }
 `;
@@ -2212,6 +2216,15 @@ class AerohiveNetworkPanel extends AerohiveBase {
       this._planInput(target);
       return;
     }
+    if (target.dataset && target.dataset.rule !== undefined && this._dialog && this._dialog.type === "plan-rules") {
+      const rule = this._dialog.rules[Number(target.dataset.rule)];
+      const field = target.dataset.ruleField;
+      if (field === "auto") rule.auto = target.checked;
+      else if (field === "minutes") rule.minutes = Number(target.value) || null;
+      else if (field === "network") rule.network = target.value || null;
+      else rule[field] = target.value;
+      return;
+    }
     if (target.dataset && target.dataset.logo !== undefined && this._dialog && this._dialog.type === "plan-portal") {
       const file = target.files && target.files[0];
       if (!file) return;
@@ -2282,6 +2295,41 @@ const KEY_DURATIONS = [
   [1440, "1 day"],
   [10080, "1 week"],
 ];
+const ROTATE_CHOICES = [
+  [90, "3 months"],
+  [182, "6 months"],
+  [365, "year"],
+];
+const CUTOFF_CHOICES = [
+  [0, "Until I confirm"],
+  [7, "1 more week"],
+  [14, "2 more weeks"],
+  [30, "1 more month"],
+];
+const DEFAULT_KINDS = ["Phone or tablet", "Computer", "TV or streaming box", "Speaker or smart-home device", "Something else"];
+
+function rotateLabel(days) {
+  const hit = ROTATE_CHOICES.find(([d]) => d === Number(days));
+  return hit ? hit[1] : `${days} days`;
+}
+
+/* Same ids as the integration makes from the labels (portal.kind_choices). */
+function kindChoices(labels) {
+  const list = (labels || []).map((x) => String(x).trim().slice(0, 40)).filter(Boolean);
+  const out = [];
+  for (const label of list.length ? list : DEFAULT_KINDS) {
+    const base = label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 16).replace(/_+$/, "") || "kind";
+    let id = base;
+    for (let n = 2; out.some(([k]) => k === id); n++) id = `${base.slice(0, 13)}_${n}`;
+    out.push([id, label]);
+  }
+  return out.slice(0, 12);
+}
+
+function kindLabel(labels, id) {
+  return (kindChoices(labels).find(([k]) => k === id) || [id, id])[1];
+}
+
 const ROLE_LABELS = { router: "Router", ap: "Access point", switch: "Switch", none: "Not used" };
 
 function slugId(text, taken) {
@@ -2474,8 +2522,13 @@ const SetupMixin = {
       .map(
         (k) => `<tr><td><strong>${esc(k.name)}</strong>${k.mac ? `<br><span class="mono muted">${esc(k.mac)}</span>` : ""}</td>
           <td>${esc(ssid(k.wifi))}${k.network ? `<br><span class="muted">→ ${esc(net(k.network))}</span>` : ""}</td>
-          <td class="hide-sm">${esc(timeLeft(k.expires))}</td>
-          <td class="num"><span class="row-actions"><button class="btn small" data-action="plan-key-show" data-key="${esc(k.id)}">${icon("eye")}Key</button>
+          <td class="hide-sm">${k.rotation ? `<span class="chip">New key${k.rotation.cutoff ? ` · old until ${esc(new Date(k.rotation.cutoff).toLocaleDateString())}` : ""}</span>` : esc(timeLeft(k.expires))}${k.rotate_days && !k.rotation ? `<br><span class="muted">changes every ${esc(rotateLabel(k.rotate_days))}</span>` : ""}</td>
+          <td class="num"><span class="row-actions">${k.rotation
+            ? `<button class="btn small" data-action="plan-key-show-next" data-key="${esc(k.id)}">${icon("eye")}New key</button>
+               <button class="btn small primary" data-action="plan-key-rotate-finish" data-key="${esc(k.id)}">${icon("check")}Device updated</button>
+               <button class="btn small" data-action="plan-key-rotate-cancel" data-key="${esc(k.id)}">${icon("close")}Keep old</button>`
+            : `<button class="btn small" data-action="plan-key-show" data-key="${esc(k.id)}">${icon("eye")}Key</button>
+               ${k.expires ? "" : `<button class="btn small" data-action="plan-key-rotate" data-key="${esc(k.id)}">${icon("cycle")}New key</button>`}`}
             <button class="btn small danger" data-action="plan-key-revoke" data-key="${esc(k.id)}">${icon("trash")}Revoke</button></span></td></tr>`,
       )
       .join("");
@@ -2515,6 +2568,11 @@ const SetupMixin = {
       <div class="form-row"><span class="section-title">Devices may ask for</span>${ppsk.length ? `<div class="checks">${ppsk
         .map((w) => `<label><input type="checkbox" data-plan="ob_offer" data-wifi="${esc(w.id)}" ${(ob.offer || []).includes(w.id) ? "checked" : ""}>${esc(w.ssid)}</label>`)
         .join("")}</div>` : '<div class="hint">Add a Wi-Fi network with per-device keys first.</div>'}</div>
+      <div class="form-row"><span class="section-title">Rules</span>
+        <div class="muted" style="font-size:13px;margin-bottom:8px">${(ob.rules || []).length ? (ob.rules || []).map((r) => `${esc(kindLabel(ob.kinds, r.kind))} → ${esc(ssid(r.wifi))}${r.auto ? " (automatic)" : ""}`).join(" · ") : "None: you choose for every device"}</div>
+        <button class="btn" data-action="plan-rules-edit">${icon("edit")}Edit rules</button></div>
+      <div class="form-row"><label class="section-title" for="ob-hour">Requests per hour (all devices together)</label>
+        <div class="field" style="max-width:160px"><input type="number" id="ob-hour" min="1" max="100" data-plan="ob_per_hour" value="${esc(ob.max_per_hour ?? 10)}"></div></div>
       <div class="form-row"><span class="section-title">Look and text</span>
         <div class="muted" style="font-size:13px;margin-bottom:8px">${esc(ob.title || "Welcome")} · ${ob.use_custom ? "your own page" : "standard page"}${ob.logo ? " · logo" : ""}</div>
         <button class="btn" data-action="plan-portal-edit">${icon("edit")}Customise portal</button></div>
@@ -2602,6 +2660,47 @@ const SetupMixin = {
         <button class="btn primary" data-action="plan-portal-done">${icon("check")}Done</button></div></div>`;
   },
 
+  _planRotateDialog(d) {
+    const st = this._setupState().state;
+    const key = st.plan.keys.find((k) => k.id === d.key);
+    if (!key) return "";
+    const f = (d.form = d.form || {});
+    const wifi = st.plan.wifi.find((w) => w.id === key.wifi) || {};
+    const siblings = st.plan.keys.filter((k) => k.wifi === key.wifi && !k.rotation && !k.expires);
+    const busy = this._isBusy("plan-key-rotate");
+    return `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+      ${this._dlgHead(`New key for ${key.name}`, wifi.ssid ? `Wi-Fi: ${wifi.ssid}` : "")}
+      <p class="muted" style="margin-top:0">A new key is made and works alongside the old one, so nothing drops off. Put the new key on the device, then press <strong>Device updated</strong> and the old key stops.</p>
+      <div class="form-row"><label class="section-title" for="rot-cutoff">The old key works</label>
+        <select id="rot-cutoff" class="plan-select" data-field="cutoff_days">${CUTOFF_CHOICES.map(([dd, label]) => `<option value="${dd}" ${Number(f.cutoff_days ?? key.cutoff_days ?? 0) === dd ? "selected" : ""}>${label}</option>`).join("")}</select></div>
+      ${siblings.length > 1 ? this._toggleRow("all", `All ${siblings.length} keys on ${wifi.ssid || "this network"}`, Boolean(f.all)) : ""}
+      <div class="dlg-actions"><button class="btn" data-action="close">Cancel</button>
+        <button class="btn primary" data-action="plan-key-rotate-start" ${busy ? "disabled" : ""}>${icon("cycle")}${busy ? "Working…" : "Make new key"}</button></div></div>`;
+  },
+
+  _planRulesDialog(d) {
+    const s = this._setupState();
+    const plan = s.draft;
+    const ob = plan.onboarding || {};
+    const kinds = kindChoices(ob.kinds);
+    const ppsk = plan.wifi.filter((w) => w.security === "ppsk");
+    const rules = (d.rules = d.rules || clone(ob.rules || []));
+    const row = (r, i) => `<div class="rule-row">
+        <select class="plan-select" data-rule="${i}" data-rule-field="kind" aria-label="Kind of device">${kinds.map(([id, label]) => `<option value="${esc(id)}" ${r.kind === id ? "selected" : ""}>${esc(label)}</option>`).join("")}</select>
+        <select class="plan-select" data-rule="${i}" data-rule-field="wifi" aria-label="Wi-Fi network">${ppsk.map((w) => `<option value="${esc(w.id)}" ${r.wifi === w.id ? "selected" : ""}>${esc(w.ssid)}</option>`).join("")}</select>
+        <select class="plan-select" data-rule="${i}" data-rule-field="network" aria-label="Network"><option value="">Its own network</option>${plan.networks.map((n) => `<option value="${esc(n.id)}" ${r.network === n.id ? "selected" : ""}>${esc(n.name)}</option>`).join("")}</select>
+        <select class="plan-select" data-rule="${i}" data-rule-field="minutes" aria-label="Valid for">${KEY_DURATIONS.map(([m, label]) => `<option value="${m}" ${Number(r.minutes || 0) === m ? "selected" : ""}>${label}</option>`).join("")}</select>
+        <label class="toggle"><input type="checkbox" data-rule="${i}" data-rule-field="auto" ${r.auto ? "checked" : ""}><span class="track"></span><span>Approve automatically</span></label>
+        <button class="icon-btn" data-action="plan-rule-remove" data-rule="${i}" aria-label="Remove rule">${icon("trash")}</button></div>`;
+    return `<div class="dialog wide-dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+      ${this._dlgHead("Rules for kinds of device", "What each kind of device gets when you approve it")}
+      ${rules.length ? `<div class="rules">${rules.map(row).join("")}</div>` : '<p class="muted">No rules: you choose the network for every device.</p>'}
+      ${ppsk.length ? `<button class="btn small" data-action="plan-rule-add">${icon("plus")}Add rule</button>` : '<p class="hint">Add a Wi-Fi network with per-device keys first.</p>'}
+      <p class="hint">With a rule, the approve dialog starts with its choices. <strong>Approve automatically</strong> lets every device of that kind in without asking you: anyone with the onboarding password can then pick that kind, so use it for networks that are isolated (e.g. TVs on homeISO).</p>
+      <div class="dlg-actions"><button class="btn" data-action="close">Cancel</button>
+        <button class="btn primary" data-action="plan-rules-done">${icon("check")}Done</button></div></div>`;
+  },
+
   _planApproveDialog(d) {
     const st = this._setupState().state;
     const req = (st.requests || []).find((r) => r.id === d.request);
@@ -2609,7 +2708,10 @@ const SetupMixin = {
     const plan = st.plan;
     const f = (d.form = d.form || {});
     const offered = plan.wifi.filter((w) => w.security === "ppsk");
-    const wifi = f.wifi || (offered.some((w) => w.id === req.wants) ? req.wants : offered[0] && offered[0].id);
+    const sug = req.suggested || {};
+    const wifi = f.wifi || (offered.some((w) => w.id === sug.wifi) ? sug.wifi : offered.some((w) => w.id === req.wants) ? req.wants : offered[0] && offered[0].id);
+    if (f.network === undefined && sug.network) f.network = sug.network;
+    if (f.minutes === undefined && sug.minutes) f.minutes = String(sug.minutes);
     const minutes = Number(f.minutes ?? 0);
     const busy = this._isBusy("plan-ob-approve");
     return `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
@@ -2629,7 +2731,7 @@ const SetupMixin = {
     const devices = st.devices;
     const routers = devices.filter((d) => d.router_capable);
     const aps = devices.filter((d) => d.wireless && !(d.entry_id === plan.devices.router));
-    const switches = devices.filter((d) => d.kind === "exos");
+    const switches = devices.filter((d) => d.kind === "exos" || d.kind === "switch");
     const apOn = (id) => plan.devices.aps == null || plan.devices.aps.includes(id);
     return `<div class="card panel-card"><div class="card-head"><h2 class="grow">Devices</h2></div>
       <div class="form-row" style="margin-top:0"><label class="section-title" for="plan-router">Router (addresses, DHCP, firewall)</label>
@@ -2640,7 +2742,8 @@ const SetupMixin = {
         <div class="field"><input type="text" id="plan-trunks" data-plan="router_trunks" value="${esc((plan.devices.router_trunks || []).join(", "))}" placeholder="br-lan" spellcheck="false"></div>
         <div class="hint">Interface names, e.g. <span class="mono">br-lan</span> or <span class="mono">eth1</span>.</div></div>` : ""}
       ${switches.map((d) => `<div class="form-row"><label class="section-title" for="trunk-${esc(d.entry_id)}">${esc(d.name)}: trunk ports (to router and access points)</label>
-        <div class="field"><input type="text" id="trunk-${esc(d.entry_id)}" data-plan="switch_trunk" data-entry="${esc(d.entry_id)}" value="${esc((plan.devices.switch_trunks || {})[d.entry_id] || "")}" placeholder="e.g. 47-48" spellcheck="false"></div></div>`).join("")}
+        <div class="field"><input type="text" id="trunk-${esc(d.entry_id)}" data-plan="switch_trunk" data-entry="${esc(d.entry_id)}" value="${esc((plan.devices.switch_trunks || {})[d.entry_id] || "")}" placeholder="${d.kind === "switch" ? "e.g. 9-10" : "e.g. 47-48"}" spellcheck="false"></div>
+        <div class="hint">Port numbers like <span class="mono">47-48</span>${d.kind === "switch" ? " (or <span class=\"mono\">1/0/9</span>)" : ""}.</div></div>`).join("")}
       ${aps.length ? `<div class="form-row"><span class="section-title">Access points that broadcast the Wi-Fi</span><div class="checks">
         ${aps.map((d) => `<label><input type="checkbox" data-plan="ap" data-entry="${esc(d.entry_id)}" ${apOn(d.entry_id) ? "checked" : ""}>${esc(d.name)}</label>`).join("")}</div></div>` : ""}
       ${devices.filter((d) => d.note).map((d) => `<div class="hint">${esc(d.name)}: ${esc(d.note)}</div>`).join("")}
@@ -2684,6 +2787,7 @@ const SetupMixin = {
       else if (kind === "ob_wifi") ob.wifi = target.value || null;
       else if (kind === "ob_title") ob.title = target.value;
       else if (kind === "ob_text") ob.text = target.value;
+      else if (kind === "ob_per_hour") ob.max_per_hour = Math.max(1, Math.min(100, Number(target.value) || 10));
       else if (kind === "ob_offer") {
         const offer = new Set(ob.offer || []);
         if (target.checked) offer.add(target.dataset.wifi);
@@ -2710,6 +2814,8 @@ const SetupMixin = {
     if (d.type === "plan-apply") return this._planApplyDialog(d);
     if (d.type === "plan-approve") return this._planApproveDialog(d);
     if (d.type === "plan-portal") return this._planPortalDialog(d);
+    if (d.type === "plan-rotate") return this._planRotateDialog(d);
+    if (d.type === "plan-rules") return this._planRulesDialog(d);
     return "";
   },
 
@@ -2733,7 +2839,7 @@ const SetupMixin = {
     const net = d.index != null ? plan.networks[d.index] : null;
     const f = (d.form = d.form || {});
     const v = (key, fallback) => (f[key] !== undefined ? f[key] : net ? net[key] : fallback);
-    const switches = this._setupState().state.devices.filter((x) => x.kind === "exos");
+    const switches = this._setupState().state.devices.filter((x) => x.kind === "exos" || x.kind === "switch");
     const dhcp = v("dhcp", true);
     return `<div class="dialog wide-dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
       ${this._dlgHead(net ? net.name || net.id : "Add a network", net ? `VLAN ${net.vlan} · ID ${net.id}` : "A VLAN with its own addresses")}
@@ -2806,6 +2912,11 @@ const SetupMixin = {
       <div class="form-row"><label class="section-title" for="key-net">Put it in</label>
         <select id="key-net" class="plan-select" data-field="network"><option value="">The Wi-Fi's own network</option>${plan.networks.map((n) => `<option value="${esc(n.id)}" ${f.network === n.id ? "selected" : ""}>${esc(n.name)} · VLAN ${esc(n.vlan)}</option>`).join("")}</select></div>
       <div class="form-row"><span class="section-title">Valid for</span><div class="durations" role="radiogroup">${KEY_DURATIONS.map(([m, label]) => `<label class="choice"><input type="radio" name="key-duration" data-field="minutes" value="${m}" ${m === minutes ? "checked" : ""}><span>${label}</span></label>`).join("")}</div></div>
+      ${minutes ? "" : `<div class="two"><div class="form-row"><label class="section-title" for="key-rotate">Change the key every</label>
+        <select id="key-rotate" class="plan-select" data-field="rotate_days"><option value="">Never</option>${ROTATE_CHOICES.map(([d, label]) => `<option value="${d}" ${Number(f.rotate_days) === d ? "selected" : ""}>${label}</option>`).join("")}</select></div>
+        <div class="form-row"><label class="section-title" for="key-cutoff">Old key then works</label>
+        <select id="key-cutoff" class="plan-select" data-field="cutoff_days">${CUTOFF_CHOICES.map(([d, label]) => `<option value="${d}" ${Number(f.cutoff_days || 0) === d ? "selected" : ""}>${label}</option>`).join("")}</select></div></div>
+        <div class="hint">A new key is made on schedule; you get a reminder to put it on the device. The old key keeps working meanwhile.</div>`}
       ${this._textRow("key-mac", "Only for this device's MAC address (optional)", "mac", f.mac || "", { placeholder: "aa:bb:cc:dd:ee:ff" })}
       ${this._textRow("key-key", "Key (optional)", "key", f.key || "", { placeholder: "Leave empty to make one up", hint: "8–63 characters." })}
       <div class="dlg-actions"><button class="btn" data-action="close">Cancel</button>
@@ -2817,7 +2928,7 @@ const SetupMixin = {
       ${this._dlgHead(d.name, d.ssid ? `Wi-Fi: ${d.ssid}` : "")}
       <div class="key-box mono" id="key-value">${esc(d.value)}</div>
       ${d.qr ? `<div class="qr-box" aria-label="QR code to join ${esc(d.ssid || "")}">${d.qr}</div>` : ""}
-      <p class="muted" style="font-size:13px">${d.wifiOnly ? `The password of ${esc(d.ssid)}.` : `Enter this as the Wi-Fi password on ${esc(d.name)}.`} ${d.qr ? "Or scan the code with the device's camera to join." : ""} ${d.expires ? `It stops working in ${esc(timeLeft(d.expires).replace(" left", ""))}.` : ""}</p>
+      <p class="muted" style="font-size:13px">${d.wifiOnly ? `The password of ${esc(d.ssid)}.` : d.upcoming ? `Put this key on ${esc(d.device)}; the old one keeps working until you press <strong>Device updated</strong>.` : `Enter this as the Wi-Fi password on ${esc(d.name)}.`} ${d.qr ? "Or scan the code with the device's camera to join." : ""} ${d.expires ? `It stops working in ${esc(timeLeft(d.expires).replace(" left", ""))}.` : ""}</p>
       <div class="dlg-actions"><button class="btn" data-action="plan-copy">${icon("save")}Copy</button><button class="btn primary" data-action="close">Done</button></div></div>`;
   },
 
@@ -2988,6 +3099,10 @@ const SetupMixin = {
         if (f.network) msg.network = f.network;
         if (f.mac) msg.mac = f.mac.trim();
         if (Number(f.minutes)) msg.minutes = Number(f.minutes);
+        else {
+          if (Number(f.rotate_days)) msg.rotate_days = Number(f.rotate_days);
+          if (Number(f.cutoff_days)) msg.cutoff_days = Number(f.cutoff_days);
+        }
         if (f.key) {
           if (f.key.length < 8 || f.key.length > 63) return this._toast("A key needs 8 to 63 characters", true);
           msg.key = f.key;
@@ -3053,6 +3168,73 @@ const SetupMixin = {
         });
         break;
       }
+      case "plan-key-rotate":
+        if (s.dirty) return this._toast("Save the setup first", true);
+        this._openDialog({ type: "plan-rotate", key: el.dataset.key });
+        break;
+      case "plan-key-rotate-start": {
+        const f = d.form || {};
+        const key = s.state.plan.keys.find((k) => k.id === d.key);
+        const ids = f.all ? s.state.plan.keys.filter((k) => k.wifi === key.wifi && !k.rotation && !k.expires).map((k) => k.id) : [d.key];
+        const msg = { type: `${DOMAIN}/plan/key_rotate`, key_ids: ids };
+        const cutoff = Number(f.cutoff_days ?? key.cutoff_days ?? 0);
+        if (cutoff) msg.cutoff_days = cutoff;
+        this._setupWs(msg, "plan-key-rotate").then(async (r) => {
+          if (!r) return;
+          this._setupTake(r);
+          this._toast(ids.length > 1 ? `New keys made for ${ids.length} devices` : `New key made for ${key.name}`);
+          if (ids.length === 1) await this._planShowKey(d.key, true);
+          else this._closeDialog();
+        });
+        break;
+      }
+      case "plan-key-show-next":
+        this._planShowKey(el.dataset.key, true);
+        break;
+      case "plan-key-rotate-finish":
+      case "plan-key-rotate-cancel": {
+        const key = s.state.plan.keys.find((k) => k.id === el.dataset.key);
+        const finish = action === "plan-key-rotate-finish";
+        this._openDialog({
+          type: "confirm",
+          title: finish ? `Has ${key.name} got the new key?` : `Keep the old key of ${key.name}?`,
+          text: finish ? "The new key becomes its key and the old one stops working." : "The new key is thrown away; the old one keeps working.",
+          confirm: finish ? "Device updated" : "Keep old key",
+          onYes: () =>
+            this._setupWs({ type: `${DOMAIN}/plan/${finish ? "key_rotate_finish" : "key_rotate_cancel"}`, key_id: key.id }, `rot:${key.id}`).then((r) => {
+              if (!r) return;
+              this._setupTake(r);
+              this._toast(finish ? `${key.name} now uses its new key` : `${key.name} keeps its old key`);
+              this._render();
+            }),
+        });
+        break;
+      }
+      case "plan-rules-edit":
+        this._openDialog({ type: "plan-rules" });
+        break;
+      case "plan-rule-add": {
+        const ob = plan.onboarding || {};
+        const kinds = kindChoices(ob.kinds);
+        const used = new Set(d.rules.map((r) => r.kind));
+        const kind = (kinds.find(([id]) => !used.has(id)) || kinds[0])[0];
+        const ppsk = plan.wifi.filter((w) => w.security === "ppsk");
+        d.rules.push({ kind, wifi: ppsk[0].id, network: null, minutes: null, auto: false });
+        this._render();
+        break;
+      }
+      case "plan-rule-remove":
+        d.rules.splice(Number(el.dataset.rule), 1);
+        this._render();
+        break;
+      case "plan-rules-done": {
+        const kinds = d.rules.map((r) => r.kind);
+        if (new Set(kinds).size !== kinds.length) return this._toast("One rule per kind of device", true);
+        plan.onboarding = { ...(plan.onboarding || {}), rules: d.rules };
+        this._dialog = null;
+        this._setupDirty();
+        break;
+      }
       case "plan-portal-edit":
         this._openDialog({ type: "plan-portal", page: "form" });
         this._portalPreview();
@@ -3096,7 +3278,8 @@ const SetupMixin = {
         const f = d.form || {};
         const req = (s.state.requests || []).find((r) => r.id === d.request);
         const offered = s.state.plan.wifi.filter((w) => w.security === "ppsk");
-        const wifi = f.wifi || (req && offered.some((w) => w.id === req.wants) ? req.wants : offered[0] && offered[0].id);
+        const sug = (req && req.suggested) || {};
+        const wifi = f.wifi || (offered.some((w) => w.id === sug.wifi) ? sug.wifi : req && offered.some((w) => w.id === req.wants) ? req.wants : offered[0] && offered[0].id);
         const msg = { type: `${DOMAIN}/plan/onboard_approve`, request_id: d.request, wifi, bind_mac: Boolean(f.bind) };
         if (f.network) msg.network = f.network;
         if (Number(f.minutes)) msg.minutes = Number(f.minutes);
@@ -3156,13 +3339,13 @@ const SetupMixin = {
     }
   },
 
-  async _planShowKey(keyId) {
+  async _planShowKey(keyId, upcoming = false) {
     const s = this._setupState();
     const key = s.state.plan.keys.find((k) => k.id === keyId);
-    const r = await this._setupWs({ type: `${DOMAIN}/plan/reveal`, ref: `key:${keyId}` });
+    const r = await this._setupWs({ type: `${DOMAIN}/plan/reveal`, ref: upcoming ? `key:${keyId}:next` : `key:${keyId}` });
     if (!r || !key) return;
     const wifi = s.state.plan.wifi.find((w) => w.id === key.wifi);
-    this._dialog = { type: "plan-key-show", name: key.name, ssid: wifi && wifi.ssid, value: r.value, qr: r.qr, expires: key.expires, focus: '.dialog [data-action="close"]' };
+    this._dialog = { type: "plan-key-show", name: upcoming ? `New key for ${key.name}` : key.name, device: key.name, upcoming, ssid: wifi && wifi.ssid, value: r.value, qr: r.qr, expires: key.expires, focus: '.dialog [data-action="close"]' };
     this._render();
   },
 };

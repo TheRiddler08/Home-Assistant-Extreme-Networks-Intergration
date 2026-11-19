@@ -132,6 +132,15 @@ portal script. Requests are read with
 `for f in /tmp/hn_portal/req/*; do … cat "$f"; done`; approve and decline write
 `/tmp/hn_portal/ok/<mac>.html` / `.tok` or `/tmp/hn_portal/no/<mac>`.
 
+### SR switches (VLANs) — assumed
+
+🧪 **Assumed, not yet confirmed on a real SR2208P.** FASTPATH style (its running configuration
+has a `vlan database` block): `show vlan brief` (fallback `show vlan`) to read VLANs;
+`vlan database` → `vlan <id>`, `vlan name <id> "<name>"`, `no vlan <id>` → `exit`;
+`configure` → `interface 1/0/<n>` → `vlan participation include <id>`, `vlan tagging <id>`
+(trunk) or `no vlan tagging <id>` + `vlan pvid <id>` (access) → `exit` → `exit`; then
+`write memory`.
+
 ## Configuration backups (all devices)
 
 `show running-config` (HiveOS, SR switches) or `show configuration` (ExtremeXOS) is read to

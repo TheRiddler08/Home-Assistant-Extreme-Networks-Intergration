@@ -2012,6 +2012,34 @@ _VLAN_ROW_RE = re.compile(
 )
 
 
+_FASTPATH_VLAN_RE = re.compile(r"^(\d{1,4})\s+(.+?)\s{2,}(Default|Static|Dynamic|GVRP|Radius)\b", re.IGNORECASE)
+_FASTPATH_VLAN_LOOSE_RE = re.compile(r"^(\d{1,4})\s+(\S+)")
+
+
+def parse_fastpath_vlans(text: str) -> dict[str, ExosVlan]:
+    """SR switches: 'show vlan brief' (FASTPATH) -> VLAN name -> ExosVlan(name, vid).
+
+    Assumed layout (not yet confirmed on an SR2208P)::
+
+        VLAN ID VLAN Name                         VLAN Type
+        ------- --------------------------------- -------------------
+        1       default                           Default
+        10      Network management                Static
+    """
+    result: dict[str, ExosVlan] = {}
+    for line in clean_output(text).split("\n"):
+        stripped = line.strip()
+        match = _FASTPATH_VLAN_RE.match(stripped) or _FASTPATH_VLAN_LOOSE_RE.match(stripped)
+        if not match:
+            continue
+        vid = int(match.group(1))
+        if not 1 <= vid <= 4094:
+            continue
+        name = match.group(2).strip()
+        result[name] = ExosVlan(name=name, vid=vid)
+    return result
+
+
 def parse_exos_vlans(text: str) -> dict[str, ExosVlan]:
     """'show vlan' summary: name, VID, IP/prefix, flags, protocol, active/total ports, VR."""
     result: dict[str, ExosVlan] = {}

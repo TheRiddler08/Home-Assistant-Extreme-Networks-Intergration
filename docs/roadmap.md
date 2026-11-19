@@ -34,15 +34,19 @@ every AP (`clear auth roaming-cache mac <mac> hive-neighbors`).
 
 ## Open: smaller items
 
-- **SR2208P VLANs** in the Setup tab (FASTPATH `vlan database` / `vlan participation`):
-  needs the switch's VLAN commands confirmed.
-- **Key rotation** with old/new overlap and reminders (the plan's six-month Google
-  password rotation).
-- **Onboarding portal phase 2:** device-type rules (e.g. TVs always to homeISO), approve from
-  a phone notification, a request limit per hour.
+- **SR2208P VLANs: confirm the assumed commands.** Built in 0.16.0 with FASTPATH-style
+  commands (see [CLI commands](cli-commands.md)). To confirm: the output of `show vlan brief`
+  (or `show vlan`) through `aerohive_local.run_show_command`, then one test VLAN applied to a
+  spare port and the review's result. If the switch words anything differently, it's a small
+  change in `netplan.sr_commands` and `parsers.parse_fastpath_vlans`.
+- **More than one language** on the onboarding portal.
 
 ## Done
 
+- 0.16.0: key rotation (old and new key together, reminders, confirm or cut-off, scheduled
+  every 3/6/12 months, whole network at once); onboarding rules by kind of device (with
+  automatic approval), approve/decline actions for phone notifications, requests-per-hour
+  limit; SR2208P VLANs (assumed commands).
 - 0.15.0: the onboarding portal is fully customisable: texts, logo, colours, device kinds,
   whether devices choose the network, or your own HTML page; live preview.
 - 0.14.0: QR codes for keys and Wi-Fi passwords; onboarding portal phase 1 (served by the

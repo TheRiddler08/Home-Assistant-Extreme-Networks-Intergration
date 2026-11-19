@@ -217,3 +217,22 @@ def test_look_validation_and_preview() -> None:
         html_page = portal.preview(good, offer, page, qr_svg="<svg></svg>")
         assert html_page.startswith("<!doctype html>") and "<h1>Hi</h1>" in html_page
     assert "Living room TV → <strong>home</strong>" in portal.preview(good, offer, "approved")
+
+
+@needs_sh
+def test_requests_per_hour_limit(tmp_path: Path) -> None:
+    arp = tmp_path / "arp"
+    arp.write_text("IP address HW type Flags HW address Mask Device\n"
+                   + "".join(f"10.8.10.{i} 0x1 0x2 02:11:22:33:44:{i:02x} * br\n" for i in range(10, 14)))
+    cgi = tmp_path / "p.sh"
+    cgi.write_text(portal.cgi_script(portal.look_from({"max_per_hour": 2}), []).replace(portal.TMP, str(tmp_path / "hn")).replace(portal.ARP, str(arp)))
+
+    def ask(i: int) -> str:
+        body = f"name=Dev{i}&kind=other"
+        env = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "REMOTE_ADDR": f"10.8.10.{i}", "REQUEST_METHOD": "POST", "CONTENT_LENGTH": str(len(body)), "HTTP_COOKIE": ""}
+        return subprocess.run(["sh", str(cgi)], input=body.encode(), capture_output=True, env=env, check=True, timeout=20).stdout.decode()
+
+    assert "waiting for approval" in ask(10) and "waiting for approval" in ask(11)
+    third = ask(12)
+    assert "Many devices have asked" in third and "Set-Cookie" not in third
+    assert sorted(p.name for p in (tmp_path / "hn" / "req").iterdir()) == ["0211223344" + "0a", "0211223344" + "0b"]

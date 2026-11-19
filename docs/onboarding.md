@@ -94,10 +94,66 @@ and updates when you leave a field.
 
 Changes take effect on the router when you **Save** and **Review & apply**.
 
+## Rules by kind of device
+
+**Edit rules** in the Onboarding portal card: for a kind of device (from your list), choose
+the Wi-Fi network, the network (VLAN) it lands in and how long the key is valid. The approve
+dialog then starts with those choices.
+
+**Approve automatically** lets every device of that kind in without asking you. Anyone with
+the onboarding password can pick that kind, so use it only for isolated networks (e.g. TVs on
+homeISO). Automatic approvals still fire the event (with `auto_approved: true`) and show in
+the activity list.
+
+## Limits
+
+- **Requests per hour** (all devices together, default 10): beyond that the portal asks
+  devices to try again later. Set it in the Onboarding portal card.
+- At most 20 requests wait at once; unanswered ones expire after an hour.
+
 ## Approving from an automation
 
-Each request fires `aerohive_local_onboarding_request` with `id`, `name`, `kind`, `mac`, `ip`
-and `wants`. Use it to send a phone notification, for example:
+Each request fires `aerohive_local_onboarding_request` with `id`, `name`, `kind`,
+`kind_label`, `mac`, `ip`, `wants`, `suggested_wifi` and `auto_approved`. The actions
+[`aerohive_local.approve_device` and `aerohive_local.decline_device`](actions.md#onboarding-portal)
+answer a request, so a phone notification can carry **Approve** and **Decline** buttons:
+
+```yaml
+automation:
+  - alias: "New device wants to join"
+    triggers:
+      - trigger: event
+        event_type: aerohive_local_onboarding_request
+        event_data:
+          auto_approved: false
+    actions:
+      - action: notify.mobile_app_my_phone
+        data:
+          title: "New device waiting"
+          message: "{{ trigger.event.data.name }} ({{ trigger.event.data.kind_label }}) wants to join"
+          data:
+            actions:
+              - action: "APPROVE_{{ trigger.event.data.id }}"
+                title: "Approve"
+              - action: "DECLINE_{{ trigger.event.data.id }}"
+                title: "Decline"
+
+  - alias: "Answer a device from the notification"
+    triggers:
+      - trigger: event
+        event_type: mobile_app_notification_action
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.event.data.action[:8] in ['APPROVE_', 'DECLINE_'] }}"
+    actions:
+      - action: >-
+          aerohive_local.{{ 'approve_device' if trigger.event.data.action.startswith('APPROVE_') else 'decline_device' }}
+        data:
+          request_id: "{{ trigger.event.data.action[8:] }}"
+```
+
+Approving this way uses the kind's rule, else what the device asked for, else the first
+offered network. A simpler notification only:
 
 ```yaml
 automation:
@@ -109,12 +165,12 @@ automation:
       - action: notify.mobile_app_my_phone
         data:
           title: "New device waiting"
-          message: "{{ trigger.event.data.name }} ({{ trigger.event.data.kind }}) wants to join"
+          message: "{{ trigger.event.data.name }} ({{ trigger.event.data.kind_label }}) wants to join"
           data:
             url: /aerohive-network/setup
 ```
 
-Approving and declining happen in the Setup tab (administrators).
+Otherwise approve and decline in the Setup tab (administrators).
 
 ## Notes and limits
 
@@ -125,5 +181,4 @@ Approving and declining happen in the Setup tab (administrators).
   shows a certificate warning; its *Sign in to network* screen uses `http://` and works.
 - On **Aerohive access points**, per-device keys aren't sent yet (see the
   [roadmap](roadmap.md)), so approved devices join networks broadcast by OpenWrt.
-- Not yet: rules by device type (e.g. TVs always to homeISO), approving straight from a
-  phone notification, a limit of requests per hour, more than one language.
+- Not yet: more than one language.

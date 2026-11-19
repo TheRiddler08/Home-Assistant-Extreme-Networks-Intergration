@@ -47,15 +47,15 @@
   // Network setup (plan) commands: an in-memory stand-in for the integration.
   const planDevices = () => snapshot.devices.map((d) => ({
     entry_id: d.entry_id, name: d.name, host: d.host, kind: d.cli === "openwrt" ? "openwrt" : d.cli, online: d.online,
-    role: d.cli === "exos" ? "switch" : d.cli === "openwrt" && planState.plan.devices.router === d.entry_id ? "router" : (d.radios || []).length ? "ap" : "none",
+    role: d.cli === "exos" || d.cli === "switch" ? "switch" : d.cli === "openwrt" && planState.plan.devices.router === d.entry_id ? "router" : (d.radios || []).length ? "ap" : "none",
     wireless: (d.radios || []).length > 0, router_capable: d.cli === "openwrt",
-    note: d.cli === "switch" ? "VLANs on SR switches aren't set up from here yet" : null,
+    note: d.cli === "switch" ? "VLAN commands for SR switches are assumed until confirmed on a real SR2208P (shown in the review)" : null,
   }));
   const planSecrets = {};
   const planState = {
     plan: { networks: [], wifi: [], keys: [], devices: { router: null, router_trunks: ["br-lan"], switch_trunks: {}, aps: null } },
     errors: [], pending: false, applied_at: null, last_results: [], needs_apply: [], audit: [],
-    requests: [{ id: "021122334455", mac: "02:11:22:33:44:55", ip: "10.8.10.60", name: "Living room TV", kind: "tv_or_streaming_box", kind_label: "TV or streaming box", wants: "homeiso", time: 1, status: "pending", seen: new Date().toISOString() }],
+    requests: [{ id: "021122334455", mac: "02:11:22:33:44:55", ip: "10.8.10.60", name: "Living room TV", kind: "tv_or_streaming", kind_label: "TV or streaming box", suggested: { wifi: "homeiso", network: "iot", minutes: null, auto: false }, wants: "homeiso", time: 1, status: "pending", seen: new Date().toISOString() }],
   };
   const fakeQr = '<svg viewBox="0 0 21 21"><rect width="21" height="21" fill="#fff"/><rect x="1" y="1" width="7" height="7" fill="#000"/><rect x="13" y="1" width="7" height="7" fill="#000"/><rect x="1" y="13" width="7" height="7" fill="#000"/></svg>';
   const planErrors = () => planState.plan.wifi.filter((w) => ["wpa2", "wpa2_wpa3", "wpa3"].includes(w.security) && !planSecrets[`wifi:${w.id}`]).map((w) => `${w.ssid}: needs a password`);
@@ -101,10 +101,29 @@
     }
     if (t === "key_add") {
       const id = msg.name.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 10);
-      planState.plan.keys.push({ id, name: msg.name, wifi: msg.wifi, network: msg.network || null, mac: msg.mac || null, expires: msg.minutes ? new Date(Date.now() + msg.minutes * 60000).toISOString() : null });
+      planState.plan.keys.push({ id, name: msg.name, wifi: msg.wifi, network: msg.network || null, mac: msg.mac || null, expires: msg.minutes ? new Date(Date.now() + msg.minutes * 60000).toISOString() : null,
+        rotate_days: msg.rotate_days || null, cutoff_days: msg.cutoff_days || null, rotation: null, rotated: null });
       planSecrets[`key:${id}`] = msg.key || "Kx7mPq2vR9tw";
       log("key_added", msg.name);
       return { key_id: id, results: [], ...planView() };
+    }
+    if (t === "key_rotate") {
+      for (const k of planState.plan.keys.filter((k) => msg.key_ids.includes(k.id))) {
+        if (k.rotation) throw new Error("Those keys are already being rotated");
+        k.rotation = { started: new Date().toISOString(), cutoff: msg.cutoff_days ? new Date(Date.now() + msg.cutoff_days * 86400000).toISOString() : null };
+        planSecrets[`key:${k.id}:next`] = "Nw3wKeyAbc12";
+      }
+      log("key_rotation_started", msg.key_ids.join(", "));
+      return { results: [], ...planView() };
+    }
+    if (t === "key_rotate_finish" || t === "key_rotate_cancel") {
+      const k = planState.plan.keys.find((x) => x.id === msg.key_id);
+      if (!k || !k.rotation) throw new Error("That key isn't being rotated");
+      if (t === "key_rotate_finish") planSecrets[`key:${k.id}`] = planSecrets[`key:${k.id}:next`];
+      delete planSecrets[`key:${k.id}:next`];
+      k.rotation = null; k.rotated = new Date().toISOString();
+      log(t === "key_rotate_finish" ? "key_rotated" : "key_rotation_cancelled", k.name);
+      return { results: [], ...planView() };
     }
     if (t === "key_revoke") {
       planState.plan.keys = planState.plan.keys.filter((k) => k.id !== msg.key_id);

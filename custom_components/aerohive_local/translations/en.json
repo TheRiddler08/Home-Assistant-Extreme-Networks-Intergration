@@ -626,6 +626,42 @@
           "description": "Only for this long; afterwards the network goes back to how it was (also after a restart). Needs On."
         }
       }
+    },
+    "approve_device": {
+      "name": "Approve a device",
+      "description": "Approve a device waiting on the onboarding portal: it gets its own Wi-Fi key and the portal shows it the password. For automations, e.g. a button on a phone notification. Administrators only.",
+      "fields": {
+        "request_id": {
+          "name": "Request",
+          "description": "The id from the aerohive_local_onboarding_request event."
+        },
+        "wifi": {
+          "name": "Wi-Fi network",
+          "description": "ID of a Wi-Fi network with per-device keys. Default: the device kind's rule, what the device asked for, or the first offered network."
+        },
+        "network": {
+          "name": "Network",
+          "description": "ID of the network (VLAN) the device lands in. Default: the rule's, else the Wi-Fi's own network."
+        },
+        "minutes": {
+          "name": "Valid for",
+          "description": "Minutes until the key stops working. Empty: permanent (or the rule's duration)."
+        },
+        "bind_mac": {
+          "name": "Only for this device's MAC address",
+          "description": "Tie the key to the MAC address the device used on the onboarding Wi-Fi. Leave off for phones and laptops (they use private addresses)."
+        }
+      }
+    },
+    "decline_device": {
+      "name": "Decline a device",
+      "description": "Decline a device waiting on the onboarding portal; the portal tells it so. Administrators only.",
+      "fields": {
+        "request_id": {
+          "name": "Request",
+          "description": "The id from the aerohive_local_onboarding_request event."
+        }
+      }
     }
   },
   "issues": {

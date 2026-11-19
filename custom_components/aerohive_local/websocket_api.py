@@ -38,7 +38,7 @@ def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_wifi_create)
     websocket_api.async_register_command(hass, ws_wifi_delete)
     websocket_api.async_register_command(hass, ws_wifi_timer_cancel)
-    for command in (ws_plan_get, ws_plan_save, ws_plan_preview, ws_plan_apply, ws_plan_reveal, ws_plan_template, ws_key_add, ws_key_revoke, ws_onboard_approve, ws_onboard_decline, ws_portal_preview, ws_portal_template):
+    for command in (ws_plan_get, ws_plan_save, ws_plan_preview, ws_plan_apply, ws_plan_reveal, ws_plan_template, ws_key_add, ws_key_revoke, ws_onboard_approve, ws_onboard_decline, ws_portal_preview, ws_portal_template, ws_key_rotate, ws_key_rotate_finish, ws_key_rotate_cancel):
         websocket_api.async_register_command(hass, command)
 
 
@@ -268,6 +268,8 @@ async def ws_plan_template(hass: HomeAssistant, connection: websocket_api.Active
         vol.Optional("mac"): vol.Any(str, None),
         vol.Optional("minutes"): vol.Any(None, vol.All(int, vol.Range(min=1, max=366 * 24 * 60))),
         vol.Optional("key"): vol.Any(str, None),
+        vol.Optional("rotate_days"): vol.Any(None, vol.All(int, vol.Range(min=1, max=3650))),
+        vol.Optional("cutoff_days"): vol.Any(None, vol.All(int, vol.Range(min=1, max=365))),
     }
 )
 @websocket_api.require_admin
@@ -283,6 +285,8 @@ async def ws_key_add(hass: HomeAssistant, connection: websocket_api.ActiveConnec
             mac=msg.get("mac"),
             minutes=msg.get("minutes"),
             key=msg.get("key") or None,
+            rotate_days=msg.get("rotate_days"),
+            cutoff_days=msg.get("cutoff_days"),
             user=_user(connection),
         )
         return {"key_id": added["id"], "results": added["results"], **manager.state()}
@@ -366,3 +370,48 @@ async def ws_portal_template(hass: HomeAssistant, connection: websocket_api.Acti
     from . import portal  # noqa: PLC0415
 
     connection.send_result(msg["id"], {"template": portal.DEFAULT_TEMPLATE, "placeholders": list(portal.PLACEHOLDERS)})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/plan/key_rotate",
+        vol.Required("key_ids"): [str],
+        vol.Optional("cutoff_days"): vol.Any(None, vol.All(int, vol.Range(min=1, max=365))),
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_key_rotate(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    manager = plan_mod.get_plan(hass)
+
+    async def run() -> dict[str, Any]:
+        results = await manager.async_rotate_keys(msg["key_ids"], cutoff_days=msg.get("cutoff_days"), user=_user(connection))
+        return {"results": results, **manager.state()}
+
+    await _plan_call(connection, msg, run())
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/plan/key_rotate_finish", vol.Required("key_id"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_key_rotate_finish(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    manager = plan_mod.get_plan(hass)
+
+    async def run() -> dict[str, Any]:
+        results = await manager.async_finish_rotation(msg["key_id"], user=_user(connection))
+        return {"results": results, **manager.state()}
+
+    await _plan_call(connection, msg, run())
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/plan/key_rotate_cancel", vol.Required("key_id"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_key_rotate_cancel(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    manager = plan_mod.get_plan(hass)
+
+    async def run() -> dict[str, Any]:
+        results = await manager.async_cancel_rotation(msg["key_id"], user=_user(connection))
+        return {"results": results, **manager.state()}
+
+    await _plan_call(connection, msg, run())

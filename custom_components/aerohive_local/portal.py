@@ -84,7 +84,7 @@ def _clean(value: str | None, limit: int = 40) -> str:
 
 
 def _slug(label: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")[:16]
+    return re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")[:16].strip("_")
 
 
 @dataclass
@@ -103,6 +103,7 @@ class Look:
     kinds: list[tuple[str, str]]  # (id, label)
     ask_network: bool
     template: str  # the page around {{content}}
+    max_per_hour: int = 10
 
 
 def kind_choices(labels: list[str] | None) -> list[tuple[str, str]]:
@@ -139,6 +140,7 @@ def look_from(settings: dict[str, Any]) -> Look:
         kinds=kind_choices(settings.get("kinds")),
         ask_network=settings.get("ask_network", True) is not False,
         template=str(template),
+        max_per_hour=settings["max_per_hour"] if isinstance(settings.get("max_per_hour"), int) and 1 <= settings["max_per_hour"] <= 100 else 10,
     )
 
 
@@ -237,6 +239,10 @@ def unknown_html(look: Look) -> str:
     return _h1(look) + "<p>Your device couldn't be recognised. Turn Wi-Fi off and on, then open this page again.</p>"
 
 
+def busy_html(look: Look) -> str:
+    return _h1(look) + "<p>Many devices have asked in the last hour. Please try again a bit later.</p>"
+
+
 def other_browser_html(look: Look) -> str:
     return _h1(look) + "<p>Your request was approved. Open this page in the browser you used to ask, to see the details.</p>"
 
@@ -331,6 +337,13 @@ def cgi_script(look: Look, offer: list[tuple[str, str]]) -> str:
         f'  case "$kind" in {kind_ids}) ;; *) kind={fallback_kind} ;; esac',
         '  case " $OFFER " in *" $wants "*) ;; *) wants= ;; esac',
         f'  if [ -n "$name" ] && [ "$(ls "$D/req" | wc -l)" -lt {MAX_PENDING} ]; then',
+        "    now=$(date +%s); touch \"$D/hits\"",
+        "    awk -v t=$((now - 3600)) '$1 > t' \"$D/hits\" > \"$D/hits.new\" && mv \"$D/hits.new\" \"$D/hits\"",
+        f'    if [ "$(wc -l < "$D/hits")" -ge {look.max_per_hour} ]; then',
+        *body(busy_html(look)),  # the end marker must stay at the start of its line
+        "      exit 0",
+        "    fi",
+        '    echo "$now" >> "$D/hits"',
         "    tok=$(tr -dc 'a-z0-9' < /dev/urandom | head -c 16)",
         "    printf 'mac=%s\\nip=%s\\nname=%s\\nkind=%s\\nwants=%s\\ntok=%s\\ntime=%s\\n' \"$mac\" \"$REMOTE_ADDR\" \"$name\" \"$kind\" \"$wants\" \"$tok\" \"$(date +%s)\" > \"$D/req/$id.tmp\" && mv \"$D/req/$id.tmp\" \"$D/req/$id\"",
         '    EXTRA="Set-Cookie: hn_tok=$tok; Path=/; HttpOnly; SameSite=Lax"',

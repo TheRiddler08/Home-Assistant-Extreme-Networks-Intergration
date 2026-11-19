@@ -54,6 +54,7 @@ EXPIRY_INTERVAL = timedelta(minutes=1)
 PORTAL_INTERVAL = timedelta(seconds=15)
 REQUEST_TTL = timedelta(hours=1)  # unanswered requests, and approved pages, are removed after this
 EVENT_ONBOARDING = f"{DOMAIN}_onboarding_request"
+EVENT_ROTATION = f"{DOMAIN}_key_rotation"
 AUDIT_LIMIT = 200
 KEY_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
@@ -189,6 +190,7 @@ class PlanManager:
         if value is None:
             return None
         kind, _, item_id = ref.partition(":")
+        item_id = item_id.split(":")[0]  # "key:<id>:next" is the upcoming key of a rotation
         wifi = None
         if kind == "key":
             key = next((k for k in self.plan["keys"] if k["id"] == item_id), None)
@@ -248,7 +250,7 @@ class PlanManager:
             if entry_id == plan["devices"].get("router"):
                 return ROLE_ROUTER
             return ROLE_AP if data.is_wireless and ap_ok else ROLE_NONE
-        if data.cli == commands.DIALECT_EXOS:
+        if data.cli in (commands.DIALECT_EXOS, commands.DIALECT_SWITCH):
             return ROLE_SWITCH
         if data.cli == commands.DIALECT_HIVEOS and data.is_wireless and ap_ok:
             return ROLE_AP
@@ -261,7 +263,7 @@ class PlanManager:
             kind = "openwrt" if c.is_openwrt else (data.cli if data else None)
             note = None
             if data is not None and data.cli == commands.DIALECT_SWITCH:
-                note = "VLANs on SR switches aren't set up from here yet"
+                note = "VLAN commands for SR switches are assumed until confirmed on a real SR2208P (shown in the review)"
             elif data is not None and data.cli == commands.DIALECT_HIVEOS and not data.is_wireless:
                 note = "No Wi-Fi radios"
             result.append(
@@ -298,6 +300,10 @@ class PlanManager:
                     now=dt_util.utcnow(),
                     wireless_only=wireless_only,
                 )
+            if role == ROLE_SWITCH and data.cli == commands.DIALECT_SWITCH:
+                existing = {v.name: v.vid for v in data.vlans.values()}
+                ports = [p for p in data.ports() if not p.startswith("0/")]
+                return role, netplan.sr_commands(plan, entry_id=entry_id, existing=existing, ports=ports, managed=managed.get("vlans", []))
             if role == ROLE_SWITCH:
                 existing = {v.name: v.vid for v in data.vlans.values()}
                 return role, netplan.exos_commands(plan, entry_id=entry_id, existing=existing, managed=managed.get("vlans", []))
@@ -424,15 +430,17 @@ class PlanManager:
         now = dt_util.utcnow()
         seen = {r.id: r for r in portal.parse_requests(out)}
         changed = False
+        new: list[str] = []
         for rid, req in seen.items():
             known = self.requests.get(rid)
-            if known and known.get("status") == "pending" and known.get("token") == req.token:
+            if known and known.get("token") == req.token:
                 continue
-            if known and known.get("status") != "pending" and known.get("token") == req.token:
-                continue
-            self.requests[rid] = {**portal.as_dict(req), "token": req.token, "status": "pending", "seen": now.isoformat()}
+            item = {**portal.as_dict(req), "token": req.token, "status": "pending", "seen": now.isoformat()}
+            if rule := self._rule_for(item["kind"]):
+                item["suggested"] = {"wifi": rule.get("wifi"), "network": rule.get("network"), "minutes": rule.get("minutes"), "auto": bool(rule.get("auto"))}
+            self.requests[rid] = item
+            new.append(rid)
             changed = True
-            self._announce(self.requests[rid])
         stale = []
         for rid, item in self.requests.items():
             age = now - dt_util.parse_datetime(item.get("decided") or item["seen"])
@@ -452,6 +460,45 @@ class PlanManager:
                 self._log("onboarding_expired", item.get("name") or rid)
         if changed:
             await self._async_save()
+        for rid in new:
+            item = self.requests[rid]
+            suggested = item.get("suggested") or {}
+            if suggested.get("auto"):
+                try:
+                    await self.async_approve(
+                        rid, wifi=suggested["wifi"], network=suggested.get("network"), minutes=suggested.get("minutes"),
+                        user=f"rule for {self.kind_label(item['kind'])}",
+                    )
+                except HomeAssistantError as err:
+                    _LOGGER.warning("Approving %s by rule failed: %s", item["name"], err)
+                else:
+                    self._fire_request(item, auto=True)
+                    continue
+            self._announce(item)
+
+    def _rule_for(self, kind: str) -> dict[str, Any] | None:
+        plan = self.applied or self.plan
+        return next((r for r in plan["onboarding"].get("rules") or [] if r.get("kind") == kind), None)
+
+    def default_wifi(self, item: dict[str, Any]) -> str | None:
+        """The Wi-Fi a request gets unless told otherwise: its rule, what it asked for, else the first offered."""
+        offered = [w["id"] for w in self.plan["wifi"] if w["security"] == "ppsk" and w["id"] in (self.plan["onboarding"].get("offer") or [])]
+        for choice in ((item.get("suggested") or {}).get("wifi"), item.get("wants")):
+            if choice and any(w["id"] == choice and w["security"] == "ppsk" for w in self.plan["wifi"]):
+                return choice
+        return offered[0] if offered else None
+
+    def _fire_request(self, item: dict[str, Any], *, auto: bool = False) -> None:
+        suggested = item.get("suggested") or {}
+        self.hass.bus.async_fire(
+            EVENT_ONBOARDING,
+            {
+                **{k: item.get(k) for k in ("id", "name", "kind", "mac", "ip", "wants")},
+                "kind_label": self.kind_label(item["kind"]),
+                "suggested_wifi": suggested.get("wifi") or self.default_wifi(item),
+                "auto_approved": auto,
+            },
+        )
 
     def _announce(self, item: dict[str, Any]) -> None:
         kind = self.kind_label(item["kind"])
@@ -464,9 +511,7 @@ class PlanManager:
             title="New device waiting for approval",
             notification_id=f"{DOMAIN}_onboard_{item['id']}",
         )
-        self.hass.bus.async_fire(
-            EVENT_ONBOARDING, {k: item.get(k) for k in ("id", "name", "kind", "mac", "ip", "wants")}
-        )
+        self._fire_request(item)
         self._log("onboarding_request", f"{item['name']} ({kind})")
 
     def kind_label(self, kind_id: str) -> str:
@@ -603,6 +648,8 @@ class PlanManager:
         mac: str | None = None,
         minutes: int | None = None,
         key: str | None = None,
+        rotate_days: int | None = None,
+        cutoff_days: int | None = None,
         user: str | None = None,
     ) -> dict[str, Any]:
         name = (name or "").strip()
@@ -635,6 +682,8 @@ class PlanManager:
                 "mac": (mac or "").lower() or None,
                 "expires": (now + timedelta(minutes=minutes)).isoformat() if minutes else None,
                 "created": now.isoformat(),
+                "rotate_days": rotate_days or None,
+                "cutoff_days": cutoff_days or None,
             }
             plan = netplan.normalize({**self.plan, "keys": [*self.plan["keys"], item]})
             self._set_secret(f"key:{kid}", value)
@@ -655,13 +704,113 @@ class PlanManager:
                 raise HomeAssistantError("That key doesn't exist")
             self.plan = {**self.plan, "keys": [k for k in self.plan["keys"] if k["id"] != key_id]}
             self._set_secret(f"key:{key_id}", None)
+            self._set_secret(f"key:{key_id}:next", None)
+            persistent_notification.async_dismiss(self.hass, f"{DOMAIN}_rotation_{key_id}")
             self._log(f"key_{reason}", item.get("name") or key_id, user)
             results = await self._async_push_keys(self._key_targets({item["wifi"]}))
             await self._async_save()
         return results
 
+    # ------------------------------------------------------------------ key rotation
+
+    def _rotation_note(self, item: dict[str, Any]) -> None:
+        ssid = next((w["ssid"] for w in self.plan["wifi"] if w["id"] == item["wifi"]), item["wifi"])
+        cutoff = (item.get("rotation") or {}).get("cutoff")
+        until = f"until {dt_util.as_local(dt_util.parse_datetime(cutoff)).strftime('%d %b %Y')}" if cutoff else "until you confirm"
+        persistent_notification.async_create(
+            self.hass,
+            f"**{item['name']}** has a new key for **{ssid}**. Put it on the device, then press *Device updated* "
+            f"in [Setup → Devices & keys](/aerohive-network/setup). The old key keeps working {until}.",
+            title="Wi-Fi key to update",
+            notification_id=f"{DOMAIN}_rotation_{item['id']}",
+        )
+        self.hass.bus.async_fire(EVENT_ROTATION, {"key_id": item["id"], "name": item["name"], "wifi": item["wifi"], "ssid": ssid, "cutoff": cutoff})
+
+    async def async_rotate_keys(
+        self, key_ids: list[str], *, cutoff_days: int | None = None, user: str | None = None, reason: str = "manual"
+    ) -> list[dict[str, Any]]:
+        """Start rotating keys: each gets a new key that works alongside the old one.
+
+        The old key stops when the rotation is finished (``async_finish_rotation``,
+        e.g. after the device was updated) or at the cutoff, if there is one.
+        """
+        async with self._lock:
+            now = dt_util.utcnow()
+            started = []
+            for item in self.plan["keys"]:
+                if item["id"] not in key_ids or item.get("rotation"):
+                    continue
+                days = cutoff_days if cutoff_days is not None else item.get("cutoff_days")
+                self._set_secret(f"key:{item['id']}:next", generate_key())
+                item["rotation"] = {"started": now.isoformat(), "cutoff": (now + timedelta(days=days)).isoformat() if days else None}
+                started.append(item)
+            if not started and key_ids:
+                raise HomeAssistantError("Those keys are already being rotated" if any(k["id"] in key_ids for k in self.plan["keys"]) else "No such key")
+            for item in started:
+                self._rotation_note(item)
+                self._log("key_rotation_started", f"{item['name']}" + (" (scheduled)" if reason == "scheduled" else ""), user)
+            results = await self._async_push_keys(self._key_targets({k["wifi"] for k in started}))
+            await self._async_save()
+        return results
+
+    async def async_finish_rotation(self, key_id: str, *, user: str | None = None, reason: str = "confirmed") -> list[dict[str, Any]]:
+        """The new key becomes the key; the old one stops working."""
+        async with self._lock:
+            item = next((k for k in self.plan["keys"] if k["id"] == key_id), None)
+            if item is None or not item.get("rotation"):
+                raise HomeAssistantError("That key isn't being rotated")
+            upcoming = self.secret(f"key:{key_id}:next")
+            if upcoming:
+                self._set_secret(f"key:{key_id}", upcoming)
+            self._set_secret(f"key:{key_id}:next", None)
+            item["rotation"] = None
+            item["rotated"] = dt_util.utcnow().isoformat()
+            persistent_notification.async_dismiss(self.hass, f"{DOMAIN}_rotation_{key_id}")
+            self._log("key_rotated", f"{item['name']}" + (" (cutoff reached)" if reason == "cutoff" else ""), user)
+            results = await self._async_push_keys(self._key_targets({item["wifi"]}))
+            await self._async_save()
+        return results
+
+    async def async_cancel_rotation(self, key_id: str, *, user: str | None = None) -> list[dict[str, Any]]:
+        """Keep the old key; the new one stops working."""
+        async with self._lock:
+            item = next((k for k in self.plan["keys"] if k["id"] == key_id), None)
+            if item is None or not item.get("rotation"):
+                raise HomeAssistantError("That key isn't being rotated")
+            self._set_secret(f"key:{key_id}:next", None)
+            item["rotation"] = None
+            item["rotated"] = dt_util.utcnow().isoformat()  # don't start again straight away
+            persistent_notification.async_dismiss(self.hass, f"{DOMAIN}_rotation_{key_id}")
+            self._log("key_rotation_cancelled", item["name"], user)
+            results = await self._async_push_keys(self._key_targets({item["wifi"]}))
+            await self._async_save()
+        return results
+
+    async def _async_rotation_tick(self, now: Any) -> None:
+        """Start scheduled rotations; finish rotations whose cutoff passed."""
+        due = []
+        for item in self.plan["keys"]:
+            rotation = item.get("rotation")
+            if rotation:
+                if rotation.get("cutoff") and dt_util.parse_datetime(rotation["cutoff"]) <= now:
+                    try:
+                        await self.async_finish_rotation(item["id"], reason="cutoff")
+                    except HomeAssistantError as err:
+                        _LOGGER.warning("Finishing the key rotation of %s failed: %s", item.get("name"), err)
+                continue
+            if item.get("rotate_days") and not item.get("expires"):
+                since = dt_util.parse_datetime(item.get("rotated") or item.get("created") or now.isoformat())
+                if since and since + timedelta(days=item["rotate_days"]) <= now:
+                    due.append(item["id"])
+        if due:
+            try:
+                await self.async_rotate_keys(due, reason="scheduled")
+            except HomeAssistantError as err:
+                _LOGGER.warning("Starting scheduled key rotations failed: %s", err)
+
     async def _async_tick(self, _now: Any = None) -> None:
         now = dt_util.utcnow()
+        await self._async_rotation_tick(now)
         expired = netplan.expired_keys(self.plan, now)
         for item in expired:
             try:

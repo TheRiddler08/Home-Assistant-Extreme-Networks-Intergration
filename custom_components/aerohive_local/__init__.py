@@ -23,7 +23,7 @@ from homeassistant.core import (
     ServiceResponse,
     SupportsResponse,
 )
-from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError, ServiceValidationError
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError, ServiceValidationError, Unauthorized
 from homeassistant.helpers import (
     config_validation as cv,
 )
@@ -337,6 +337,53 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         )
 
     hass.services.async_register(DOMAIN, "set_ssid", set_ssid, SET_SSID_SCHEMA)
+
+    async def require_admin(call: ServiceCall) -> None:
+        """Approving devices is for administrators (automations run without a user)."""
+        if call.context.user_id:
+            user = await hass.auth.async_get_user(call.context.user_id)
+            if user is None or not user.is_admin:
+                raise Unauthorized(context=call.context)
+
+    async def approve_device(call: ServiceCall) -> None:
+        await require_admin(call)
+        manager = plan_mod.get_plan(hass)
+        request_id = call.data["request_id"]
+        item = manager.requests.get(request_id)
+        if item is None or item.get("status") != "pending":
+            raise ServiceValidationError(f"No device is waiting with request {request_id}")
+        suggested = item.get("suggested") or {}
+        wifi = call.data.get("wifi") or manager.default_wifi(item)
+        if not wifi:
+            raise ServiceValidationError("No Wi-Fi network with per-device keys is offered")
+        await manager.async_approve(
+            request_id,
+            wifi=wifi,
+            network=call.data.get("network") or suggested.get("network"),
+            minutes=call.data.get("minutes") or suggested.get("minutes"),
+            bind_mac=call.data.get("bind_mac", False),
+            user=call.context.user_id and "action" or "automation",
+        )
+
+    async def decline_device(call: ServiceCall) -> None:
+        await require_admin(call)
+        await plan_mod.get_plan(hass).async_decline(call.data["request_id"], user=call.context.user_id and "action" or "automation")
+
+    hass.services.async_register(
+        DOMAIN,
+        "approve_device",
+        approve_device,
+        vol.Schema(
+            {
+                vol.Required("request_id"): cv.string,
+                vol.Optional("wifi"): cv.string,
+                vol.Optional("network"): cv.string,
+                vol.Optional("minutes"): vol.All(vol.Coerce(int), vol.Range(min=1, max=366 * 24 * 60)),
+                vol.Optional("bind_mac", default=False): cv.boolean,
+            }
+        ),
+    )
+    hass.services.async_register(DOMAIN, "decline_device", decline_device, vol.Schema({vol.Required("request_id"): cv.string}))
 
     websocket_api.async_register(hass)
     await wifi.async_setup_timers(hass)

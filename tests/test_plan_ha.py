@@ -282,3 +282,102 @@ async def test_portal_preview_and_template(hass: HomeAssistant, hass_ws_client, 
                                              "onboarding": {"title": "Acme", "colors": {"accent": "#ff6600"}}})
     page = reply["result"]["html"]
     assert "<h1>Acme</h1>" in page and "--accent:#ff6600" in page and "<svg" in page and "Kx7mPq2vR9tw" in page
+
+
+async def test_key_rotation(hass: HomeAssistant, hass_ws_client, freezer, ow_entry: MockConfigEntry) -> None:  # noqa: F811
+    manager = get_plan(hass)
+    await manager.async_save_plan(_plan(ow_entry.entry_id), {"wifi:guest": "guest-pass-1"})
+    _client().responses[CONFIRM] = "HN_CONFIRMED"
+    assert all(r["ok"] for r in await manager.async_apply())
+    reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/key_add", "name": "Nest speaker", "wifi": "home", "rotate_days": 182})
+    kid = reply["result"]["key_id"]
+    old = manager.secret(f"key:{kid}")
+    events = []
+    hass.bus.async_listen("aerohive_local_key_rotation", lambda e: events.append(e.data))
+
+    # Manual rotation: old and new key both work until confirmed.
+    _client().commands.clear()
+    reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/key_rotate", "key_ids": [kid], "cutoff_days": 14})
+    assert reply["success"], reply
+    new = manager.secret(f"key:{kid}:next")
+    assert new and new != old
+    sent = " ".join(_client().commands)
+    assert f"wireless.hn_k_{kid}_radio0.key={old}" in sent and f"wireless.hn_k_{kid}n_radio0.key={new}" in sent
+    item = reply["result"]["plan"]["keys"][0]
+    assert item["rotation"]["cutoff"] and events and events[0]["key_id"] == kid
+    reveal = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/reveal", "ref": f"key:{kid}:next"})
+    assert reveal["result"]["value"] == new and reveal["result"]["qr"].startswith("<svg")
+    reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/key_rotate", "key_ids": [kid]})
+    assert not reply["success"] and "already" in reply["error"]["message"]
+
+    # Device updated: the new key becomes the key, the old one stops.
+    _client().commands.clear()
+    reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/key_rotate_finish", "key_id": kid})
+    assert reply["success"] and manager.secret(f"key:{kid}") == new and manager.secret(f"key:{kid}:next") is None
+    sent = " ".join(_client().commands)
+    assert old not in sent and f"hn_k_{kid}n_" not in sent and reply["result"]["plan"]["keys"][0]["rotated"]
+
+    # Scheduled: after 182 days a rotation starts by itself; with a cutoff it finishes by itself.
+    manager.plan["keys"][0]["cutoff_days"] = 7
+    freezer.tick(timedelta(days=183))
+    async_fire_time_changed(hass, dt_util.utcnow())
+    await hass.async_block_till_done()
+    assert manager.plan["keys"][0]["rotation"] and manager.secret(f"key:{kid}:next")
+    upcoming = manager.secret(f"key:{kid}:next")
+    freezer.tick(timedelta(days=8))
+    async_fire_time_changed(hass, dt_util.utcnow())
+    await hass.async_block_till_done()
+    assert manager.plan["keys"][0]["rotation"] is None and manager.secret(f"key:{kid}") == upcoming
+    assert [a["action"] for a in manager.audit if a["action"].startswith("key_rot")][-2:] == ["key_rotation_started", "key_rotated"]
+
+    # Cancel keeps the old key.
+    await manager.async_rotate_keys([kid])
+    current = manager.secret(f"key:{kid}")
+    await manager.async_cancel_rotation(kid)  # (the test's login token has expired after the time jumps)
+    assert manager.secret(f"key:{kid}") == current and manager.secret(f"key:{kid}:next") is None
+
+
+async def test_onboarding_rules_and_actions(hass: HomeAssistant, hass_read_only_user, ow_entry: MockConfigEntry) -> None:  # noqa: F811
+    from homeassistant.core import Context
+    from homeassistant.exceptions import Unauthorized
+    from custom_components.aerohive_local import portal
+
+    mark = "ERROR: OpenWrt did not accept the change"
+    manager = get_plan(hass)
+    plan = _portal_plan(ow_entry.entry_id)
+    plan["onboarding"]["kinds"] = ["Phone", "TV", "Other"]
+    plan["onboarding"]["rules"] = [
+        {"kind": "tv", "wifi": "home", "network": "iot", "minutes": None, "auto": True},
+        {"kind": "phone", "wifi": "home", "network": None, "minutes": 60, "auto": False},
+    ]
+    await manager.async_save_plan(plan, {"wifi:guest": "guest-pass-1", "wifi:homeob": "homeob-pass-1"})
+    assert manager.state()["errors"] == []
+    client = _client()
+    client.responses[CONFIRM] = "HN_CONFIRMED"
+    client.responses[f"{portal.UHTTPD_CHECK} || echo '{mark}'"] = "HN_UHTTPD_OK"
+    assert all(r["ok"] for r in await manager.async_apply())
+    events = []
+    hass.bus.async_listen("aerohive_local_onboarding_request", lambda e: events.append(e.data))
+    client.responses[f"{portal.LIST_REQUESTS} || echo '{mark}'"] = (
+        "== 021122334455\nmac=02:11:22:33:44:55\nname=Living room TV\nkind=tv\nwants=\ntok=abcdefghij012345\ntime=1\n"
+        "== 021122334466\nmac=02:11:22:33:44:66\nname=Pixel\nkind=phone\nwants=\ntok=bbbbbbbbbbbbbbbb\ntime=1\n"
+    )
+    await manager._async_portal_tick()
+    await hass.async_block_till_done()
+    tv, phone = manager.requests["021122334455"], manager.requests["021122334466"]
+    assert tv["status"] == "approved" and phone["status"] == "pending"  # TVs are approved by their rule
+    assert phone["suggested"] == {"wifi": "home", "network": None, "minutes": 60, "auto": False}
+    tv_key = next(k for k in manager.plan["keys"] if k["name"] == "Living room TV")
+    assert tv_key["network"] == "iot"
+    assert {(e["name"], e["auto_approved"], e["kind_label"]) for e in events} == {("Living room TV", True, "TV"), ("Pixel", False, "Phone")}
+
+    # Approve from an automation (no user) with the rule's defaults; non-admin users are refused.
+    with pytest.raises(Unauthorized):
+        await hass.services.async_call("aerohive_local", "approve_device", {"request_id": "021122334466"}, blocking=True,
+                                       context=Context(user_id=hass_read_only_user.id))
+    await hass.services.async_call("aerohive_local", "approve_device", {"request_id": "021122334466"}, blocking=True)
+    phone_key = next(k for k in manager.plan["keys"] if k["name"] == "Pixel")
+    assert phone["status"] == "approved" and phone_key["expires"]  # the rule's 60 minutes
+    from homeassistant.exceptions import ServiceValidationError
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call("aerohive_local", "approve_device", {"request_id": "nope"}, blocking=True)
