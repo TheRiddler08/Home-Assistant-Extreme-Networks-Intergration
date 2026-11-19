@@ -21,6 +21,7 @@ from homeassistant.helpers.event import async_call_later
 
 from homeassistant.exceptions import HomeAssistantError
 
+from . import plan as plan_mod
 from . import wifi
 from .const import DOMAIN
 from .snapshot import network_snapshot
@@ -37,6 +38,8 @@ def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_wifi_create)
     websocket_api.async_register_command(hass, ws_wifi_delete)
     websocket_api.async_register_command(hass, ws_wifi_timer_cancel)
+    for command in (ws_plan_get, ws_plan_save, ws_plan_preview, ws_plan_apply, ws_plan_reveal, ws_plan_template, ws_key_add, ws_key_revoke):
+        websocket_api.async_register_command(hass, command)
 
 
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/snapshot"})
@@ -169,3 +172,132 @@ async def ws_wifi_delete(hass: HomeAssistant, connection: websocket_api.ActiveCo
 @websocket_api.async_response
 async def ws_wifi_timer_cancel(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
     await _run(connection, msg, wifi.get_timers(hass).async_cancel(msg["ssid"], revert=msg["restore"]))
+
+
+# ----------------------------------------------------------------------
+# Network setup (admin only): the plan, preview, apply, keys.
+# ----------------------------------------------------------------------
+
+
+def _user(connection: websocket_api.ActiveConnection) -> str | None:
+    user = getattr(connection, "user", None)
+    return getattr(user, "name", None)
+
+
+async def _plan_call(connection: websocket_api.ActiveConnection, msg: dict[str, Any], coro: Any) -> None:
+    try:
+        result = await coro
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "failed", str(err))
+        return
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/plan/get"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_plan_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    connection.send_result(msg["id"], plan_mod.get_plan(hass).state())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/plan/save",
+        vol.Required("plan"): dict,
+        vol.Optional("secrets", default={}): {str: vol.Any(str, None)},
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_plan_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    manager = plan_mod.get_plan(hass)
+
+    async def run() -> dict[str, Any]:
+        await manager.async_save_plan(msg["plan"], msg["secrets"], _user(connection))
+        return manager.state()
+
+    await _plan_call(connection, msg, run())
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/plan/preview"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_plan_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    connection.send_result(msg["id"], plan_mod.get_plan(hass).preview())
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/plan/apply", vol.Optional("entry_ids"): [str]})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_plan_apply(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    manager = plan_mod.get_plan(hass)
+
+    async def run() -> dict[str, Any]:
+        results = await manager.async_apply(msg.get("entry_ids") or None, _user(connection))
+        return {"results": results, **manager.state()}
+
+    await _plan_call(connection, msg, run())
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/plan/reveal", vol.Required("ref"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_plan_reveal(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    value = plan_mod.get_plan(hass).secret(msg["ref"])
+    if value is None:
+        connection.send_error(msg["id"], "not_found", "No password or key stored for this")
+        return
+    connection.send_result(msg["id"], {"value": value})
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/plan/template"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_plan_template(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    from . import netplan  # noqa: PLC0415
+
+    connection.send_result(msg["id"], {"plan": netplan.template()})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/plan/key_add",
+        vol.Required("name"): str,
+        vol.Required("wifi"): str,
+        vol.Optional("network"): vol.Any(str, None),
+        vol.Optional("mac"): vol.Any(str, None),
+        vol.Optional("minutes"): vol.Any(None, vol.All(int, vol.Range(min=1, max=366 * 24 * 60))),
+        vol.Optional("key"): vol.Any(str, None),
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_key_add(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    manager = plan_mod.get_plan(hass)
+
+    async def run() -> dict[str, Any]:
+        added = await manager.async_add_key(
+            name=msg["name"],
+            wifi=msg["wifi"],
+            network=msg.get("network"),
+            mac=msg.get("mac"),
+            minutes=msg.get("minutes"),
+            key=msg.get("key") or None,
+            user=_user(connection),
+        )
+        return {"key_id": added["id"], "results": added["results"], **manager.state()}
+
+    await _plan_call(connection, msg, run())
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/plan/key_revoke", vol.Required("key_id"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_key_revoke(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    manager = plan_mod.get_plan(hass)
+
+    async def run() -> dict[str, Any]:
+        results = await manager.async_revoke_key(msg["key_id"], _user(connection))
+        return {"results": results, **manager.state()}
+
+    await _plan_call(connection, msg, run())

@@ -44,6 +44,7 @@ from .const import (
     SLOW_REFRESH_SECONDS,
 )
 from .discovery import is_aerohive_mac
+from . import netplan as netplan_mod
 from . import openwrt as ow
 from .parsers import (
     combo_port_count,
@@ -119,6 +120,10 @@ BACKUP_ROOT = "aerohive_local_backups"
 # last one, in the background: a burst of changes costs one save, and controls
 # stay responsive. 0 saves before the action returns.
 SAVE_DELAY_SECONDS = 2.0
+# Network setup on OpenWrt: undo unless confirmed within this time.
+ROLLBACK_SECONDS = 90
+CONFIRM_DELAY_SECONDS = 8.0
+CONFIRM_RETRY_SECONDS = 5.0
 BACKUP_DOCS_URL = "https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/blob/main/docs/backups.md"
 
 
@@ -162,6 +167,20 @@ def _lldp_model(neighbor: LldpNeighbor) -> str | None:
     from .config_flow import _short_model  # noqa: PLC0415 - avoid an import cycle
 
     return _short_model(neighbor)
+
+
+def _chunks(lines: list[str], limit: int = 1500) -> list[str]:
+    """Join shell commands with && into lines of at most ``limit`` characters (fewer round trips)."""
+    result: list[str] = []
+    current = ""
+    for line in lines:
+        if current and len(current) + len(line) + 4 > limit:
+            result.append(current)
+            current = ""
+        current = f"{current} && {line}" if current else line
+    if current:
+        result.append(current)
+    return result
 
 
 def _prefix_to_netmask(prefix: int | None) -> str | None:
@@ -1114,6 +1133,83 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
     def _not_on_openwrt(what: str) -> HomeAssistantError:
         return HomeAssistantError(f"{what} isn't supported on OpenWrt devices")
 
+    async def async_apply_openwrt_plan(
+        self, lines: list[str], secrets: list[str], configs: tuple[str, ...] = netplan_mod.OPENWRT_CONFIGS
+    ) -> None:
+        """Apply network-plan UCI commands with an automatic rollback.
+
+        Like LuCI's "apply with rollback": the four configuration files are
+        copied first and a timer on the router puts them back after
+        ROLLBACK_SECONDS unless Home Assistant can still reach the router and
+        confirms. Changes are staged with uci and only committed when every
+        command was accepted, so a rejected command changes nothing.
+        """
+        host = self.client.host
+        mark = ow.FAILED_MARK
+
+        def scrub(text: str) -> str:
+            text = commands.redact(text)
+            for value in secrets:
+                if value:
+                    text = text.replace(value, "***")
+            return text
+
+        async def run(cmd: str, timeout: float | None = None) -> str:
+            try:
+                return await self.client.run(cmd, timeout=timeout)
+            except AerohiveError as err:
+                raise HomeAssistantError(f"Error communicating with {host}: {scrub(str(err))}") from err
+
+        staged = await run(netplan_mod.openwrt_staged(configs))
+        if staged.strip():
+            raise HomeAssistantError(
+                f"{host} has changes that aren't saved yet (made in LuCI or over SSH). Save & Apply or revert them first."
+            )
+        out = await run(f"( {netplan_mod.openwrt_prepare(int(ROLLBACK_SECONDS), configs)} ) || echo '{mark}'")
+        if mark in out:
+            raise HomeAssistantError(f"{host}: could not back up the current settings; nothing was changed")
+        _LOGGER.info("%s: applying network setup (%d command(s))", host, len(lines))
+        for chunk in _chunks(lines):
+            out = await run(f"{chunk} || echo '{mark}'")
+            if mark in out or re.search(r"^uci: ", out, re.MULTILINE):
+                await run(netplan_mod.openwrt_revert(configs))
+                detail = scrub(out.replace(mark, "").strip()) or "a command was rejected"
+                shown = scrub(chunk)
+                shown = shown if len(shown) <= 300 else shown[:300] + "…"
+                raise HomeAssistantError(f"{host} rejected the change ({detail}) in: {shown}. Nothing was changed.")
+        out = await run(f"{netplan_mod.openwrt_commit(configs)} || echo '{mark}'")
+        self._config_dirty = True
+        self._ha_changed = True
+        if mark in out:
+            await run(netplan_mod.OPENWRT_RESTORE_NOW)
+            raise HomeAssistantError(f"{host}: saving the settings failed; the previous settings were put back")
+        await run(netplan_mod.openwrt_reload(configs))
+        await asyncio.sleep(CONFIRM_DELAY_SECONDS)
+        deadline = time.monotonic() + max(ROLLBACK_SECONDS - CONFIRM_DELAY_SECONDS - 15, 0)
+        while True:
+            try:
+                out = await self.client.run(netplan_mod.OPENWRT_CONFIRM, timeout=10)
+                if "HN_CONFIRMED" in out:
+                    break
+            except AerohiveError:
+                pass
+            if time.monotonic() >= deadline:
+                raise HomeAssistantError(
+                    f"Lost contact with {host} after applying. It goes back to the previous settings "
+                    f"within {int(ROLLBACK_SECONDS)} seconds of the change."
+                )
+            await asyncio.sleep(CONFIRM_RETRY_SECONDS)
+        _LOGGER.info("%s: network setup applied and confirmed", host)
+        await self.async_request_refresh()
+
+    async def async_apply_cli_plan(self, cmds: list[str], secrets: list[str]) -> None:
+        """Apply network-plan CLI commands (HiveOS, ExtremeXOS); saved like any other change."""
+        if not cmds:
+            return
+        _LOGGER.info("%s: applying network setup (%d command(s))", self.client.host, len(cmds))
+        await self._apply(cmds, secret=secrets)
+        await self.async_request_refresh()
+
 
     async def _fetch_exos(self, data: AerohiveData) -> AerohiveData:
         """Poll an ExtremeXOS switch (Summit X450e and others)."""
@@ -1557,7 +1653,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self,
         cmds: list[str],
         *,
-        secret: str | None = None,
+        secret: str | list[str] | None = None,
         sequence: bool = False,
         overrides: dict[tuple[str, ...], bool] | None = None,
     ) -> None:
@@ -1567,9 +1663,14 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         background (SAVE_DELAY_SECONDS), followed by a refresh.
         """
 
+        secrets = [secret] if isinstance(secret, str) else list(secret or [])
+
         def scrub(text: str) -> str:
             text = commands.redact(text)
-            return text.replace(secret, "***") if secret else text
+            for value in secrets:
+                if value:
+                    text = text.replace(value, "***")
+            return text
 
         try:
             if sequence:

@@ -3,6 +3,39 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.13.0] - 2026-11-19
+
+### Added
+- **Network setup: design and change the whole network from Home Assistant** (new *Setup*
+  tab in the Network panel, administrators only). [Details](docs/network-setup.md)
+  - **Networks** (VLANs): router address, DHCP range and lease, internet access, access to
+    the router, access ports on ExtremeXOS switches.
+  - **Who can reach what**: a grid of networks against Internet, Router, main LAN and each
+    other; it becomes the router's firewall (one zone per network, nothing else allowed).
+  - **Wi-Fi networks**: network (VLAN), WPA2 / WPA2-WPA3 / WPA3 / open / **per-device keys**,
+    bands, hidden, client isolation, max clients.
+  - **Devices & keys**: a key per device (PPSK), optionally putting the device in another
+    network, tied to a MAC address, or valid for 15 minutes to a week; show, revoke. Key
+    changes take effect at once (Wi-Fi only is reloaded); timed keys are removed on their
+    own, also after a restart.
+  - **Review & apply**: the commands for every device (passwords hidden) and what each can't
+    do, then applied switches first, router, access points, with a result per device.
+  - **Start from the home layout**: the networks and Wi-Fi from the home network plan
+    (VLANs 10–110), as a starting point.
+  - Applied to **OpenWrt** (router: bridges per VLAN, addresses, DHCP, firewall zones, Wi-Fi,
+    `wifi-station` keys; other OpenWrt APs: bridges and Wi-Fi), **Aerohive access points**
+    (user profile per VLAN, security object, password, bands; not yet per-device keys, WPA3
+    or isolation) and **ExtremeXOS switches** (VLANs, trunk and access ports).
+  - **OpenWrt safety:** files are backed up and a timer on the router restores them after
+    90 seconds unless Home Assistant reconnects and confirms; changes are only committed if
+    every command was accepted; only `hn_*` sections are touched; unsaved LuCI changes stop
+    the apply.
+  - Passwords and keys are stored **encrypted** (separate key file), never shown in
+    snapshots, states, events, the review or logs. Activity log of saves, applies and keys.
+
+### Changed
+- The panel's tabs scroll on narrow phones instead of being cut off.
+
 ## [0.12.1] - 2026-11-18
 
 ### Fixed

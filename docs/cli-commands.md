@@ -111,6 +111,17 @@ a leading `*` means unsaved changes.
 All 🧪 (simulated router, OpenWrt 23.05-style output). `ubus` JSON and UCI; see the full list in
 [OpenWrt → Commands used](openwrt.md#commands-used).
 
+## Network setup (Setup tab)
+
+All 🧪: generated from the setup and shown in **Review & apply** before anything is sent.
+See [Network setup](network-setup.md#what-each-device-does).
+
+| Device | Commands |
+| --- | --- |
+| OpenWrt | `uci set/add_list/delete` on `hn_*` sections of `network`, `dhcp`, `firewall`, `wireless` (`device`, `interface`, `dhcp`, `zone`, `forwarding`, `rule`, `wifi-iface`, `wifi-station`, `wifi-vlan`); backup to `/tmp/hn_backup`, `uci commit`, reload of network / dnsmasq / firewall / Wi-Fi, rollback timer |
+| Aerohive APs | `user-profile hn<VLAN> qos-policy def-user-qos vlan-id <VLAN> attribute <VLAN>`, `security-object <name> default-user-profile-attr <VLAN>`, `security-object <name> security protocol-suite wpa2-aes-psk ascii-key …`, `ssid <name>`, `ssid <name> security-object <name>`, `[no] ssid <name> hide-ssid`, `ssid <name> max-client <n>`, `[no] interface wifiN ssid <name>` |
+| ExtremeXOS | `create vlan <name>`, `configure vlan <name> tag <VLAN>`, `configure vlan <name> add ports <list> tagged/untagged`, `configure vlan Default delete ports <list>`, `delete vlan <name>` |
+
 ## Configuration backups (all devices)
 
 `show running-config` (HiveOS, SR switches) or `show configuration` (ExtremeXOS) is read to

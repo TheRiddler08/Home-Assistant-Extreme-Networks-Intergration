@@ -98,6 +98,13 @@ clients, add or delete networks. See [Wi-Fi networks](wifi.md#in-the-network-pan
 The **Clients** tab lists every Wi-Fi and wired client in one place. Search it by name, MAC
 address, IP address, device or port. Select a wired client to open its switch port.
 
+### Setup
+
+The **Setup** tab designs and changes the whole network: networks (VLANs) and their
+addresses, who can reach what, Wi-Fi networks, a key per device, then review and apply it to
+the router, switches and access points. Administrators only. See
+[Network setup](network-setup.md).
+
 ### Phones
 
 The panel works at phone width; the front panel wraps into rows of 12 ports.

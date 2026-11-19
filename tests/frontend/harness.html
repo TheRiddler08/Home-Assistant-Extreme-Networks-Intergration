@@ -43,6 +43,75 @@
   const push = () => { snapshot.generated = new Date().toISOString(); for (const cb of listeners) cb(structuredClone(snapshot)); };
   window.serviceCalls = [];
 
+
+  // Network setup (plan) commands: an in-memory stand-in for the integration.
+  const planDevices = () => snapshot.devices.map((d) => ({
+    entry_id: d.entry_id, name: d.name, host: d.host, kind: d.cli === "openwrt" ? "openwrt" : d.cli, online: d.online,
+    role: d.cli === "exos" ? "switch" : d.cli === "openwrt" && planState.plan.devices.router === d.entry_id ? "router" : (d.radios || []).length ? "ap" : "none",
+    wireless: (d.radios || []).length > 0, router_capable: d.cli === "openwrt",
+    note: d.cli === "switch" ? "VLANs on SR switches aren't set up from here yet" : null,
+  }));
+  const planSecrets = {};
+  const planState = {
+    plan: { networks: [], wifi: [], keys: [], devices: { router: null, router_trunks: ["br-lan"], switch_trunks: {}, aps: null } },
+    errors: [], pending: false, applied_at: null, last_results: [], needs_apply: [], audit: [],
+  };
+  const planErrors = () => planState.plan.wifi.filter((w) => ["wpa2", "wpa2_wpa3", "wpa3"].includes(w.security) && !planSecrets[`wifi:${w.id}`]).map((w) => `${w.ssid}: needs a password`);
+  const planView = () => structuredClone({ ...planState, devices: planDevices(), secrets: Object.keys(planSecrets), errors: planErrors(), now: new Date().toISOString() });
+  function planMock(msg) {
+    const t = msg.type.replace("aerohive_local/plan/", "");
+    const log = (action, detail) => planState.audit.unshift({ time: new Date().toISOString(), action, detail, user: "Tester" });
+    if (t === "get") return planView();
+    if (t === "template") return { plan: {
+      networks: [
+        { id: "mgmt", name: "Network management", vlan: 10, subnet: "10.10.10.1/24", dhcp: true, dhcp_start: 50, dhcp_limit: 150, lease: "12h", internet: true, router_access: true, reach: [], switch_ports: {} },
+        { id: "iot", name: "IoT / Smart home", vlan: 30, subnet: "10.15.19.1/24", dhcp: true, dhcp_start: 50, dhcp_limit: 150, lease: "12h", internet: true, router_access: false, reach: [], switch_ports: {} },
+        { id: "iso", name: "homeISO", vlan: 70, subnet: "10.99.199.1/24", dhcp: true, dhcp_start: 50, dhcp_limit: 150, lease: "12h", internet: true, router_access: false, reach: [], switch_ports: {} },
+      ],
+      wifi: [{ id: "homeiso", ssid: "homeISO", network: "iso", security: "ppsk", bands: ["2.4 GHz"], hidden: false, isolate: true, max_clients: null, enabled: true }],
+      keys: [], devices: { router: null, router_trunks: ["br-lan"], switch_trunks: {}, aps: null } } };
+    if (t === "save") {
+      for (const [ref, value] of Object.entries(msg.secrets || {})) {
+        if (value && value.length < 8) throw new Error("Wi-Fi key must be 8-63 printable ASCII characters without double quotes");
+        if (value) planSecrets[ref] = value; else delete planSecrets[ref];
+      }
+      planState.plan = structuredClone(msg.plan);
+      for (const w of planState.plan.wifi) if (w.security === "ppsk" && !planSecrets[`wifi:${w.id}`]) planSecrets[`wifi:${w.id}`] = "base-key-xyz";
+      planState.pending = true;
+      log("plan_saved", `${planState.plan.networks.length} networks`);
+      return planView();
+    }
+    if (t === "preview") return { errors: planErrors(), notes: planState.plan.devices.router ? [] : ["No OpenWrt router chosen"], devices: planDevices().filter((d) => d.role !== "none").map((d) => ({
+      entry_id: d.entry_id, name: d.name, role: d.role, online: d.online, errors: [],
+      warnings: d.role === "ap" && d.kind === "hiveos" ? ["homeISO: per-device keys on Aerohive access points aren't supported yet; skipped here"] : [],
+      commands: planState.plan.networks.map((n) => d.role === "switch" ? `create vlan ${n.id}` : `uci set network.hn_if${n.vlan}=interface`),
+    })) };
+    if (t === "apply") {
+      const results = planDevices().filter((d) => d.role !== "none").map((d) => ({ entry_id: d.entry_id, name: d.name, role: d.role, ok: true, error: null, warnings: [] }));
+      planState.pending = false; planState.applied_at = new Date().toISOString(); planState.last_results = results;
+      log("applied", "ok");
+      return { results, ...planView() };
+    }
+    if (t === "key_add") {
+      const id = msg.name.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 10);
+      planState.plan.keys.push({ id, name: msg.name, wifi: msg.wifi, network: msg.network || null, mac: msg.mac || null, expires: msg.minutes ? new Date(Date.now() + msg.minutes * 60000).toISOString() : null });
+      planSecrets[`key:${id}`] = msg.key || "Kx7mPq2vR9tw";
+      log("key_added", msg.name);
+      return { key_id: id, results: [], ...planView() };
+    }
+    if (t === "key_revoke") {
+      planState.plan.keys = planState.plan.keys.filter((k) => k.id !== msg.key_id);
+      delete planSecrets[`key:${msg.key_id}`];
+      log("key_revoked", msg.key_id);
+      return { results: [], ...planView() };
+    }
+    if (t === "reveal") {
+      if (!planSecrets[msg.ref]) throw new Error("No password or key stored for this");
+      return { value: planSecrets[msg.ref] };
+    }
+    throw new Error(`unknown command ${msg.type}`);
+  }
+
   const device = (id) => snapshot.devices.find((d) => d.device_id === id);
   const port = (d, name) => d.ports.find((p) => p.name === name);
   const hass = {
@@ -58,6 +127,7 @@
     async callWS(msg) {
       window.serviceCalls.push({ domain: "ws", service: msg.type.replace("aerohive_local/", ""), data: msg });
       await new Promise((r) => setTimeout(r, 300));
+      if (msg.type.startsWith("aerohive_local/plan/")) return planMock(msg);
       const aps = snapshot.devices.filter((d) => d.online && d.radios && d.radios.length);
       const targets = (msg.entry_ids ? aps.filter((d) => msg.entry_ids.includes(d.entry_id)) : aps);
       const radiosFor = (d, bands) => d.radios.filter((r) => !bands || bands.includes(r.band)).map((r) => r.name);

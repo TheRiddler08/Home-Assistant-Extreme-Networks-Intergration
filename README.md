@@ -19,6 +19,11 @@ HiveManager, ExtremeCloud IQ or an OpenWrt controller.
   alerts. Matching dashboard cards. [More →](docs/dashboard.md)
 - **Auto-discovery:** scan the network, DHCP discovery, and APs found through a switch's
   LLDP neighbours, or add a device by IP.
+- **Network setup:** design the whole network in the panel's *Setup* tab: networks
+  (VLANs) with addresses and DHCP, a grid of who can reach what (the firewall), Wi-Fi
+  networks, and a key per device (per-device keys, timed keys, revoke). Review the commands
+  per device, then apply them to the OpenWrt router, ExtremeXOS switches and access points,
+  with automatic rollback on OpenWrt. [More →](docs/network-setup.md)
 - **Wi-Fi manager:** list, add, edit and delete SSIDs from the Network panel or a dashboard
   card. Change passwords, choose bands, hide networks, set max clients, on one AP or all of
   them, and turn a network off or on for a while (e.g. guest Wi-Fi for 2 hours).
@@ -70,6 +75,7 @@ Networks (Local SSH)**, and choose **Scan my network** or **Enter IP address man
 | [Supported devices](docs/supported-devices.md) | Tested models, feature matrix, requesting support |
 | [Entities](docs/entities.md) | Every sensor, switch and control, with a dashboard example |
 | [Network panel and cards](docs/dashboard.md) | The sidebar panel, switch front panel and dashboard cards |
+| [Network setup](docs/network-setup.md) | Networks, VLANs, firewall grid, Wi-Fi and per-device keys, applied to every device |
 | [Wi-Fi manager](docs/wifi.md) | Managing SSIDs and passwords |
 | [Network overview](docs/overview.md) | The combined *Aerohive Network* device |
 | [OpenWrt](docs/openwrt.md) | OpenWrt routers and access points: what's read, Wi-Fi control, limits |

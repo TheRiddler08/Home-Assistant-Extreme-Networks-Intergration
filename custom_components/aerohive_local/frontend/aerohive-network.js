@@ -1623,10 +1623,11 @@ const PANEL_CSS = `
   border-bottom: var(--app-header-border-bottom, 1px solid var(--ah-line));
 }
 .toolbar .title { font-size: 20px; font-weight: 400; margin-left: 8px; }
-.tabs { display: flex; gap: 2px; }
+.tabs { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .refresh-all { margin-left: auto; color: inherit; }
 .tab {
   height: 36px; padding: 0 14px; border: 0; border-radius: 18px; background: transparent; cursor: pointer; color: inherit; opacity: 0.75; font-weight: 500;
+  white-space: nowrap; flex: none;
 }
 .tab[aria-selected="true"] { background: color-mix(in srgb, var(--ah-accent) 16%, transparent); color: var(--ah-accent); opacity: 1; }
 .content { max-width: 1240px; margin: 0 auto; padding: 20px 16px 48px; }
@@ -1685,17 +1686,47 @@ tbody tr.click:hover { background: color-mix(in srgb, var(--ah-accent) 6%, trans
 .signal { display: inline-flex; gap: 2px; align-items: flex-end; height: 12px; margin-right: 6px; }
 .signal i { width: 3px; background: color-mix(in srgb, var(--ah-text) 18%, transparent); border-radius: 1px; }
 .signal i.on { background: var(--ah-ok); }
+.setup-intro { margin: -6px 0 16px; font-size: 13px; max-width: 820px; }
+.setup-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); gap: 16px; align-items: start; }
+.setup-grid .panel-card { margin-bottom: 0; }
+.setup-grid .wide { grid-column: 1 / -1; }
+.card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.card-head h2 { margin: 0; font-size: 16px; font-weight: 500; }
+.matrix th, .matrix td { padding: 6px 8px; }
+.matrix td.mid { text-align: center; }
+.matrix input { width: 18px; height: 18px; accent-color: var(--ah-accent); cursor: pointer; }
+.matrix th.rot { vertical-align: bottom; text-align: center; max-width: 64px; white-space: normal; line-height: 1.2; font-size: 11.5px; }
+.matrix tbody th { font-weight: 500; color: var(--ah-text); white-space: nowrap; border-bottom: 1px solid var(--ah-line); text-align: left; }
+.plan-errors { margin: 4px 0 0; padding-left: 18px; }
+.plan-select { width: 100%; height: 38px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--ah-line); background: var(--ah-bg); color: var(--ah-text); font: inherit; }
+.wide-dialog { width: min(620px, 100%); }
+.two, .three { display: grid; gap: 0 12px; }
+.two { grid-template-columns: 1fr 1fr; }
+.three { grid-template-columns: 1fr 1fr 1fr; }
+.btn.small { height: 30px; padding: 0 10px; font-size: 13px; }
+.row-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.key-box { font-size: 22px; letter-spacing: 1px; padding: 14px; border-radius: 10px; background: color-mix(in srgb, var(--ah-text) 6%, transparent); text-align: center; user-select: all; overflow-wrap: anywhere; }
+.apply-row { padding: 10px 0; border-top: 1px solid var(--ah-line); }
+.apply-row:first-of-type { border-top: 0; }
+.apply-row details { margin-top: 6px; }
+.apply-row summary { cursor: pointer; font-size: 13px; color: var(--ah-muted); }
+.cmds { max-height: 260px; overflow: auto; font-size: 11.5px; background: color-mix(in srgb, var(--ah-text) 5%, transparent); padding: 8px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chip.ok { color: var(--ah-ok); }
+.chip.bad { color: var(--ah-err); }
+.activity { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
 @media (max-width: 900px) {
   .layout { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 600px) {
   .content { padding: 16px 16px 40px; }
   .toolbar .title { font-size: 18px; }
-  .tab { padding: 0 10px; }
+  .tab { padding: 0 8px; }
+  .toolbar .title { display: none; }
   .detail-head h1 { font-size: 22px; }
   .grid { grid-template-columns: minmax(0, 1fr); }
   .hide-sm { display: none; }
   .port { width: 26px; height: 22px; }
+  .two, .three { grid-template-columns: minmax(0, 1fr); }
 }
 `;
 
@@ -1721,6 +1752,7 @@ class AerohiveNetworkPanel extends AerohiveBase {
           <button class="tab" role="tab" data-action="tab" data-tab="devices">Devices</button>
           <button class="tab" role="tab" data-action="tab" data-tab="wifi">Wi-Fi</button>
           <button class="tab" role="tab" data-action="tab" data-tab="clients">Clients</button>
+          <button class="tab" role="tab" data-action="tab" data-tab="setup">Setup</button>
         </div></div>
       <div class="content" id="content"></div><div id="dialog"></div>`;
     this.shadowRoot.addEventListener("input", (ev) => {
@@ -1766,7 +1798,7 @@ class AerohiveNetworkPanel extends AerohiveBase {
     const clean = (path || "").replace(/^\/+|\/+$/g, "");
     if (clean === this._path) return;
     this._path = clean;
-    this._tab = clean === "clients" || clean === "wifi" ? clean : "devices";
+    this._tab = ["clients", "wifi", "setup"].includes(clean) ? clean : "devices";
     this._render();
   }
 
@@ -1800,7 +1832,7 @@ class AerohiveNetworkPanel extends AerohiveBase {
   }
 
   _defaultDevice() {
-    return this._path && this._path !== "clients" && this._path !== "wifi" ? this._path : null;
+    return this._path && !["clients", "wifi", "setup"].includes(this._path) ? this._path : null;
   }
 
   _render() {
@@ -1824,6 +1856,13 @@ class AerohiveNetworkPanel extends AerohiveBase {
       // Only the results change while typing.
       const results = content.querySelector("#client-results");
       if (results) results.innerHTML = this._clientRows();
+      return;
+    }
+    if (this._tab === "setup") {
+      const active = this.shadowRoot.activeElement;
+      // Don't redraw under a field being typed in (trunk ports, router).
+      if (active && content.contains(active) && active.matches("input[type=text], select")) return;
+      content.innerHTML = this._setupView();
       return;
     }
     if (this._store && this._store.error) {
@@ -2127,6 +2166,35 @@ class AerohiveNetworkPanel extends AerohiveBase {
       </table></div></div>`;
   }
 
+  /* ---------------- setup tab hooks ---------------- */
+
+  _dialogHtml() {
+    if (this._dialog && this._dialog.type.startsWith("plan-")) return this._planDialog(this._dialog);
+    return super._dialogHtml();
+  }
+
+  _handleAction(action, el) {
+    if (action.startsWith("plan-")) {
+      this._planAction(action, el);
+      return;
+    }
+    super._handleAction(action, el);
+  }
+
+  _onChange(ev) {
+    const target = ev.target;
+    if (target.dataset && target.dataset.plan && !target.closest(".dialog")) {
+      this._planInput(target);
+      return;
+    }
+    super._onChange(ev);
+  }
+
+  _onData(data) {
+    super._onData(data);
+    if (this._tab === "setup" && this._setup && !this._setup.dirty) this._setupLoad();
+  }
+
   /* ---------------- events ---------------- */
 
   _onClick(ev) {
@@ -2152,6 +2220,660 @@ class AerohiveNetworkPanel extends AerohiveBase {
     }
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Setup tab: the network plan (networks, access, Wi-Fi, keys, devices) */
+/* ------------------------------------------------------------------ */
+
+const SECURITY_LABELS = {
+  wpa2: "WPA2 password",
+  wpa2_wpa3: "WPA2/WPA3 password",
+  wpa3: "WPA3 password",
+  ppsk: "Per-device keys",
+  open: "Open (no password)",
+};
+const PLAN_BANDS = ["2.4 GHz", "5 GHz", "6 GHz"];
+const KEY_DURATIONS = [
+  [0, "Permanent"],
+  [15, "15 minutes"],
+  [60, "1 hour"],
+  [1440, "1 day"],
+  [10080, "1 week"],
+];
+const ROLE_LABELS = { router: "Router", ap: "Access point", switch: "Switch", none: "Not used" };
+
+function slugId(text, taken) {
+  let base = String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 14) || "net";
+  if (!/^[a-z]/.test(base)) base = `n${base}`.slice(0, 14);
+  let id = base;
+  for (let n = 2; taken.includes(id); n++) id = `${base}${n}`.slice(0, 16);
+  return id;
+}
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function timeLeft(iso) {
+  if (!iso) return "Permanent";
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return "Expiring…";
+  const min = Math.round(ms / 60000);
+  if (min < 60) return `${min} min left`;
+  if (min < 2880) return `${Math.round(min / 60)} h left`;
+  return `${Math.round(min / 1440)} days left`;
+}
+
+const SetupMixin = {
+  _setupState() {
+    if (!this._setup) this._setup = { state: null, draft: null, secrets: {}, dirty: false, loading: false, error: null };
+    return this._setup;
+  },
+
+  async _setupWs(msg, busyKey) {
+    if (busyKey) {
+      if (this._busy.has(busyKey)) return null;
+      this._busy.add(busyKey);
+      this._render();
+    }
+    try {
+      return await this._hass.callWS(msg);
+    } catch (err) {
+      this._toast((err && err.message) || String(err), true);
+      return null;
+    } finally {
+      if (busyKey) {
+        this._busy.delete(busyKey);
+        this._render();
+      }
+    }
+  },
+
+  _setupTake(state) {
+    const s = this._setupState();
+    s.state = state;
+    if (!s.dirty) s.draft = clone(state.plan);
+    else s.draft.keys = clone(state.plan.keys); // keys are saved on their own
+    s.loadedAt = Date.now();
+  },
+
+  async _setupLoad(force = false) {
+    const s = this._setupState();
+    if (!this._hass || s.loading || (!force && s.loadedAt && Date.now() - s.loadedAt < 30000)) return;
+    s.loading = true;
+    try {
+      this._setupTake(await this._hass.callWS({ type: `${DOMAIN}/plan/get` }));
+      s.error = null;
+    } catch (err) {
+      s.error = (err && err.message) || String(err);
+    }
+    s.loading = false;
+    this._render();
+  },
+
+  _setupDirty(redraw = true) {
+    this._setupState().dirty = true;
+    if (redraw) {
+      this._render();
+      return;
+    }
+    // A text field changed (on blur): redrawing now would swallow the click that caused the blur.
+    const save = this.shadowRoot.querySelector('[data-action="plan-save"]');
+    if (save) save.disabled = false;
+    const status = this.shadowRoot.querySelector(".detail-head .muted");
+    if (status) status.textContent = "Edits not saved yet";
+  },
+
+  _setupView() {
+    if (!this._isAdmin()) {
+      return `<div class="card empty"><p><strong>Only administrators can see and change the network setup.</strong></p></div>`;
+    }
+    const s = this._setupState();
+    if (!s.state) {
+      this._setupLoad();
+      return s.error ? `<div class="card empty"><p><strong>Can't load the network setup.</strong></p><p>${esc(s.error)}</p></div>` : `<div class="empty">Loading…</div>`;
+    }
+    const st = s.state;
+    const plan = s.draft;
+    const status = s.dirty
+      ? "Edits not saved yet"
+      : st.pending
+        ? "Saved · not applied to the devices yet"
+        : st.applied_at
+          ? `Applied ${new Date(st.applied_at).toLocaleString()}`
+          : "Nothing set up yet";
+    const empty = !plan.networks.length && !plan.wifi.length;
+    return `
+      <div class="detail-head" style="margin-bottom:16px">
+        <div class="grow"><h1 style="font-size:22px">Network setup</h1><div class="muted">${esc(status)}</div></div>
+        ${empty ? `<button class="btn" data-action="plan-template">${icon("plus")}Start from the home layout</button>` : ""}
+        <button class="btn" data-action="plan-save" ${s.dirty && !this._isBusy("plan-save") ? "" : "disabled"}>${icon("save")}${this._isBusy("plan-save") ? "Saving…" : "Save"}</button>
+        <button class="btn primary" data-action="plan-review" ${empty ? "disabled" : ""}>${icon("check")}Review &amp; apply</button>
+      </div>
+      ${!s.dirty && st.errors.length ? `<div class="banner err">${icon("warn")}<div class="grow"><strong>Fix before applying</strong><ul class="plan-errors">${st.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div></div>` : ""}
+      ${st.needs_apply.length ? `<div class="banner warn">${icon("warn")}<div class="grow">A key change hasn't reached every device yet; it's retried every minute.</div></div>` : ""}
+      <p class="muted setup-intro">Design the whole network here: networks (VLANs) with their addresses, who may reach what, Wi-Fi networks and a key per device.
+        Nothing changes on the devices until you press <strong>Review &amp; apply</strong>. Passwords and keys are stored encrypted.</p>
+      <div class="setup-grid">
+        ${this._setupNetworksCard(plan)}
+        ${this._setupAccessCard(plan)}
+        ${this._setupWifiCard(plan)}
+        ${this._setupKeysCard(st)}
+        ${this._setupDevicesCard(plan, st)}
+        ${this._setupActivityCard(st)}
+      </div>`;
+  },
+
+  _setupNetworksCard(plan) {
+    const rows = plan.networks
+      .map(
+        (n, i) => `<tr class="click" data-action="plan-net-edit" data-index="${i}" tabindex="0">
+          <td><strong>${esc(n.name || n.id)}</strong></td><td class="num">${esc(n.vlan)}</td><td class="mono">${esc(n.subnet)}</td>
+          <td class="hide-sm">${n.dhcp ? "DHCP" : "Static"}</td><td>${n.internet ? "Internet" : '<span class="muted">No internet</span>'}</td></tr>`,
+      )
+      .join("");
+    return `<div class="card panel-card"><div class="card-head"><h2 class="grow">Networks</h2>
+        <button class="btn" data-action="plan-net-add">${icon("plus")}Add</button></div>
+      ${plan.networks.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th class="num">VLAN</th><th>Router address</th><th class="hide-sm">Addresses</th><th>Internet</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">No networks yet. Each network is a VLAN with its own addresses.</p>'}
+    </div>`;
+  },
+
+  _setupAccessCard(plan) {
+    const nets = plan.networks;
+    if (!nets.length) return "";
+    const head = nets.map((n) => `<th class="rot" title="${esc(n.name)}"><span>${esc(n.name || n.id)}</span></th>`).join("");
+    const rows = nets
+      .map((from) => {
+        const cells = nets
+          .map((to) =>
+            to.id === from.id
+              ? '<td class="mid muted" title="Inside a network everyone can talk to each other unless the Wi-Fi isolates clients">·</td>'
+              : `<td class="mid"><input type="checkbox" aria-label="${esc(from.name)} can reach ${esc(to.name)}" data-plan="reach" data-from="${esc(from.id)}" data-to="${esc(to.id)}" ${(from.reach || []).includes(to.id) ? "checked" : ""}></td>`,
+          )
+          .join("");
+        return `<tr><th scope="row">${esc(from.name || from.id)}</th>
+          <td class="mid"><input type="checkbox" aria-label="${esc(from.name)} has internet" data-plan="internet" data-net="${esc(from.id)}" ${from.internet ? "checked" : ""}></td>
+          <td class="mid"><input type="checkbox" aria-label="${esc(from.name)} can reach the router" data-plan="router_access" data-net="${esc(from.id)}" ${from.router_access ? "checked" : ""}></td>
+          <td class="mid"><input type="checkbox" aria-label="${esc(from.name)} can reach the LAN" data-plan="reach" data-from="${esc(from.id)}" data-to="lan" ${(from.reach || []).includes("lan") ? "checked" : ""}></td>
+          ${cells}</tr>`;
+      })
+      .join("");
+    return `<div class="card panel-card wide"><div class="card-head"><h2 class="grow">Who can reach what</h2></div>
+      <p class="muted" style="margin:0 0 10px;font-size:13px">A tick lets devices in the row's network start connections to the column. Replies are always allowed.
+        Everything else is blocked. <em>Router</em> is the router's own web page and SSH (DHCP and DNS always work).</p>
+      <div class="table-wrap"><table class="matrix"><thead><tr><th>From \\ To</th><th class="rot"><span>Internet</span></th><th class="rot"><span>Router</span></th><th class="rot"><span>Main LAN</span></th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+    </div>`;
+  },
+
+  _setupWifiCard(plan) {
+    const name = (id) => (plan.networks.find((n) => n.id === id) || {}).name || id;
+    const rows = plan.wifi
+      .map(
+        (w, i) => `<tr class="click" data-action="plan-wifi-edit" data-index="${i}" tabindex="0">
+          <td><strong>${esc(w.ssid)}</strong>${w.enabled === false ? ' <span class="chip">Off</span>' : ""}${w.hidden ? ' <span class="chip">Hidden</span>' : ""}${w.isolate ? ' <span class="chip">Isolated</span>' : ""}</td>
+          <td>${esc(name(w.network))}</td><td>${esc(SECURITY_LABELS[w.security] || w.security)}</td><td class="hide-sm">${esc((w.bands || []).join(", "))}</td></tr>`,
+      )
+      .join("");
+    return `<div class="card panel-card"><div class="card-head"><h2 class="grow">Wi-Fi</h2>
+        <button class="btn" data-action="plan-wifi-add" ${plan.networks.length ? "" : "disabled"}>${icon("plus")}Add</button></div>
+      ${plan.wifi.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Network</th><th>Security</th><th class="hide-sm">Bands</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${plan.networks.length ? "No Wi-Fi networks yet." : "Add a network first."}</p>`}
+    </div>`;
+  },
+
+  _setupKeysCard(st) {
+    const plan = st.plan; // keys are saved immediately: use the saved plan
+    const ppsk = plan.wifi.filter((w) => w.security === "ppsk");
+    const ssid = (id) => (plan.wifi.find((w) => w.id === id) || {}).ssid || id;
+    const net = (id) => (id ? (plan.networks.find((n) => n.id === id) || {}).name || id : "");
+    const rows = plan.keys
+      .map(
+        (k) => `<tr><td><strong>${esc(k.name)}</strong>${k.mac ? `<br><span class="mono muted">${esc(k.mac)}</span>` : ""}</td>
+          <td>${esc(ssid(k.wifi))}${k.network ? `<br><span class="muted">→ ${esc(net(k.network))}</span>` : ""}</td>
+          <td class="hide-sm">${esc(timeLeft(k.expires))}</td>
+          <td class="num"><span class="row-actions"><button class="btn small" data-action="plan-key-show" data-key="${esc(k.id)}">${icon("eye")}Key</button>
+            <button class="btn small danger" data-action="plan-key-revoke" data-key="${esc(k.id)}">${icon("trash")}Revoke</button></span></td></tr>`,
+      )
+      .join("");
+    return `<div class="card panel-card"><div class="card-head"><h2 class="grow">Devices &amp; keys</h2>
+        <button class="btn" data-action="plan-key-add" ${ppsk.length ? "" : "disabled"}>${icon("plus")}Add device</button></div>
+      ${plan.keys.length ? `<div class="table-wrap"><table><thead><tr><th>Device</th><th>Wi-Fi</th><th class="hide-sm">Valid</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${ppsk.length ? "Give each device its own key: revoking one only disconnects that device." : "Save a Wi-Fi network with <em>Per-device keys</em> to hand out keys."}</p>`}
+      <p class="muted" style="font-size:12px;margin:10px 0 0">Keys take effect straight away on the devices already set up (OpenWrt today). Timed keys are removed on their own, also after a restart.</p>
+    </div>`;
+  },
+
+  _setupDevicesCard(plan, st) {
+    const devices = st.devices;
+    const routers = devices.filter((d) => d.router_capable);
+    const aps = devices.filter((d) => d.wireless && !(d.entry_id === plan.devices.router));
+    const switches = devices.filter((d) => d.kind === "exos");
+    const apOn = (id) => plan.devices.aps == null || plan.devices.aps.includes(id);
+    return `<div class="card panel-card"><div class="card-head"><h2 class="grow">Devices</h2></div>
+      <div class="form-row" style="margin-top:0"><label class="section-title" for="plan-router">Router (addresses, DHCP, firewall)</label>
+        <select id="plan-router" class="plan-select" data-plan="router"><option value="">None: my router is set up separately</option>
+          ${routers.map((d) => `<option value="${esc(d.entry_id)}" ${plan.devices.router === d.entry_id ? "selected" : ""}>${esc(d.name)} (${esc(d.host)})</option>`).join("")}</select>
+        ${routers.length ? "" : '<div class="hint">No OpenWrt device added yet.</div>'}</div>
+      ${plan.devices.router ? `<div class="form-row"><label class="section-title" for="plan-trunks">Router ports to the switch (carry every VLAN, tagged)</label>
+        <div class="field"><input type="text" id="plan-trunks" data-plan="router_trunks" value="${esc((plan.devices.router_trunks || []).join(", "))}" placeholder="br-lan" spellcheck="false"></div>
+        <div class="hint">Interface names, e.g. <span class="mono">br-lan</span> or <span class="mono">eth1</span>.</div></div>` : ""}
+      ${switches.map((d) => `<div class="form-row"><label class="section-title" for="trunk-${esc(d.entry_id)}">${esc(d.name)}: trunk ports (to router and access points)</label>
+        <div class="field"><input type="text" id="trunk-${esc(d.entry_id)}" data-plan="switch_trunk" data-entry="${esc(d.entry_id)}" value="${esc((plan.devices.switch_trunks || {})[d.entry_id] || "")}" placeholder="e.g. 47-48" spellcheck="false"></div></div>`).join("")}
+      ${aps.length ? `<div class="form-row"><span class="section-title">Access points that broadcast the Wi-Fi</span><div class="checks">
+        ${aps.map((d) => `<label><input type="checkbox" data-plan="ap" data-entry="${esc(d.entry_id)}" ${apOn(d.entry_id) ? "checked" : ""}>${esc(d.name)}</label>`).join("")}</div></div>` : ""}
+      ${devices.filter((d) => d.note).map((d) => `<div class="hint">${esc(d.name)}: ${esc(d.note)}</div>`).join("")}
+    </div>`;
+  },
+
+  _setupActivityCard(st) {
+    if (!st.audit.length) return "";
+    const labels = { plan_saved: "Setup saved", applied: "Applied", key_added: "Key added", key_revoked: "Key revoked", key_expired: "Key expired" };
+    return `<div class="card panel-card"><div class="card-head"><h2 class="grow">Activity</h2></div>
+      <ul class="activity">${st.audit.slice(0, 12).map((a) => `<li><span class="muted">${esc(new Date(a.time).toLocaleString())}</span> <strong>${esc(labels[a.action] || a.action)}</strong> ${esc(a.detail || "")}${a.user ? ` <span class="muted">· ${esc(a.user)}</span>` : ""}</li>`).join("")}</ul></div>`;
+  },
+
+  /* ---------- page inputs (matrix, devices) ---------- */
+
+  _planInput(target) {
+    const s = this._setupState();
+    const plan = s.draft;
+    const kind = target.dataset.plan;
+    const net = (id) => plan.networks.find((n) => n.id === id);
+    if (kind === "reach") {
+      const from = net(target.dataset.from);
+      const reach = new Set(from.reach || []);
+      if (target.checked) reach.add(target.dataset.to);
+      else reach.delete(target.dataset.to);
+      from.reach = [...reach];
+    } else if (kind === "internet" || kind === "router_access") {
+      net(target.dataset.net)[kind] = target.checked;
+    } else if (kind === "router") {
+      plan.devices.router = target.value || null;
+    } else if (kind === "router_trunks") {
+      plan.devices.router_trunks = target.value.split(/[,\s]+/).filter(Boolean);
+    } else if (kind === "switch_trunk") {
+      plan.devices.switch_trunks = { ...(plan.devices.switch_trunks || {}), [target.dataset.entry]: target.value.trim() };
+    } else if (kind === "ap") {
+      const all = s.state.devices.filter((d) => d.wireless).map((d) => d.entry_id);
+      const on = new Set(plan.devices.aps == null ? all : plan.devices.aps);
+      if (target.checked) on.add(target.dataset.entry);
+      else on.delete(target.dataset.entry);
+      plan.devices.aps = all.every((id) => on.has(id)) ? null : [...on];
+    }
+    this._setupDirty(target.type !== "text");
+  },
+
+  /* ---------- dialogs ---------- */
+
+  _planDialog(d) {
+    if (d.type === "plan-net") return this._planNetDialog(d);
+    if (d.type === "plan-wifi") return this._planWifiDialog(d);
+    if (d.type === "plan-key-add") return this._planKeyAddDialog(d);
+    if (d.type === "plan-key-show") return this._planKeyShowDialog(d);
+    if (d.type === "plan-apply") return this._planApplyDialog(d);
+    return "";
+  },
+
+  _dlgHead(title, sub = "") {
+    return `<div class="dlg-head"><div class="grow"><h2 id="dlg-title">${esc(title)}</h2>${sub ? `<div class="muted">${esc(sub)}</div>` : ""}</div>
+      <button class="icon-btn" data-action="close" aria-label="Close">${icon("close")}</button></div>`;
+  },
+
+  _textRow(id, label, field, value, { type = "text", placeholder = "", hint = "", min, max } = {}) {
+    return `<div class="form-row"><label class="section-title" for="${id}">${esc(label)}</label>
+      <div class="field"><input type="${type}" id="${id}" data-field="${field}" value="${esc(value ?? "")}" placeholder="${esc(placeholder)}" ${min != null ? `min="${min}"` : ""} ${max != null ? `max="${max}"` : ""} autocomplete="off" spellcheck="false"></div>
+      ${hint ? `<div class="hint">${hint}</div>` : ""}</div>`;
+  },
+
+  _toggleRow(field, label, checked, rerender = false) {
+    return `<div class="form-row"><label class="toggle"><input type="checkbox" data-field="${field}" ${rerender ? "data-rerender" : ""} ${checked ? "checked" : ""}><span class="track"></span><span>${esc(label)}</span></label></div>`;
+  },
+
+  _planNetDialog(d) {
+    const plan = this._setupState().draft;
+    const net = d.index != null ? plan.networks[d.index] : null;
+    const f = (d.form = d.form || {});
+    const v = (key, fallback) => (f[key] !== undefined ? f[key] : net ? net[key] : fallback);
+    const switches = this._setupState().state.devices.filter((x) => x.kind === "exos");
+    const dhcp = v("dhcp", true);
+    return `<div class="dialog wide-dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+      ${this._dlgHead(net ? net.name || net.id : "Add a network", net ? `VLAN ${net.vlan} · ID ${net.id}` : "A VLAN with its own addresses")}
+      ${this._textRow("net-name", "Name", "name", v("name", ""), { placeholder: "e.g. IoT" })}
+      <div class="two">
+        ${this._textRow("net-vlan", "VLAN ID", "vlan", v("vlan", ""), { type: "number", min: 2, max: 4094 })}
+        ${this._textRow("net-subnet", "Router address", "subnet", v("subnet", ""), { placeholder: "10.30.0.1/24" })}
+      </div>
+      ${this._toggleRow("dhcp", "Hand out addresses (DHCP)", dhcp, true)}
+      ${dhcp ? `<div class="three">
+        ${this._textRow("net-start", "First address", "dhcp_start", v("dhcp_start", 50), { type: "number", min: 1, hint: "e.g. 50 = .50" })}
+        ${this._textRow("net-limit", "How many", "dhcp_limit", v("dhcp_limit", 150), { type: "number", min: 1 })}
+        ${this._textRow("net-lease", "Lease", "lease", v("lease", "12h"), { placeholder: "12h" })}
+      </div>` : ""}
+      ${this._toggleRow("internet", "Internet access", v("internet", true))}
+      ${this._toggleRow("router_access", "May open the router's web page and SSH", v("router_access", false))}
+      ${switches.map((sw) => this._textRow(`net-ports-${sw.entry_id}`, `${sw.name}: ports for devices in this network (untagged)`, `ports:${sw.entry_id}`, f[`ports:${sw.entry_id}`] ?? ((net && net.switch_ports) || {})[sw.entry_id] ?? "", { placeholder: "e.g. 5-8,12" })).join("")}
+      <div class="dlg-actions">
+        ${net ? `<button class="btn danger" data-action="plan-net-delete" style="margin-right:auto">${icon("trash")}Delete</button>` : ""}
+        <button class="btn" data-action="close">Cancel</button>
+        <button class="btn primary" data-action="plan-net-done">${icon("check")}${net ? "Done" : "Add"}</button>
+      </div></div>`;
+  },
+
+  _planWifiDialog(d) {
+    const s = this._setupState();
+    const plan = s.draft;
+    const wifi = d.index != null ? plan.wifi[d.index] : null;
+    const f = (d.form = d.form || {});
+    const v = (key, fallback) => (f[key] !== undefined ? f[key] : wifi ? wifi[key] : fallback);
+    const security = v("security", "wpa2");
+    const needsPassword = ["wpa2", "wpa2_wpa3", "wpa3"].includes(security);
+    const saved = wifi && s.state.secrets.includes(`wifi:${wifi.id}`);
+    const bands = v("bands", ["2.4 GHz", "5 GHz"]);
+    return `<div class="dialog wide-dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+      ${this._dlgHead(wifi ? wifi.ssid : "Add a Wi-Fi network")}
+      ${this._textRow("pw-ssid", "Network name (SSID)", "ssid", v("ssid", ""), { placeholder: "e.g. home" })}
+      <div class="form-row"><label class="section-title" for="pw-network">Network (VLAN)</label>
+        <select id="pw-network" class="plan-select" data-field="network">${plan.networks.map((n) => `<option value="${esc(n.id)}" ${v("network", plan.networks[0] && plan.networks[0].id) === n.id ? "selected" : ""}>${esc(n.name)} · VLAN ${esc(n.vlan)}</option>`).join("")}</select></div>
+      <div class="form-row"><label class="section-title" for="pw-security">Security</label>
+        <select id="pw-security" class="plan-select" data-field="security" data-rerender>${Object.entries(SECURITY_LABELS).map(([k, label]) => `<option value="${k}" ${security === k ? "selected" : ""}>${esc(label)}</option>`).join("")}</select>
+        <div class="hint">${security === "ppsk" ? "Every device gets its own key (Devices &amp; keys), and can be put in another network. Works on OpenWrt; Aerohive access points skip this network for now." : security === "open" ? "Anyone nearby can join." : security === "wpa3" ? "Older devices can't join WPA3-only networks." : ""}</div></div>
+      ${needsPassword ? `<div class="form-row"><label class="section-title" for="plan-password">Password</label>
+        <div class="field"><input type="${f.showPassword ? "text" : "password"}" id="plan-password" data-field="password" value="${esc(f.password || "")}" autocomplete="new-password" spellcheck="false" placeholder="${saved ? "Leave empty to keep the saved one" : "8–63 characters"}">
+          <button class="icon-btn" data-action="wifi-show-password" aria-label="Show password" title="Show password">${icon("eye")}</button></div>
+        <div class="hint">Stored encrypted in Home Assistant${saved ? " · a password is saved" : ""}.</div></div>` : ""}
+      <div class="form-row"><span class="section-title">Bands</span><div class="checks">${PLAN_BANDS.map((b) => `<label><input type="checkbox" data-field="bands" data-multi value="${esc(b)}" ${bands.includes(b) ? "checked" : ""}>${esc(b)}</label>`).join("")}</div></div>
+      ${this._toggleRow("enabled", "Broadcast this network", v("enabled", true))}
+      ${this._toggleRow("hidden", "Hide the network name", v("hidden", false))}
+      ${this._toggleRow("isolate", "Isolate clients (devices can't see each other)", v("isolate", false))}
+      ${this._textRow("pw-max", "Max clients per access point", "max_clients", v("max_clients", "") ?? "", { type: "number", min: 1, max: 255, hint: "Empty: no limit" })}
+      <div class="dlg-actions">
+        ${wifi ? `<button class="btn danger" data-action="plan-wifi-delete" style="margin-right:auto">${icon("trash")}Delete</button>` : ""}
+        <button class="btn" data-action="close">Cancel</button>
+        <button class="btn primary" data-action="plan-wifi-done">${icon("check")}${wifi ? "Done" : "Add"}</button>
+      </div></div>`;
+  },
+
+  _planKeyAddDialog(d) {
+    const plan = this._setupState().state.plan;
+    const f = (d.form = d.form || {});
+    const ppsk = plan.wifi.filter((w) => w.security === "ppsk");
+    const minutes = Number(f.minutes ?? 0);
+    const busy = this._isBusy("plan-key-add");
+    return `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+      ${this._dlgHead("Add a device", "It gets its own Wi-Fi key")}
+      ${this._textRow("key-name", "Device name", "name", f.name || "", { placeholder: "e.g. Living room TV" })}
+      <div class="form-row"><label class="section-title" for="key-wifi">Wi-Fi network</label>
+        <select id="key-wifi" class="plan-select" data-field="wifi">${ppsk.map((w) => `<option value="${esc(w.id)}" ${(f.wifi || ppsk[0].id) === w.id ? "selected" : ""}>${esc(w.ssid)}</option>`).join("")}</select></div>
+      <div class="form-row"><label class="section-title" for="key-net">Put it in</label>
+        <select id="key-net" class="plan-select" data-field="network"><option value="">The Wi-Fi's own network</option>${plan.networks.map((n) => `<option value="${esc(n.id)}" ${f.network === n.id ? "selected" : ""}>${esc(n.name)} · VLAN ${esc(n.vlan)}</option>`).join("")}</select></div>
+      <div class="form-row"><span class="section-title">Valid for</span><div class="durations" role="radiogroup">${KEY_DURATIONS.map(([m, label]) => `<label class="choice"><input type="radio" name="key-duration" data-field="minutes" value="${m}" ${m === minutes ? "checked" : ""}><span>${label}</span></label>`).join("")}</div></div>
+      ${this._textRow("key-mac", "Only for this device's MAC address (optional)", "mac", f.mac || "", { placeholder: "aa:bb:cc:dd:ee:ff" })}
+      ${this._textRow("key-key", "Key (optional)", "key", f.key || "", { placeholder: "Leave empty to make one up", hint: "8–63 characters." })}
+      <div class="dlg-actions"><button class="btn" data-action="close">Cancel</button>
+        <button class="btn primary" data-action="plan-key-create" ${busy ? "disabled" : ""}>${icon("plus")}${busy ? "Adding…" : "Add device"}</button></div></div>`;
+  },
+
+  _planKeyShowDialog(d) {
+    return `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+      ${this._dlgHead(d.name, d.ssid ? `Wi-Fi: ${d.ssid}` : "")}
+      <div class="key-box mono" id="key-value">${esc(d.value)}</div>
+      <p class="muted" style="font-size:13px">Enter this as the Wi-Fi password on ${esc(d.name)}. ${d.expires ? `It stops working in ${esc(timeLeft(d.expires).replace(" left", ""))}.` : ""}</p>
+      <div class="dlg-actions"><button class="btn" data-action="plan-copy">${icon("save")}Copy</button><button class="btn primary" data-action="close">Done</button></div></div>`;
+  },
+
+  _planApplyDialog(d) {
+    const busy = this._isBusy("plan-apply");
+    let body = '<p class="muted">Working out the changes…</p>';
+    if (d.results) {
+      body = d.results
+        .map((r) => `<div class="apply-row"><span class="chip ${r.ok ? "ok" : "bad"}">${r.ok ? "Done" : "Failed"}</span> <strong>${esc(r.name)}</strong> <span class="muted">${esc(ROLE_LABELS[r.role] || r.role)}</span>
+          ${r.error ? `<div class="hint err">${esc(r.error)}</div>` : ""}${(r.warnings || []).map((w) => `<div class="hint">${esc(w)}</div>`).join("")}</div>`)
+        .join("");
+    } else if (d.preview) {
+      const p = d.preview;
+      body = `${p.errors.length ? `<div class="banner err">${icon("warn")}<div class="grow"><ul class="plan-errors">${p.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div></div>` : ""}
+        ${(p.notes || []).map((n) => `<p class="hint">${esc(n)}</p>`).join("")}
+        ${p.devices.length ? p.devices
+          .map((x) => `<div class="apply-row"><strong>${esc(x.name)}</strong> <span class="muted">${esc(ROLE_LABELS[x.role] || x.role)}${x.online ? "" : " · offline"}</span>
+            ${x.errors.map((e) => `<div class="hint err">${esc(e)}</div>`).join("")}${x.warnings.map((w) => `<div class="hint">${esc(w)}</div>`).join("")}
+            <details><summary>${x.commands.length} command${x.commands.length === 1 ? "" : "s"}</summary><pre class="cmds">${esc(x.commands.join("\n"))}</pre></details></div>`)
+          .join("") : '<p class="muted">No device to set up: add an OpenWrt router, an access point or an ExtremeXOS switch.</p>'}
+        <p class="hint">Switches go first, then the router, then the access points. An OpenWrt device goes back to its previous settings on its own if Home Assistant can't reach it within 90 seconds of the change.</p>`;
+    }
+    const canApply = d.preview && !d.results && !d.preview.errors.length && d.preview.devices.length;
+    return `<div class="dialog wide-dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+      ${this._dlgHead(d.results ? "Applied" : "Review & apply")}
+      ${body}
+      <div class="dlg-actions"><button class="btn" data-action="close">${d.results ? "Close" : "Cancel"}</button>
+        ${canApply ? `<button class="btn primary" data-action="plan-apply" ${busy ? "disabled" : ""}>${icon("check")}${busy ? "Applying… (up to a minute)" : "Apply to the devices"}</button>` : ""}</div></div>`;
+  },
+
+  /* ---------- actions ---------- */
+
+  async _planSave() {
+    const s = this._setupState();
+    const result = await this._setupWs({ type: `${DOMAIN}/plan/save`, plan: s.draft, secrets: s.secrets }, "plan-save");
+    if (!result) return false;
+    s.dirty = false;
+    s.secrets = {};
+    this._setupTake(result);
+    this._toast(result.errors.length ? `Setup saved · ${result.errors.length} thing${result.errors.length === 1 ? "" : "s"} to fix before applying` : "Setup saved");
+    this._render();
+    return true;
+  },
+
+  _planAction(action, el) {
+    const s = this._setupState();
+    const d = this._dialog;
+    const plan = s.draft;
+    const num = (value) => (value === "" || value == null ? null : Number(value));
+    switch (action) {
+      case "plan-template":
+        this._setupWs({ type: `${DOMAIN}/plan/template` }, "plan-template").then((r) => {
+          if (!r) return;
+          s.draft = { ...r.plan, keys: s.draft.keys };
+          this._setupDirty();
+          this._toast("Home layout loaded: check it, set the Wi-Fi passwords, then Save");
+        });
+        break;
+      case "plan-save":
+        this._planSave();
+        break;
+      case "plan-net-add":
+        this._openDialog({ type: "plan-net", index: null, focus: "#net-name" });
+        break;
+      case "plan-net-edit":
+        this._openDialog({ type: "plan-net", index: Number(el.dataset.index) });
+        break;
+      case "plan-net-done": {
+        const f = d.form || {};
+        const old = d.index != null ? plan.networks[d.index] : null;
+        const get = (k, fallback) => (f[k] !== undefined ? f[k] : old ? old[k] : fallback);
+        const name = String(get("name", "")).trim();
+        const vlan = num(get("vlan", null));
+        const subnet = String(get("subnet", "")).trim();
+        if (!name) return this._toast("Give the network a name", true);
+        if (!Number.isInteger(vlan) || vlan < 2 || vlan > 4094) return this._toast("The VLAN ID must be 2–4094", true);
+        if (plan.networks.some((n, i) => n.vlan === vlan && i !== d.index)) return this._toast(`VLAN ${vlan} is already used`, true);
+        if (!/^\d+\.\d+\.\d+\.\d+\/\d+$/.test(subnet)) return this._toast("Enter the router's address with the size, e.g. 10.30.0.1/24", true);
+        const ports = { ...((old && old.switch_ports) || {}) };
+        for (const [k, value] of Object.entries(f)) if (k.startsWith("ports:")) ports[k.slice(6)] = String(value).trim();
+        const net = {
+          ...(old || { reach: [] }),
+          id: old ? old.id : slugId(name, plan.networks.map((n) => n.id).concat(["lan"])),
+          name,
+          vlan,
+          subnet,
+          dhcp: Boolean(get("dhcp", true)),
+          dhcp_start: num(get("dhcp_start", 50)) ?? 50,
+          dhcp_limit: num(get("dhcp_limit", 150)) ?? 150,
+          lease: String(get("lease", "12h")).trim() || "12h",
+          internet: Boolean(get("internet", true)),
+          router_access: Boolean(get("router_access", false)),
+          switch_ports: ports,
+        };
+        if (old) plan.networks[d.index] = net;
+        else plan.networks.push(net);
+        this._dialog = null;
+        this._setupDirty();
+        break;
+      }
+      case "plan-net-delete": {
+        const net = plan.networks[d.index];
+        const used = plan.wifi.filter((w) => w.network === net.id).map((w) => w.ssid);
+        if (used.length) return this._toast(`${net.name} is used by ${used.join(", ")}: change those first`, true);
+        plan.networks.splice(d.index, 1);
+        for (const n of plan.networks) n.reach = (n.reach || []).filter((r) => r !== net.id);
+        this._dialog = null;
+        this._setupDirty();
+        break;
+      }
+      case "plan-wifi-add":
+        this._openDialog({ type: "plan-wifi", index: null, focus: "#pw-ssid" });
+        break;
+      case "plan-wifi-edit":
+        this._openDialog({ type: "plan-wifi", index: Number(el.dataset.index) });
+        break;
+      case "plan-wifi-done": {
+        const f = d.form || {};
+        const old = d.index != null ? plan.wifi[d.index] : null;
+        const get = (k, fallback) => (f[k] !== undefined ? f[k] : old ? old[k] : fallback);
+        const ssid = String(get("ssid", "")).trim();
+        const security = get("security", "wpa2");
+        const bands = get("bands", ["2.4 GHz", "5 GHz"]);
+        if (!ssid || ssid.length > 32) return this._toast("The network name needs 1–32 characters", true);
+        if (plan.wifi.some((w, i) => w.ssid === ssid && i !== d.index)) return this._toast(`${ssid} already exists`, true);
+        if (!bands.length) return this._toast("Choose at least one band", true);
+        const id = old ? old.id : slugId(ssid, plan.wifi.map((w) => w.id));
+        const needsPassword = ["wpa2", "wpa2_wpa3", "wpa3"].includes(security);
+        if (f.password && (f.password.length < 8 || f.password.length > 63)) return this._toast("A Wi-Fi password needs 8 to 63 characters", true);
+        if (needsPassword && !f.password && !s.secrets[`wifi:${id}`] && !(s.state.secrets || []).includes(`wifi:${id}`)) return this._toast("Enter a password", true);
+        const max = num(get("max_clients", null));
+        const wifi = {
+          ...(old || {}),
+          id,
+          ssid,
+          network: get("network", plan.networks[0].id),
+          security,
+          bands,
+          enabled: Boolean(get("enabled", true)),
+          hidden: Boolean(get("hidden", false)),
+          isolate: Boolean(get("isolate", false)),
+          max_clients: max,
+        };
+        if (f.password) s.secrets[`wifi:${id}`] = f.password;
+        if (old) plan.wifi[d.index] = wifi;
+        else plan.wifi.push(wifi);
+        this._dialog = null;
+        this._setupDirty();
+        break;
+      }
+      case "plan-wifi-delete": {
+        const wifi = plan.wifi[d.index];
+        plan.wifi.splice(d.index, 1);
+        delete s.secrets[`wifi:${wifi.id}`];
+        this._dialog = null;
+        this._setupDirty();
+        break;
+      }
+      case "plan-key-add":
+        if (s.dirty) return this._toast("Save the setup first", true);
+        this._openDialog({ type: "plan-key-add", focus: "#key-name" });
+        break;
+      case "plan-key-create": {
+        const f = d.form || {};
+        const ppsk = s.state.plan.wifi.filter((w) => w.security === "ppsk");
+        const msg = { type: `${DOMAIN}/plan/key_add`, name: (f.name || "").trim(), wifi: f.wifi || ppsk[0].id };
+        if (!msg.name) return this._toast("Give the device a name", true);
+        if (f.network) msg.network = f.network;
+        if (f.mac) msg.mac = f.mac.trim();
+        if (Number(f.minutes)) msg.minutes = Number(f.minutes);
+        if (f.key) {
+          if (f.key.length < 8 || f.key.length > 63) return this._toast("A key needs 8 to 63 characters", true);
+          msg.key = f.key;
+        }
+        this._setupWs(msg, "plan-key-add").then(async (result) => {
+          if (!result) return;
+          this._setupTake(result);
+          const failed = (result.results || []).filter((r) => !r.ok);
+          if (failed.length) this._toast(`Saved, but not yet on ${failed.map((r) => r.name).join(", ")}: ${failed[0].error}`, true);
+          await this._planShowKey(result.key_id);
+        });
+        break;
+      }
+      case "plan-key-show":
+        this._planShowKey(el.dataset.key);
+        break;
+      case "plan-key-revoke": {
+        const key = s.state.plan.keys.find((k) => k.id === el.dataset.key);
+        if (!key) return;
+        this._openDialog({
+          type: "confirm",
+          title: `Revoke the key of ${key.name}?`,
+          text: "The device is disconnected and can't join again with this key. Other devices aren't affected.",
+          confirm: "Revoke",
+          danger: true,
+          onYes: () =>
+            this._setupWs({ type: `${DOMAIN}/plan/key_revoke`, key_id: key.id }, `revoke:${key.id}`).then((r) => {
+              if (!r) return;
+              this._setupTake(r);
+              this._toast(`Key of ${key.name} revoked`);
+              this._render();
+            }),
+        });
+        break;
+      }
+      case "plan-copy": {
+        const value = d && d.value;
+        const done = () => this._toast("Key copied");
+        if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(value).then(done, () => this._toast("Select the key and copy it", true));
+        else {
+          const box = this.shadowRoot.getElementById("key-value");
+          const range = document.createRange();
+          range.selectNodeContents(box);
+          const sel = this.shadowRoot.getSelection ? this.shadowRoot.getSelection() : window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          this._toast("Key selected: press Ctrl+C to copy");
+        }
+        break;
+      }
+      case "plan-review":
+        (async () => {
+          if (s.dirty && !(await this._planSave())) return;
+          this._openDialog({ type: "plan-apply" });
+          const preview = await this._setupWs({ type: `${DOMAIN}/plan/preview` });
+          if (this._dialog && this._dialog.type === "plan-apply") {
+            this._dialog.preview = preview || { errors: ["Couldn't work out the changes"], notes: [], devices: [] };
+            this._render();
+          }
+        })();
+        break;
+      case "plan-apply":
+        this._setupWs({ type: `${DOMAIN}/plan/apply` }, "plan-apply").then((r) => {
+          if (!r) return;
+          this._setupTake(r);
+          if (this._dialog && this._dialog.type === "plan-apply") this._dialog.results = r.results;
+          const failed = r.results.filter((x) => !x.ok).length;
+          this._toast(failed ? `${failed} device${failed === 1 ? "" : "s"} failed` : "Setup applied", failed > 0);
+          this._render();
+        });
+        break;
+      default:
+        break;
+    }
+  },
+
+  async _planShowKey(keyId) {
+    const s = this._setupState();
+    const key = s.state.plan.keys.find((k) => k.id === keyId);
+    const r = await this._setupWs({ type: `${DOMAIN}/plan/reveal`, ref: `key:${keyId}` });
+    if (!r || !key) return;
+    const wifi = s.state.plan.wifi.find((w) => w.id === key.wifi);
+    this._dialog = { type: "plan-key-show", name: key.name, ssid: wifi && wifi.ssid, value: r.value, expires: key.expires, focus: '.dialog [data-action="close"]' };
+    this._render();
+  },
+};
+
+Object.assign(AerohiveNetworkPanel.prototype, SetupMixin);
 
 /* Keyboard: Enter/Space on table rows opens the port. */
 function rowKeyboard(root) {

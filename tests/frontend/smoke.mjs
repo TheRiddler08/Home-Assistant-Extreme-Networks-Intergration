@@ -131,6 +131,53 @@ check((await panel().locator('[data-action="wifi-edit"], [data-action="wifi-add"
 check(await panel().locator(".net [data-wifi-toggle]").first().isDisabled(), "non-admin toggles are disabled");
 await page.close();
 
+// Setup tab: template, add a network and Wi-Fi, access matrix, save, add a timed key, review and apply.
+page = await open("?view=panel&path=setup");
+await panel().locator('[data-action="plan-template"]').click();
+await page.waitForTimeout(500);
+check((await panel().locator('[data-action="plan-net-edit"]').count()) === 3, "template adds its networks");
+await panel().locator('[data-action="plan-net-add"]').click();
+await panel().locator("#net-name").fill("Guest Wi-Fi");
+await panel().locator("#net-vlan").fill("30");
+await panel().locator("#net-subnet").fill("10.99.99.1/24");
+await panel().locator('[data-action="plan-net-done"]').click();
+check((await panel().locator(".toast.err").textContent()).includes("VLAN 30 is already used"), "duplicate VLAN is refused");
+await panel().locator("#net-vlan").fill("40");
+await panel().locator('[data-action="plan-net-done"]').click();
+await panel().locator('input[data-plan="reach"][data-from="iso"][data-to="iot"]').check();
+await panel().locator('[data-action="plan-wifi-add"]').click();
+await panel().locator("#pw-ssid").fill("Guest");
+await panel().locator("#pw-network").selectOption("guest_wi_fi");
+await panel().locator("#plan-password").fill("guest-pass-1");
+await panel().locator('[data-action="plan-wifi-done"]').click();
+await panel().locator('input[data-plan="switch_trunk"]').first().fill("47-48");
+await panel().locator('[data-action="plan-save"]').click(); // the field's change (on blur) must not swallow this click
+await page.waitForTimeout(700);
+await panel().locator('[data-action="plan-key-add"]').click();
+await panel().locator("#key-name").fill("Living room TV");
+await panel().locator('input[data-field="minutes"][value="15"]').check();
+await panel().locator('[data-action="plan-key-create"]').click();
+await page.waitForTimeout(1000);
+check(((await panel().locator(".key-box").textContent()) || "").trim() === "Kx7mPq2vR9tw", "the new key is shown");
+await panel().locator('.dialog [data-action="close"]').last().click();
+await panel().locator('[data-action="plan-review"]').click();
+await page.waitForTimeout(900);
+check((await panel().locator(".apply-row").count()) === 4, "review lists the switch and access points");
+await panel().locator('[data-action="plan-apply"]').click();
+await page.waitForTimeout(900);
+check((await panel().locator(".chip.ok").count()) === 4, "every device reports done");
+const planCalls = await page.evaluate(() => window.serviceCalls.map((c) => c.data));
+const saved = planCalls.find((c) => c.type === "aerohive_local/plan/save");
+check(saved && saved.secrets["wifi:guest"] === "guest-pass-1", "the Wi-Fi password is sent with the save");
+check(saved && saved.plan.networks.find((n) => n.id === "iso").reach.includes("iot"), "the access matrix is saved");
+check(saved && saved.plan.devices.switch_trunks && Object.values(saved.plan.devices.switch_trunks).includes("47-48"), "switch trunk ports are saved");
+const keyCall = planCalls.find((c) => c.type === "aerohive_local/plan/key_add");
+check(keyCall && keyCall.minutes === 15 && keyCall.wifi === "homeiso", `key request: ${JSON.stringify(keyCall)}`);
+await page.close();
+page = await open("?view=panel&path=setup&admin=0");
+check(((await panel().locator(".content").textContent()) || "").includes("Only administrators"), "non-admins can't see the setup");
+await page.close();
+
 // Clients search, cards, phone width.
 page = await open("?view=panel&path=clients");
 await panel().locator("#client-search").fill("pixel");
@@ -140,7 +187,7 @@ await page.close();
 page = await open("?view=cards");
 check((await page.locator("aerohive-switch-card").first().locator(".port").count()) === 52, "switch card renders the faceplate");
 await page.close();
-for (const query of ["?view=panel", "?view=panel&path=X450e-48p", "?view=panel&path=wifi", "?view=cards"]) {
+for (const query of ["?view=panel", "?view=panel&path=X450e-48p", "?view=panel&path=wifi", "?view=panel&path=setup", "?view=cards"]) {
   page = await open(query, { width: 360, height: 780 });
   check(!(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), `${query}: no sideways scroll at 360 px`);
   await page.close();

@@ -62,6 +62,7 @@ from .const import (
     SERVICE_RUN_SHOW_COMMAND,
     SERVICE_SET_SSID_PASSWORD,
 )
+from . import plan as plan_mod
 from . import websocket_api, wifi
 from .coordinator import AerohiveConfigEntry, AerohiveCoordinator
 from .frontend import async_register_frontend
@@ -339,6 +340,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     websocket_api.async_register(hass)
     await wifi.async_setup_timers(hass)
+    await plan_mod.async_setup_plan(hass)
     await async_register_frontend(hass)
     return True
 

@@ -109,9 +109,31 @@ class Router:
             if kind == "info":
                 return fixture("synthetic_openwrt_iwinfo_info_phy0-ap0.json" if dev.startswith("phy0") else "synthetic_openwrt_iwinfo_info_phy1-ap0.json")
             return '{"results": []}'
+        if "/tmp/hn_backup" in line or "uci -q changes" in line or "uci revert" in line or "init.d/network reload" in line:
+            # Network setup: backup, rollback timer, commit, reload, confirm.
+            return "HN_CONFIRMED" if "echo HN_CONFIRMED" in line else ""
+        if "uci set network." in line or "uci -q show network" in line or "uci set wireless.hn_" in line:
+            return self.apply_setup(line)
         if "uci commit wireless" in line or line.startswith("ubus call hostapd"):
             return self.apply(line)
         return f"-ash: {line.split()[0] if line else ''}: not found"
+
+    def apply_setup(self, line: str) -> str:
+        """Network-setup commands: replace the hn_* Wi-Fi sections (network/firewall/dhcp are accepted)."""
+        body = line.split(" || echo ")[0]
+        for part in body.split(" && "):
+            part = part.strip()
+            if "uci -q show wireless" in part:
+                for sec in [s for s in self.sections if s.startswith("hn_")]:
+                    self.sections.pop(sec)
+                    self.order.remove(sec)
+            elif m := re.match(r"^uci set wireless\.(hn_\w+)=(wifi-iface)$", part):
+                self.sections[m.group(1)] = {".type": "wifi-iface"}
+                self.order.append(m.group(1))
+            elif m := re.match(r"^uci set wireless\.(hn_\w+)\.(\w+)=(.*)$", part):
+                if m.group(1) in self.sections:
+                    self.sections[m.group(1)][m.group(2)] = shlex.split(m.group(3))[0] if m.group(3) else ""
+        return ""
 
     def apply(self, line: str) -> str:
         body = line.split(" || echo ")[0]
