@@ -662,6 +662,32 @@
           "description": "The id from the aerohive_local_onboarding_request event."
         }
       }
+    },
+    "set_port_speed": {
+      "name": "Set port speed",
+      "description": "Set a switch or router port's speed and duplex, or back to auto-negotiation. ExtremeXOS: documented commands; SR switches and HiveOS Ethernet ports: assumed commands (not yet confirmed on a device).",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The switch, router or access point."
+        },
+        "port": {
+          "name": "Port",
+          "description": "The port as shown in the Network panel, e.g. 5 (ExtremeXOS), 1/0/3 (SR switch) or eth1."
+        },
+        "speed": {
+          "name": "Speed",
+          "description": "auto, or 10, 100, 1000 or 10000 Mbit/s (what the port supports)."
+        },
+        "duplex": {
+          "name": "Duplex",
+          "description": "full or half for 10/100 Mbit/s. Default: full (auto with Auto speed)."
+        },
+        "force": {
+          "name": "Force",
+          "description": "Also change an uplink port, which can disconnect Home Assistant from the device."
+        }
+      }
     }
   },
   "issues": {

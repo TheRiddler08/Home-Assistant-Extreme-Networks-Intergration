@@ -55,7 +55,7 @@ def device_kind(data: AerohiveData) -> str:
     return "unknown"
 
 
-def _ports(data: AerohiveData) -> list[dict[str, Any]]:
+def _ports(coordinator: AerohiveCoordinator, data: AerohiveData) -> list[dict[str, Any]]:
     uplinks = data.uplink_ports()
     clients: dict[str, list[dict[str, Any]]] = {}
     for entry in data.fdb:
@@ -107,6 +107,8 @@ def _ports(data: AerohiveData) -> list[dict[str, Any]]:
                     "network": lldp.is_network_device,
                 },
                 "clients": clients.get(name, []),
+                "speed_setting": None if (setting := coordinator.port_speed_setting(name)) is None else {"speed": setting[0], "duplex": setting[1]},
+                "speed_options": coordinator.port_speed_options(name),
             }
         )
     return result
@@ -210,7 +212,7 @@ def device_snapshot(hass: HomeAssistant, coordinator: AerohiveCoordinator) -> di
         "poe": None
         if poe is None
         else {"budget_w": _round(poe.budget_w), "used_w": _round(poe.used_w), "remaining_w": _round(poe.remaining_w)},
-        "ports": _ports(data) if data.has_switch_ports or device_kind(data) == "switch" else [],
+        "ports": _ports(coordinator, data) if data.has_switch_ports or device_kind(data) == "switch" else [],
         "radios": _radios(data) if data.is_wireless else [],
         "ssids": [
             {
@@ -255,6 +257,7 @@ def device_snapshot(hass: HomeAssistant, coordinator: AerohiveCoordinator) -> di
         "features": {
             "port_names": data.cli == commands.DIALECT_EXOS,
             "port_control": data.cli != "openwrt",
+            "port_speed": data.cli != "openwrt",
             "restore": data.cli != "openwrt",
             "poe": bool(data.poe_ports),
             "save": True,

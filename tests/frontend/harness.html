@@ -224,6 +224,10 @@
         const p = port(d, data.port);
         if (p.uplink && !data.enabled && !data.force) throw new Error(`${data.port} is an uplink port`);
         p.enabled = data.enabled; if (!data.enabled) { p.up = false; p.speed = null; }
+      } else if (service === "set_port_speed") {
+        const p = port(d, data.port);
+        if (p.uplink && data.speed !== "auto" && !data.force) throw new Error(`${data.port} is an uplink port`);
+        p.speed_setting = { speed: data.speed, duplex: data.duplex };
       } else if (service === "set_poe") {
         const p = port(d, data.port); p.poe.enabled = data.enabled; p.poe.delivering = data.enabled && p.up; if (!data.enabled) p.poe.power_w = 0;
       } else if (service === "set_port_description") {

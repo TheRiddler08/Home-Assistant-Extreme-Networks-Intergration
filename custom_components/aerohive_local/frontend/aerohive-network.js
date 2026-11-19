@@ -489,6 +489,9 @@ button { font: inherit; color: inherit; }
   border: 1px solid var(--ah-line); background: var(--ah-bg);
 }
 .field input:focus { outline: 2px solid var(--ah-accent); outline-offset: -1px; }
+.port-select { height: 36px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--ah-line); background: var(--ah-bg); color: var(--ah-text); font: inherit; min-width: 0; }
+.speed-row { flex-wrap: wrap; }
+.speed-row .port-select { flex: 1 1 140px; }
 .hint { font-size: 12px; color: var(--ah-muted); margin-top: 6px; }
 .hint.err { color: var(--ah-err); }
 .durations { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
@@ -1221,6 +1224,27 @@ class AerohiveBase extends HTMLElement {
 
   /* ---------------- dialogs ---------------- */
 
+  _portSpeedSection(device, port, d, busy) {
+    const options = port.speed_options || [];
+    if (!(device.features && device.features.port_speed) || !options.length) return "";
+    const setting = port.speed_setting || { speed: "auto", duplex: "auto" };
+    const speed = d.speed ?? setting.speed;
+    const duplexes = speed === "auto" ? ["auto"] : speed === "10" || speed === "100" ? ["full", "half"] : ["full"];
+    const duplex = duplexes.includes(d.duplex ?? setting.duplex) ? d.duplex ?? setting.duplex : duplexes[0];
+    const label = (s) => (s === "auto" ? "Auto (negotiate)" : s === "1000" ? "1 Gbit/s" : s === "10000" ? "10 Gbit/s" : `${s} Mbit/s`);
+    const now = setting.speed === "auto" ? "Auto" : `${label(setting.speed)} ${setting.duplex}`;
+    const changed = speed !== setting.speed || duplex !== setting.duplex;
+    return `<section>
+        <label class="section-title" for="port-speed">Speed</label>
+        <div class="field speed-row">
+          <select id="port-speed" class="port-select" data-speed-field="speed">${options.map((o) => `<option value="${o}" ${o === speed ? "selected" : ""}>${label(o)}</option>`).join("")}</select>
+          <select id="port-duplex" class="port-select" data-speed-field="duplex" aria-label="Duplex" ${duplexes.length === 1 ? "disabled" : ""}>${duplexes.map((x) => `<option value="${x}" ${x === duplex ? "selected" : ""}>${x === "auto" ? "Auto" : x === "full" ? "Full duplex" : "Half duplex"}</option>`).join("")}</select>
+          <button class="btn" data-action="port-speed" ${busy("speed") || !changed ? "disabled" : ""}>${icon("check")}${busy("speed") ? "Setting…" : "Apply"}</button>
+        </div>
+        <div class="muted" style="font-size:12px;margin-top:6px">Set to ${esc(now)}${port.up && port.speed ? ` · link at ${esc(label(String(port.speed)))}` : ""}. Both ends must match: use Auto unless the other device needs a fixed speed.${device.cli === "exos" ? "" : " The commands for this device are assumed (not yet confirmed on one)."}</div>
+      </section>`;
+  }
+
   _portDialog(device, d) {
     const port = (device.ports || []).find((p) => p.name === d.port);
     if (!port) return "";
@@ -1270,6 +1294,7 @@ class AerohiveBase extends HTMLElement {
               </section>`
             : ""
         }
+        ${this._portSpeedSection(device, port, d, busy)}
         <section>
           <dl class="kv">
             ${neighbor ? `<dt>Connected to</dt><dd><strong>${esc(neighbor.name || "Unknown")}</strong>${neighbor.port ? ` <span class="muted">port ${esc(neighbor.port)}</span>` : ""}${neighbor.address ? `<br><span class="mono">${esc(neighbor.address)}</span>` : ""}</dd>` : ""}
@@ -1407,6 +1432,12 @@ class AerohiveBase extends HTMLElement {
       this._wifiToggle(target.dataset.wifiToggle, target.checked);
       return;
     }
+    if (target.dataset.speedField && this._dialog) {
+      this._dialog[target.dataset.speedField] = target.value;
+      if (target.dataset.speedField === "speed") this._dialog.duplex = undefined;
+      this._render();
+      return;
+    }
     if (target.dataset.choice && this._dialog) {
       this._dialog[target.dataset.choice] = target.value;
       return;
@@ -1480,6 +1511,30 @@ class AerohiveBase extends HTMLElement {
       case "poe-cycle": {
         const key = `${device.entry_id}:${dialog.port}`;
         this._call("power_cycle_poe", { device_id: device.device_id, port: dialog.port }, { busyKey: `cycle:${key}`, success: `PoE on port ${dialog.port} restarted` });
+        break;
+      }
+      case "port-speed": {
+        const port = device.ports.find((p) => p.name === dialog.port);
+        const setting = port.speed_setting || { speed: "auto", duplex: "auto" };
+        const speed = dialog.speed ?? setting.speed;
+        const duplex = speed === "auto" ? "auto" : dialog.duplex ?? (setting.speed === speed ? setting.duplex : "full");
+        const key = `${device.entry_id}:${port.name}`;
+        const send = (force) =>
+          this._call("set_port_speed", { device_id: device.device_id, port: port.name, speed, duplex, ...(force ? { force: true } : {}) },
+            { busyKey: `speed:${key}`, hold: true, success: `Port ${port.name} set to ${speed === "auto" ? "Auto" : `${speed === "1000" ? "1 Gbit/s" : speed === "10000" ? "10 Gbit/s" : `${speed} Mbit/s`} ${duplex}`}` });
+        if (port.uplink && speed !== "auto") {
+          this._dialog = {
+            type: "confirm",
+            title: `Change the speed of uplink port ${port.name}?`,
+            text: `Port ${port.name} leads to another switch or router. If the other side doesn't match, the link drops and Home Assistant can lose ${device.name}; you may need the console to set it back.`,
+            confirm: "Change speed",
+            danger: true,
+            back: { ...dialog },
+            onYes: () => send(true),
+            focus: '.dialog [data-action="close"]',
+          };
+          this._render();
+        } else send(false);
         break;
       }
       case "rename": {

@@ -46,6 +46,9 @@ Select a port, on the front panel or in the table, to manage it:
   asks first, because it can cut Home Assistant off from the switch.
 - **PoE on / off** and **Restart PoE device** (power-cycles a camera or access point).
 - **Port name** (ExtremeXOS display string, up to 15 characters, no spaces).
+- **Speed**: Auto (negotiate), or a fixed 10 / 100 Mbit/s (full or half duplex), 1 Gbit/s or
+  10 Gbit/s, as the port supports. Shows what the port is set to and the speed of the link.
+  Changing an uplink's speed asks first. See [Port speed](switches.md#port-speed).
 - The LLDP neighbour with its address, PoE draw and class, traffic, and the devices learned
   on the port, named when an access point knows their hostname.
 

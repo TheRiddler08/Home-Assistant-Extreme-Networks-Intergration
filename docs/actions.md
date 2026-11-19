@@ -111,6 +111,27 @@ data:
   device_id: <switch>    # optional
 ```
 
+## `aerohive_local.set_port_speed`
+
+Set a port's speed and duplex, or back to auto-negotiation.
+
+| Field | |
+| --- | --- |
+| `device_id` | The switch, router or access point. |
+| `port` | As shown in the panel: `5` (ExtremeXOS), `1/0/3` (SR switch), `eth1` (HiveOS). |
+| `speed` | `auto`, `10`, `100`, `1000` or `10000` (Mbit/s), as the port supports. |
+| `duplex` | `full` or `half` for 10/100 Mbit/s. Default `full` (`auto` with Auto speed). |
+| `force` | Also change an uplink port (default false). Going back to `auto` is always allowed. |
+
+```yaml
+action: aerohive_local.set_port_speed
+data:
+  device_id: 1234abcd...
+  port: "9"
+  speed: "100"
+  duplex: full
+```
+
 ## `aerohive_local.set_poe`
 
 Turn PoE on or off for one port (and save).

@@ -2220,6 +2220,28 @@ def parse_exos_port_media(text: str) -> dict[str, tuple[str, str | None]]:
     return result
 
 
+def parse_exos_port_speed_cfg(text: str) -> dict[str, tuple[str, str]]:
+    """'show ports configuration no-refresh': port -> configured (speed, duplex), e.g. ('auto', 'auto'), ('100', 'full').
+
+    Columns after the virtual router: port state, link state, auto-negotiation,
+    speed configured [actual], duplex configured [actual] (actual values are
+    missing when there's no link).
+    """
+    result: dict[str, tuple[str, str]] = {}
+    for line in clean_output(text).split("\n"):
+        tokens = line.split()
+        if len(tokens) < 7 or not _EXOS_PORT_RE.match(tokens[0]) or not tokens[1].upper().startswith("VR-"):
+            continue
+        rest = [t.upper() for t in tokens[4:]]
+        auto, speed_cfg = rest[0], rest[1]
+        duplex_cfg = next((t for t in rest[2:4] if t in ("AUTO", "FULL", "HALF")), "AUTO")
+        if auto == "ON" and speed_cfg == "AUTO":
+            result[tokens[0]] = ("auto", "auto")
+        elif speed_cfg.isdigit():
+            result[tokens[0]] = (speed_cfg, "full" if duplex_cfg == "AUTO" else duplex_cfg.lower())
+    return result
+
+
 def media_kind(primary: str | None, redundant: str | None = None) -> tuple[str | None, str | None]:
     """(media, module) from the ExtremeXOS media columns."""
     pri = (primary or "").upper()
@@ -2268,6 +2290,7 @@ class RunningConfigSummary:
     ssid_bindings: dict[str, set[str]] = field(default_factory=dict)  # radio -> SSIDs ("interface wifi0 ssid X")
     console: bool = False  # "line console" (SR switches): there's a serial console port
     ssids: set[str] = field(default_factory=set)  # SSIDs the configuration defines ("ssid <name> ...")
+    port_speeds: dict[str, tuple[str, str]] = field(default_factory=dict)  # port -> (speed, duplex) when set
 
     def ssid_security(self, ssid: str) -> str | None:
         obj = self.ssid_security_objects.get(ssid, ssid)
@@ -2283,6 +2306,10 @@ _PSE_OFF_RE = re.compile(r"^\s*interface\s+(eth\S+)\s+pse\s+shutdown\b", re.IGNO
 _PORT_OFF_RE = re.compile(r"^\s*interface\s+(eth\S+)\s+shutdown\s*$", re.IGNORECASE)
 _UPTIME_COMMENT_RE = re.compile(r'^\s*!\s*System Up Time\s+"?([^"]+)"?', re.IGNORECASE)
 _BLOCK_IF_RE = re.compile(r"^\s*interface\s+(\d+/\d+/\d+)\s*$", re.IGNORECASE)
+
+
+_SR_SPEED_RE = re.compile(r"^speed\s+(10|100|1000|10000)\s+(full|half)-duplex$")
+_HIVE_SPEED_RE = re.compile(r"^interface\s+(eth\d+(?:/\d+)?)\s+(speed|duplex)\s+(auto|10|100|1000|full|half)$")
 
 
 def parse_running_config_summary(config: str) -> RunningConfigSummary:
@@ -2307,6 +2334,10 @@ def parse_running_config_summary(config: str) -> RunningConfigSummary:
                 summary.shutdown_ports.add(block_port)
             elif stripped in {"no poe", "poe disable", "no poe enable"}:
                 summary.pse_shutdown_ports.add(block_port)
+            elif m := _SR_SPEED_RE.match(stripped):
+                summary.port_speeds[block_port] = (m.group(1), m.group(2))
+            elif stripped == "auto-negotiate":
+                summary.port_speeds[block_port] = ("auto", "auto")
             continue
         if m := _BIND_RE.match(line):
             if not re.search(r"\bshutdown\b", m.group(4) or "", re.IGNORECASE):
@@ -2322,6 +2353,10 @@ def parse_running_config_summary(config: str) -> RunningConfigSummary:
             summary.pse_shutdown_ports.add(m.group(1).lower())
         elif m := _PORT_OFF_RE.match(line):
             summary.shutdown_ports.add(m.group(1).lower())
+        elif m := _HIVE_SPEED_RE.match(stripped):
+            port, kind, value = m.group(1), m.group(2), m.group(3)
+            speed, duplex = summary.port_speeds.get(port, ("auto", "auto"))
+            summary.port_speeds[port] = (value, duplex) if kind == "speed" else (speed, value)
     return summary
 
 

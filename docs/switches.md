@@ -82,3 +82,22 @@ port to manage it.
 
 Requirements: SSH enabled (`enable ssh2`) and an admin account; see
 [Supported devices](supported-devices.md#extremexos-switches).
+
+## Port speed
+
+Every switch port (and the Ethernet ports of HiveOS access points and branch routers) can be
+set to **Auto** or a fixed speed in its port dialog or with
+[`aerohive_local.set_port_speed`](actions.md#aerohive_localset_port_speed). Use a fixed speed
+only when the device on the other end needs one, and set both ends the same: a mismatch
+(e.g. one end fixed at 100 full, the other on Auto) gives a slow, error-prone link.
+
+| Device | Speeds | Commands |
+| --- | --- | --- |
+| ExtremeXOS (X450e) | Auto, 10, 100, 1000 (copper); Auto, 1000, 10000 (SFP) | `configure ports <p> auto on`; `configure ports <p> auto off speed <10\|100> duplex <full\|half>`; 1 Gbit/s copper keeps auto-negotiation and only offers 1000 full: `configure ports <p> auto on speed 1000 duplex full` |
+| SR switches 🧪 | Auto, 10, 100 (1 Gbit/s comes from Auto) | interface mode: `auto-negotiate`; `speed <10\|100> <full\|half>-duplex` (**assumed**, FASTPATH) |
+| HiveOS Ethernet ports 🧪 | Auto, 10, 100, 1000 | `interface ethN speed <auto\|10\|100\|1000>`, `interface ethN duplex <auto\|full\|half>` (**assumed**) |
+| OpenWrt | – | ports are read-only |
+
+The setting is read back from the device (ExtremeXOS `show ports configuration`; SR and HiveOS
+from the running configuration), and saved like any other change. Changing an uplink's speed
+asks first, because a mismatch can cut Home Assistant off from the switch.

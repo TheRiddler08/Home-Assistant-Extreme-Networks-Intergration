@@ -39,10 +39,14 @@ every AP (`clear auth roaming-cache mac <mac> hive-neighbors`).
   (or `show vlan`) through `aerohive_local.run_show_command`, then one test VLAN applied to a
   spare port and the review's result. If the switch words anything differently, it's a small
   change in `netplan.sr_commands` and `parsers.parse_fastpath_vlans`.
+- **Port speed on SR switches and HiveOS ports: confirm the assumed commands** (0.17.0).
+  Set one spare port to 100 Mbit/s from its port dialog and send me the result, plus
+  `show running-config` afterwards.
 - **More than one language** on the onboarding portal.
 
 ## Done
 
+- 0.17.0: adjustable port speed and duplex (ExtremeXOS documented; SR and HiveOS assumed).
 - 0.16.0: key rotation (old and new key together, reminders, confirm or cut-off, scheduled
   every 3/6/12 months, whole network at once); onboarding rules by kind of device (with
   automatic approval), approve/decline actions for phone notifications, requests-per-hour

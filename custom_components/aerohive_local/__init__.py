@@ -255,6 +255,26 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     hass.services.async_register(DOMAIN, "set_port", set_port, SET_PORT_SCHEMA)
 
+    async def set_port_speed(call: ServiceCall) -> None:
+        await coordinator_for(call).async_set_port_speed(
+            call.data[ATTR_PORT].strip(), str(call.data["speed"]), call.data.get("duplex"), call.data["force"]
+        )
+
+    hass.services.async_register(
+        DOMAIN,
+        "set_port_speed",
+        set_port_speed,
+        vol.Schema(
+            {
+                vol.Required(ATTR_DEVICE_ID): cv.string,
+                vol.Required(ATTR_PORT): cv.string,
+                vol.Required("speed"): vol.In(["auto", "10", "100", "1000", "10000", 10, 100, 1000, 10000]),
+                vol.Optional("duplex"): vol.In(["auto", "full", "half"]),
+                vol.Optional("force", default=False): cv.boolean,
+            }
+        ),
+    )
+
     async def set_poe(call: ServiceCall) -> None:
         await coordinator_for(call).async_set_poe(call.data[ATTR_PORT].strip().lower(), call.data["enabled"])
 

@@ -51,6 +51,7 @@ from .parsers import (
     media_kind,
     parse_exos_mgmt_port,
     parse_exos_port_media,
+    parse_exos_port_speed_cfg,
     model_ethernet_ports,
     dialect_from_version,
     BootParams,
@@ -496,6 +497,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._config_text: str | None = None
         self._environment: EnvironmentInfo | None = None
         self._vlans: dict[str, ExosVlan] = {}
+        self._port_speed_cfg: dict[str, tuple[str, str]] = {}  # ExtremeXOS: from show ports configuration
+        self._speed_overrides: dict[str, tuple[str, str]] = {}  # set from HA, until the device is read again
         self._port_media: dict[str, tuple[str, str | None]] = {}
         self._mgmt_link: bool | None = None
         self._usb: list[dict[str, Any]] | None = None
@@ -1295,6 +1298,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 self._vlans = parse_exos_vlans(out)
             if out := await self._optional(commands.EXOS_SHOW_PORT_CONFIG):
                 self._port_media = parse_exos_port_media(out) or self._port_media
+                self._port_speed_cfg = parse_exos_port_speed_cfg(out) or self._port_speed_cfg
+                self._speed_overrides.clear()
             if out := await self._optional(commands.EXOS_SHOW_MGMT_PORT):
                 self._mgmt_link = parse_exos_mgmt_port(out)
             env = EnvironmentInfo()
@@ -1960,6 +1965,58 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             await self._apply(self._validated(commands.switch_port_enable, port, enable), sequence=True, overrides=state)
         else:
             await self._apply([self._validated(commands.port_enable, port, enable)], overrides=state)
+
+    # ------------------------------------------------------------------ port speed
+
+    def port_speed_setting(self, port: str) -> tuple[str, str] | None:
+        """The configured (speed, duplex) of a port, e.g. ('auto', 'auto'); None when unknown."""
+        if port in self._speed_overrides:
+            return self._speed_overrides[port]
+        if self.is_exos:
+            return self._port_speed_cfg.get(port)
+        if self._config is not None:
+            return self._config.port_speeds.get(port.lower(), ("auto", "auto"))
+        return None
+
+    def port_speed_options(self, port: str) -> list[str]:
+        """Speeds a port can be set to (Mbit/s, plus 'auto'); empty when it can't be set from here."""
+        if self.is_openwrt or self.data is None:
+            return []
+        iface = self.data.interfaces.get(port)
+        media = iface.extra.get("media") if iface else None
+        if self.is_exos:
+            if media in ("sfp", "sfp-empty"):
+                fast = iface is not None and str(iface.speed or "").upper().replace(" ", "") in ("10000", "10G", "10GBPS")
+                return ["auto", "1000", *(["10000"] if fast else [])]
+            return ["auto", "10", "100", "1000"]
+        if self.is_switch_cli:
+            return ["auto", "10", "100"]
+        return ["auto", "10", "100", "1000"]
+
+    async def async_set_port_speed(self, port: str, speed: str, duplex: str | None = None, force: bool = False) -> None:
+        if self.is_openwrt:
+            raise self._not_on_openwrt("Setting port speeds")
+        speed, duplex = self._validated(commands.validate_speed, speed, duplex)
+        options = self.port_speed_options(port)
+        if port not in self.data.interfaces:
+            raise HomeAssistantError(f"{self.client.host} has no port {port}")
+        if speed not in options:
+            raise HomeAssistantError(f"Port {port} can be set to: {', '.join(options)}")
+        if not force and port in self.data.uplink_ports() and (speed, duplex) != ("auto", "auto"):
+            raise HomeAssistantError(
+                f"{port} is an uplink port on {self.client.host}. A speed the other side doesn't match can "
+                "disconnect Home Assistant from the device. Use force: true if you really mean it."
+            )
+        _LOGGER.info("%s: setting port %s to %s/%s", self.client.host, port, speed, duplex)
+        if self.is_exos:
+            await self._apply([self._validated(commands.exos_port_speed, port, speed, duplex)])
+        elif self.is_switch_cli:
+            await self._apply(self._validated(commands.switch_port_speed, port, speed, duplex), sequence=True)
+        else:
+            await self._apply(self._validated(commands.port_speed, port, speed, duplex))
+        self._speed_overrides[port] = (speed, duplex)
+        self.async_update_listeners()
+        await self.async_request_refresh()
 
     async def async_set_poe(self, port: str, enable: bool) -> None:
         if self.is_openwrt:

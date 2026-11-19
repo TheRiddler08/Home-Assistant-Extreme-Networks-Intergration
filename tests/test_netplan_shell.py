@@ -138,9 +138,9 @@ def test_backup_restore_and_rollback_timer(router) -> None:
     assert "network reload" in calls and "wifi reload" in calls and "rolled back" in calls
 
     # Confirmed in time: nothing is put back.
-    router(f"( {n.openwrt_prepare(2)} )")
+    router(f"( {n.openwrt_prepare(3)} )")
     (config / "network").write_text("changed again\n")
     router(n.openwrt_commit())
     assert "HN_CONFIRMED" in router(n.OPENWRT_CONFIRM).stdout
-    time.sleep(2.6)
+    time.sleep(3.6)
     assert (config / "network").read_text() == "changed again\n"

@@ -119,6 +119,32 @@ set_port:
       selector:
         boolean:
 
+set_port_speed:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: aerohive_local
+    port:
+      required: true
+      example: "5"
+      selector:
+        text:
+    speed:
+      required: true
+      selector:
+        select:
+          options: ["auto", "10", "100", "1000", "10000"]
+    duplex:
+      selector:
+        select:
+          options: ["auto", "full", "half"]
+    force:
+      default: false
+      selector:
+        boolean:
+
 set_ssid:
   fields:
     ssid:

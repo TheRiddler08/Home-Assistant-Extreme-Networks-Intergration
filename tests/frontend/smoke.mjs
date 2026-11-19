@@ -82,6 +82,30 @@ check(JSON.stringify(calls.map((c) => c[0])) === JSON.stringify(["set_poe", "set
 check(calls[2] && calls[2][1].save_changes === false && calls[2][1].confirm === true, "reboot without saving sends save_changes: false");
 await page.close();
 
+// Port speed: set port 3 to 100 Mbit/s half duplex; an uplink asks first.
+page = await open("?view=panel&path=X450e-48p");
+await panel().locator('.faceplate [data-port="9"]').click();
+check((await panel().locator("#port-speed").inputValue()) === "100", "the configured speed is shown");
+await panel().locator('[data-action="close"]').first().click();
+await panel().locator('.faceplate [data-port="3"]').click();
+check(await panel().locator('[data-action="port-speed"]').isDisabled(), "Apply waits for a change");
+await panel().locator("#port-speed").selectOption("100");
+await panel().locator("#port-duplex").selectOption("half");
+await panel().locator('[data-action="port-speed"]').click();
+await page.waitForTimeout(900);
+await panel().locator('[data-action="close"]').first().click();
+await panel().locator('.faceplate [data-port="49"]').click();
+await panel().locator("#port-speed").selectOption("1000");
+check(await panel().locator("#port-duplex").isDisabled(), "1 Gbit/s is full duplex only");
+await panel().locator('[data-action="port-speed"]').click();
+check((await panel().locator('[role="alertdialog"]').count()) === 1, "changing an uplink's speed asks first");
+await panel().locator('[data-action="confirm-yes"]').click();
+await page.waitForTimeout(900);
+const speedCalls = await page.evaluate(() => window.serviceCalls.filter((c) => c.service === "set_port_speed").map((c) => c.data));
+check(speedCalls.length === 2 && speedCalls[0].port === "3" && speedCalls[0].speed === "100" && speedCalls[0].duplex === "half" && !speedCalls[0].force
+  && speedCalls[1].port === "49" && speedCalls[1].speed === "1000" && speedCalls[1].force === true, `port speed calls: ${JSON.stringify(speedCalls)}`);
+await page.close();
+
 // Restore flow on the SR switch.
 page = await open("?view=panel&path=SR2208P");
 await panel().locator('.banner [data-action="restore"]').click();

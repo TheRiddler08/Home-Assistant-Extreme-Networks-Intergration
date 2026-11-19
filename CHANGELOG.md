@@ -3,6 +3,19 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.17.0] - 2026-11-19
+
+### Added
+- **Adjustable port speed.** Each port's dialog has a *Speed* setting: Auto (negotiate), or a
+  fixed 10 / 100 Mbit/s with full or half duplex, 1 Gbit/s or 10 Gbit/s, as the port
+  supports. It shows what the port is set to and the link speed; changing an uplink asks
+  first. Also as the action `aerohive_local.set_port_speed`. ExtremeXOS uses its documented
+  commands (1 Gbit/s copper keeps auto-negotiation, offering 1000 full only); SR switches and
+  HiveOS Ethernet ports use **assumed** commands until confirmed on a device.
+  [Details](docs/switches.md#port-speed)
+- The configured speed is read back: ExtremeXOS from `show ports configuration`, SR switches
+  and HiveOS from the running configuration.
+
 ## [0.16.0] - 2026-11-19
 
 ### Added

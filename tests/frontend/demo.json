@@ -67,7 +67,17 @@
        "mac": "02:00:00:01:00:bb",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "2",
@@ -105,7 +115,17 @@
        "mac": "02:00:00:02:00:d9",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "3",
@@ -137,7 +157,17 @@
        "mac": "02:00:00:03:00:cb",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "4",
@@ -169,7 +199,17 @@
        "mac": "02:00:00:04:00:3c",
        "vlan": 30
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "5",
@@ -196,7 +236,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "6",
@@ -223,7 +273,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "7",
@@ -255,7 +315,17 @@
        "mac": "02:00:00:07:00:31",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "8",
@@ -282,7 +352,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "9",
@@ -314,7 +394,17 @@
        "mac": "02:00:00:09:00:a0",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "100",
+      "duplex": "full"
+     }
     },
     {
      "name": "10",
@@ -341,7 +431,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "11",
@@ -368,7 +468,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "12",
@@ -400,7 +510,17 @@
        "mac": "02:00:00:0c:00:af",
        "vlan": 30
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "13",
@@ -427,7 +547,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "14",
@@ -454,7 +584,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "15",
@@ -486,7 +626,17 @@
        "mac": "02:00:00:0f:00:4d",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "16",
@@ -518,7 +668,17 @@
        "mac": "02:00:00:10:00:ae",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "17",
@@ -545,7 +705,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "18",
@@ -572,7 +742,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "19",
@@ -599,7 +779,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "20",
@@ -626,7 +816,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "21",
@@ -664,7 +864,17 @@
        "mac": "02:00:00:15:00:9e",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "22",
@@ -704,7 +914,17 @@
        "mac": "02:00:00:16:02:1e",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "23",
@@ -731,7 +951,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "24",
@@ -758,7 +988,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "25",
@@ -785,7 +1025,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "26",
@@ -812,7 +1062,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "27",
@@ -839,7 +1099,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "28",
@@ -866,7 +1136,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "29",
@@ -893,7 +1173,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "30",
@@ -925,7 +1215,17 @@
        "mac": "02:00:00:1e:00:d4",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "31",
@@ -957,7 +1257,17 @@
        "mac": "02:00:00:1f:00:4d",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "32",
@@ -984,7 +1294,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "33",
@@ -1011,7 +1331,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "34",
@@ -1038,7 +1368,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "35",
@@ -1065,7 +1405,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "36",
@@ -1092,7 +1442,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "37",
@@ -1124,7 +1484,17 @@
        "mac": "02:00:00:25:00:e9",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "38",
@@ -1151,7 +1521,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "39",
@@ -1178,7 +1558,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "40",
@@ -1205,7 +1595,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "41",
@@ -1232,7 +1632,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "42",
@@ -1259,7 +1669,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "43",
@@ -1286,7 +1706,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "44",
@@ -1318,7 +1748,17 @@
        "mac": "02:00:00:2c:00:ae",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "45",
@@ -1345,7 +1785,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "46",
@@ -1377,7 +1827,17 @@
        "mac": "02:00:00:2e:00:c0",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "47",
@@ -1409,7 +1869,17 @@
        "mac": "02:00:00:2f:00:f5",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "48",
@@ -1436,7 +1906,17 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "49",
@@ -1512,7 +1992,15 @@
        "mac": "02:00:00:aa:00:0b",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "50",
@@ -1533,7 +2021,15 @@
      "errors": 0,
      "poe": null,
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "51",
@@ -1554,7 +2050,17 @@
      "errors": 0,
      "poe": null,
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "52",
@@ -1575,7 +2081,17 @@
      "errors": 0,
      "poe": null,
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     }
    ],
    "radios": [],
@@ -1648,7 +2164,8 @@
     "restore": true,
     "poe": true,
     "save": true,
-    "reboot_save_prompt": true
+    "reboot_save_prompt": true,
+    "port_speed": true
    }
   },
   {
@@ -1709,7 +2226,16 @@
        "mac": "02:00:00:01:00:bb",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "1/0/2",
@@ -1747,7 +2273,16 @@
        "mac": "02:00:00:02:00:d9",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "1/0/3",
@@ -1779,7 +2314,16 @@
        "mac": "02:00:00:03:00:cb",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "1/0/4",
@@ -1811,7 +2355,16 @@
        "mac": "02:00:00:04:00:3c",
        "vlan": 30
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "1/0/5",
@@ -1838,7 +2391,16 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "1/0/6",
@@ -1865,7 +2427,16 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "1/0/7",
@@ -1897,7 +2468,16 @@
        "mac": "02:00:00:07:00:31",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "1/0/8",
@@ -1924,7 +2504,16 @@
       "class": null
      },
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "1/0/9",
@@ -1950,7 +2539,16 @@
        "mac": "02:00:00:09:00:a0",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "1/0/10",
@@ -1971,7 +2569,16 @@
      "errors": 0,
      "poe": null,
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     }
    ],
    "radios": [],
@@ -2015,7 +2622,8 @@
     "port_names": false,
     "poe": true,
     "save": true,
-    "reboot_save_prompt": false
+    "reboot_save_prompt": false,
+    "port_speed": true
    }
   },
   {
@@ -2061,7 +2669,17 @@
      "errors": 0,
      "poe": null,
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "eth1",
@@ -2087,7 +2705,17 @@
        "mac": "02:00:00:bb:01:01",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "eth2",
@@ -2108,7 +2736,17 @@
      "errors": 0,
      "poe": null,
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "eth3",
@@ -2129,7 +2767,17 @@
      "errors": 0,
      "poe": null,
      "neighbor": null,
-     "clients": []
+     "clients": [],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     },
     {
      "name": "eth4",
@@ -2155,7 +2803,17 @@
        "mac": "02:00:00:bb:04:01",
        "vlan": 1
       }
-     ]
+     ],
+     "speed_options": [
+      "auto",
+      "10",
+      "100",
+      "1000"
+     ],
+     "speed_setting": {
+      "speed": "auto",
+      "duplex": "auto"
+     }
     }
    ],
    "radios": [
@@ -2305,7 +2963,8 @@
     "restore": true,
     "poe": false,
     "save": true,
-    "reboot_save_prompt": false
+    "reboot_save_prompt": false,
+    "port_speed": true
    }
   },
   {
@@ -2528,7 +3187,8 @@
     "restore": true,
     "poe": false,
     "save": true,
-    "reboot_save_prompt": false
+    "reboot_save_prompt": false,
+    "port_speed": true
    }
   },
   {
@@ -2668,7 +3328,8 @@
     "restore": true,
     "poe": false,
     "save": true,
-    "reboot_save_prompt": false
+    "reboot_save_prompt": false,
+    "port_speed": true
    }
   }
  ],

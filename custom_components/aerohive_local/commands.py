@@ -331,3 +331,61 @@ SHOW_CONFIG_COMMANDS = {
     DIALECT_SWITCH: "show running-config",
     DIALECT_EXOS: EXOS_SHOW_CONFIG,
 }
+
+
+# --------------------------------------------------------------------------
+# Port speed and duplex
+# --------------------------------------------------------------------------
+# ExtremeXOS (command reference): "configure ports <p> auto on {speed <s>} {duplex <d>}"
+# and "configure ports <p> auto off speed <s> duplex <d>".
+# SR switches (ASSUMED, FASTPATH): interface mode "auto-negotiate" / "speed <10|100> <full|half>-duplex".
+# HiveOS Ethernet ports (ASSUMED): "interface ethN speed <auto|10|100|1000>", "interface ethN duplex <auto|full|half>".
+
+SPEEDS = ("auto", "10", "100", "1000", "10000")
+DUPLEXES = ("auto", "full", "half")
+
+
+def validate_speed(speed: str | int, duplex: str | None) -> tuple[str, str]:
+    """Normalise speed/duplex: auto speed means auto duplex; forced speeds default to full duplex."""
+    speed = str(speed).strip().lower().removesuffix("m").removesuffix("mbps").strip()
+    speed = {"1g": "1000", "10g": "10000"}.get(speed, speed)
+    if speed not in SPEEDS:
+        raise InvalidArgument(f"Speed must be one of auto, 10, 100, 1000, 10000 (Mbit/s), not {speed!r}")
+    duplex = (duplex or ("auto" if speed == "auto" else "full")).strip().lower()
+    if duplex not in DUPLEXES:
+        raise InvalidArgument("Duplex must be auto, full or half")
+    if speed == "auto":
+        return "auto", "auto"
+    if duplex == "auto":
+        duplex = "full"
+    if duplex == "half" and speed in ("1000", "10000"):
+        raise InvalidArgument("1 Gbit/s and faster are full duplex only")
+    return speed, duplex
+
+
+def exos_port_speed(port: str, speed: str, duplex: str) -> str:
+    port = validate_exos_port(port)
+    speed, duplex = validate_speed(speed, duplex)
+    if speed == "auto":
+        return f"configure ports {port} auto on"
+    if speed == "1000":
+        # Gigabit copper needs auto-negotiation: advertise 1 Gbit/s full duplex only.
+        return f"configure ports {port} auto on speed 1000 duplex full"
+    return f"configure ports {port} auto off speed {speed} duplex {duplex}"
+
+
+def switch_port_speed(port: str, speed: str, duplex: str) -> list[str]:
+    speed, duplex = validate_speed(speed, duplex)
+    if speed == "auto":
+        return switch_interface_block(port, ["auto-negotiate"])
+    if speed not in ("10", "100"):
+        raise InvalidArgument("SR switch ports can be set to 10 or 100 Mbit/s; 1 Gbit/s comes from Auto")
+    return switch_interface_block(port, [f"speed {speed} {duplex}-duplex"])
+
+
+def port_speed(port: str, speed: str, duplex: str) -> list[str]:
+    port = validate_port(port)
+    speed, duplex = validate_speed(speed, duplex)
+    if speed == "10000":
+        raise InvalidArgument("These Ethernet ports go up to 1 Gbit/s")
+    return [f"interface {port} speed {speed}", f"interface {port} duplex {duplex}"]
