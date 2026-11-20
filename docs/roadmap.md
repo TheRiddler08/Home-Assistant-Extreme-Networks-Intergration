@@ -32,6 +32,18 @@ When confirmed, each becomes a few lines in `netplan.hiveos_commands` plus tests
 output as a fixture (anonymised). Revoking a key should then also disconnect the device on
 every AP (`clear auth roaming-cache mac <mac> hive-neighbors`).
 
+## Open: first real apply (2026-11-20)
+
+- **AP460C rejected `security-object homeOB`** with `ERROR: Invalid parameter(s)` (the user
+  profile before it was accepted). The command form matches HiveManager-written
+  configurations and community notes, so the reason is on the AP: an object limit, a name
+  rule, or a CLI difference on IQ Engine 10.5. Needed: `show running-config | include
+  security-object` and `show running-config | include user-profile` from that AP. Since
+  0.18.1 the other networks are applied anyway and the result lists each.
+- **SR2208P: "port 10 doesn't exist on this switch"** although its saved `show port all`
+  lists 1/0/10. Needed: what was typed in the switch's trunk / access port fields, and the
+  new error text (0.18.1 shows the ports read from the switch).
+
 ## Open: smaller items
 
 - **SR2208P VLANs: confirm the assumed commands.** Built in 0.16.0 with FASTPATH-style

@@ -367,6 +367,31 @@ class PlanManager:
         if not (coordinator.last_update_success and coordinator.data is not None):
             result["error"] = "offline"
             return result
+        if built.groups and not coordinator.is_openwrt:
+            # One part per Wi-Fi network: a rejected one doesn't stop the others.
+            done, failed = [], []
+            for label, cmds in built.groups:
+                if not cmds:
+                    done.append(label)
+                    continue
+                try:
+                    await coordinator.async_apply_cli_plan(cmds, built.secrets, refresh=False)
+                except HomeAssistantError as err:
+                    failed.append(f"{label}: {self._scrub(str(err), built.secrets)}")
+                else:
+                    done.append(label)
+            await coordinator.async_request_refresh()
+            ok_ssids = [s for s in built.managed.get("ssids", []) if s in done]
+            previous = self.managed.get(entry_id, {}).get("ssids", [])
+            removed = {label.removeprefix("remove ") for label in done if label.startswith("remove ")}
+            # Created now, or earlier and not removed now (a network that failed this time stays ours).
+            self.managed[entry_id] = {**self.managed.get(entry_id, {}), "ssids": sorted((set(previous) - removed) | set(ok_ssids))}
+            result["done"] = done
+            if failed:
+                result["error"] = "; ".join(failed) + (f" (done: {', '.join(done)})" if done else "")
+                return result
+            result["ok"] = True
+            return result
         try:
             if coordinator.is_openwrt:
                 configs = ("wireless",) if wireless_only else netplan.OPENWRT_CONFIGS

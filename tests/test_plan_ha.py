@@ -382,3 +382,27 @@ async def test_onboarding_rules_and_actions(hass: HomeAssistant, hass_read_only_
     from homeassistant.exceptions import ServiceValidationError
     with pytest.raises(ServiceValidationError):
         await hass.services.async_call("aerohive_local", "approve_device", {"request_id": "nope"}, blocking=True)
+
+
+async def test_aerohive_one_network_rejected_others_applied(hass: HomeAssistant, entry: MockConfigEntry) -> None:  # noqa: F811
+    """A network the AP rejects doesn't stop the others; the result says which."""
+    manager = get_plan(hass)
+    plan = _plan(None)
+    plan["networks"].append({"id": "onboard", "name": "homeOB", "vlan": 80, "subnet": "10.8.10.1/24"})
+    plan["wifi"].insert(0, {"id": "homeob", "ssid": "homeOB", "network": "onboard", "security": "wpa2", "bands": ["2.4 GHz"]})
+    await manager.async_save_plan(plan, {"wifi:guest": "guest-pass-1", "wifi:homeob": "homeob-pass-1"})
+    client = _client()
+    original = FakeClient.run
+
+    async def run(self, command, **kwargs):
+        out = await original(self, command, **kwargs)
+        return "ERROR: Invalid parameter(s)" if command == "security-object homeOB" else out
+
+    with patch.object(FakeClient, "run", run):
+        results = await manager.async_apply()
+    result = results[0]
+    assert not result["ok"]
+    assert "homeOB: " in result["error"] and "security-object homeOB" in result["error"] and "(done: Guest Wifi)" in result["error"]
+    assert "homeob-pass-1" not in result["error"]
+    assert 'ssid "Guest Wifi" security-object "Guest Wifi"' in client.commands  # applied after homeOB failed
+    assert manager.managed[entry.entry_id]["ssids"] == ["Guest Wifi"]

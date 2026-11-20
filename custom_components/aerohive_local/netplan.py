@@ -355,6 +355,9 @@ class DevicePlan:
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     managed: dict[str, list[str]] = field(default_factory=dict)
+    # Independent parts (label, commands), applied one after another: one rejected part doesn't
+    # stop the others. When set, ``commands`` is all of them together (for the review).
+    groups: list[tuple[str, list[str]]] = field(default_factory=list)
 
 
 def _q(value: Any) -> str:
@@ -637,10 +640,10 @@ def hiveos_commands(
     in that VLAN; the AP tags their traffic on its Ethernet uplink.
     """
     out = DevicePlan()
-    cmds = out.commands
     profiles_done: set[int] = set()
     kept: list[str] = []
     for wifi in plan["wifi"]:
+        cmds: list[str] = []
         ssid, security = wifi["ssid"], wifi["security"]
         net = _net(plan, wifi["network"])
         if net is None:
@@ -685,15 +688,19 @@ def hiveos_commands(
             elif radio not in want and radio in have:
                 cmds.append(f"no interface {radio} ssid {q_ssid}")
         kept.append(ssid)
+        out.groups.append((ssid, cmds))
     for ssid in managed:
         if ssid in kept or any(w["ssid"] == ssid for w in plan["wifi"]):
             continue
+        cmds = []
+        out.groups.append((f"remove {ssid}", cmds))
         q_ssid = quote(ssid, "SSID")
         cmds += [f"no interface {r} ssid {q_ssid}" for r in sorted(bound.get(ssid, set()))]
         cmds.append(f"no ssid {q_ssid}")
         obj = security_objects.get(ssid, ssid)
         if obj == ssid:
             cmds.append(f"no security-object {quote(obj, 'security object')}")
+    out.commands = [cmd for _, group in out.groups for cmd in group]
     out.managed["ssids"] = kept
     return out
 
@@ -774,14 +781,18 @@ def expand_ports(text: str, available: list[str]) -> list[str]:
         if len(parts) == 3 and parts[0] == "1" and parts[2].isdigit():  # unit 1 (the first switch of a stack)
             by_number.setdefault(int(parts[2]), name)
 
+    def known() -> str:
+        names = sorted(by_number)
+        return f"{by_number[names[0]]}-{by_number[names[-1]]}" if names else "none read yet"
+
     def one(token: str) -> str:
         if "/" in token:
             if token not in available:
-                raise ValueError(f"port {token} doesn't exist on this switch")
+                raise ValueError(f"port {token} doesn't exist on this switch (it reports {known()})")
             return token
         number = int(token)
         if number not in by_number:
-            raise ValueError(f"port {token} doesn't exist on this switch")
+            raise ValueError(f"port {token} doesn't exist on this switch (it reports {known()})")
         return by_number[number]
 
     result: list[str] = []
@@ -818,10 +829,12 @@ def sr_commands(
     out.warnings.append(SR_ASSUMED)
     have = {vid for vid in existing.values() if vid is not None}
     wanted = {net["vlan"]: net for net in plan["networks"]}
+    field_name = "trunk ports"
     try:
         trunks = expand_ports((plan["devices"].get("switch_trunks") or {}).get(entry_id) or "", ports)
         access: dict[str, int] = {}
         for net in plan["networks"]:
+            field_name = f"{net['name']} access ports"
             for port in expand_ports((net.get("switch_ports") or {}).get(entry_id) or "", ports):
                 if port in access:
                     raise ValueError(f"port {port} is an access port of two networks")
@@ -829,7 +842,7 @@ def sr_commands(
                     raise ValueError(f"port {port} is both a trunk and an access port")
                 access[port] = net["vlan"]
     except ValueError as err:
-        out.errors.append(str(err))
+        out.errors.append(f"{field_name}: {err}")
         return out
     database = []
     for vid, net in sorted(wanted.items()):

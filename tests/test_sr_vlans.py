@@ -59,6 +59,11 @@ def test_sr_commands() -> None:
     ]
     assert out.managed == {"vlans": ["30"]}  # 50 already existed: never deleted later
     assert any("assumed" in w for w in out.warnings)
+    missing = _plan()
+    missing["devices"]["switch_trunks"] = {"sw": "11"}
+    assert n.sr_commands(missing, entry_id="sw", existing={}, ports=PORTS, managed=[]).errors == [
+        "trunk ports: port 11 doesn't exist on this switch (it reports 1/0/1-1/0/10)"
+    ]
     clash = _plan()
     clash["networks"][0]["switch_ports"] = {"sw": "2-3"}
     assert "two networks" in n.sr_commands(clash, entry_id="sw", existing={}, ports=PORTS, managed=[]).errors[0]

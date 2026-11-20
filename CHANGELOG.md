@@ -3,6 +3,17 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.18.1] - 2026-11-20
+
+### Fixed
+- **Network setup on Aerohive access points: one rejected network no longer stops the rest.**
+  Each Wi-Fi network is applied on its own; the result lists what failed and what was done
+  (e.g. `homeOB: … rejected 'security-object homeOB' … (done: Guest)`). Seen on an AP460C,
+  which rejected creating the homeOB security object; the cause is being looked into.
+- **SR switch port errors say where and what:** `trunk ports: port 10 doesn't exist on this
+  switch (it reports 1/0/1-1/0/9)`, naming the field (trunk ports or a network's access
+  ports) and the ports the integration read from the switch.
+
 ## [0.18.0] - 2026-11-20
 
 ### Added

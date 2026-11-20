@@ -1235,14 +1235,15 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             outputs.append(out)
         return "\n".join(outputs)
 
-    async def async_apply_cli_plan(self, cmds: list[str], secrets: list[str]) -> None:
+    async def async_apply_cli_plan(self, cmds: list[str], secrets: list[str], *, refresh: bool = True) -> None:
         """Apply network-plan CLI commands (HiveOS, ExtremeXOS, SR switches); saved like any other change."""
         if not cmds:
             return
         _LOGGER.info("%s: applying network setup (%d command(s))", self.client.host, len(cmds))
         # SR switches: one mode-dependent sequence (vlan database / configure / interface).
         await self._apply(cmds, secret=secrets, sequence=self.is_switch_cli)
-        await self.async_request_refresh()
+        if refresh:
+            await self.async_request_refresh()
 
 
     async def _fetch_exos(self, data: AerohiveData) -> AerohiveData:
