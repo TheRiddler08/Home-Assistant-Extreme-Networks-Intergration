@@ -177,7 +177,45 @@ function clientNames(data) {
       if (sta.hostname) names.set(sta.mac, sta.hostname);
     }
   }
+  for (const [mac, info] of Object.entries(data?.clients || {})) {
+    if (info.name) names.set(mac, info.name);
+  }
   return names;
+}
+
+const KIND_LABELS = {
+  phone: "Phone", tablet: "Tablet", computer: "Computer", tv: "TV / streaming", speaker: "Speaker", console: "Game console",
+  printer: "Printer", camera: "Camera", "smart home": "Smart home", network: "Network device",
+};
+
+/* Everything the panel knows about one client: directory info plus where it's connected. */
+function clientInfo(data, mac) {
+  const info = { ...((data && data.clients && data.clients[mac]) || {}) };
+  info.mac = mac;
+  const devices = data?.devices || [];
+  for (const device of devices) {
+    const sta = (device.stations || []).find((x) => x.mac === mac);
+    if (sta) {
+      info.wifi = { device, sta, radio: (device.radios || []).find((r) => r.name === sta.radio) };
+      info.ip = info.ip || sta.ip;
+      info.hostname = info.hostname || sta.hostname;
+    }
+    for (const port of device.ports || []) {
+      const hit = (port.clients || []).find((c) => c.mac === mac);
+      // The edge port: the one with the fewest devices learned on it.
+      if (hit && !port.uplink && !info.wifi && (!info.wired || (port.clients || []).length < (info.wired.port.clients || []).length)) info.wired = { device, port, vlan: hit.vlan };
+    }
+  }
+  if (!info.wifi && !info.wired) {
+    const router = devices.find((d) => (d.lan_clients || []).includes(mac));
+    if (router) info.wired = { device: router, port: null, vlan: null };
+  }
+  if (info.wifi) delete info.wired; // seen on Wi-Fi: the switch port is just the way to its access point
+  return info;
+}
+
+function clientTitle(info) {
+  return info.name || (info.vendor ? `${info.vendor} device` : info.private ? "Device with a private address" : "Unknown device");
 }
 
 /** Wi-Fi networks across access points: name -> APs, bands, clients, timer. */
@@ -489,6 +527,10 @@ button { font: inherit; color: inherit; }
   border: 1px solid var(--ah-line); background: var(--ah-bg);
 }
 .field input:focus { outline: 2px solid var(--ah-accent); outline-offset: -1px; }
+.kv a { color: var(--ah-accent); text-decoration: none; }
+.kv a:hover { text-decoration: underline; }
+.link-btn { border: 0; background: transparent; padding: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.link-btn:hover { color: var(--ah-accent); }
 .port-select { height: 36px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--ah-line); background: var(--ah-bg); color: var(--ah-text); font: inherit; min-width: 0; }
 .speed-row { flex-wrap: wrap; }
 .speed-row .port-select { flex: 1 1 140px; }
@@ -881,6 +923,7 @@ class AerohiveBase extends HTMLElement {
     if (d.type === "wifi-edit") return this._wifiEditDialog(d);
     if (d.type === "wifi-add") return this._wifiAddDialog(d);
     if (d.type === "wifi-timer") return this._wifiTimerDialog(d);
+    if (d.type === "client") return this._clientDialog(d);
     const device = findDevice(this._data, d.device);
     if (!device && d.type !== "confirm") return "";
     if (d.type === "port") return this._portDialog(device, d);
@@ -1224,6 +1267,48 @@ class AerohiveBase extends HTMLElement {
 
   /* ---------------- dialogs ---------------- */
 
+  _clientDialog(d) {
+    const info = clientInfo(this._data, d.mac);
+    const admin = this._isAdmin();
+    const w = info.wifi;
+    const wired = info.wired;
+    const ha = info.ha_device;
+    const row = (label, value) => (value ? `<dt>${esc(label)}</dt><dd>${value}</dd>` : "");
+    const form = (d.form = d.form || {});
+    const busyName = this._isBusy(`client-name:${d.mac}`);
+    const quality = w && w.sta.signal != null ? (w.sta.signal >= -55 ? "excellent" : w.sta.signal >= -65 ? "good" : w.sta.signal >= -75 ? "fair" : "weak") : null;
+    return `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+      <div class="dlg-head"><div class="grow"><h2 id="dlg-title">${esc(clientTitle(info))}</h2>
+        <div class="muted">${esc([info.kind ? KIND_LABELS[info.kind] : null, w ? "Wi-Fi" : wired ? "Wired" : "Not connected now"].filter(Boolean).join(" · "))}</div></div>
+        <button class="icon-btn" data-action="close" aria-label="Close">${icon("close")}</button></div>
+      <section><dl class="kv">
+        ${row("MAC address", `<span class="mono">${esc(info.mac)}</span>${info.private ? '<br><span class="muted">Private (randomised) address: phones and laptops make one up per network, so the maker is unknown and it can change.</span>' : ""}`)}
+        ${row("Maker", info.vendor ? esc(info.vendor) : "")}
+        ${row("IP address", info.ip ? `<span class="mono">${esc(info.ip)}</span>` : "")}
+        ${row("Hostname", info.hostname && info.hostname !== info.name ? esc(info.hostname) : "")}
+        ${w ? row("Connected to", `<strong>${esc(w.device.name)}</strong> · ${esc(w.sta.ssid || "Wi-Fi")}${w.radio && w.radio.band ? ` · ${esc(w.radio.band)}` : ""}${w.sta.channel ? ` · channel ${esc(w.sta.channel)}` : ""}`) : ""}
+        ${w && w.sta.signal != null ? row("Signal", `${signalBars(w.sta.signal)}${esc(w.sta.signal)} dBm (${quality})${w.sta.snr != null ? ` · SNR ${esc(w.sta.snr)} dB` : ""}`) : ""}
+        ${w && (w.sta.tx_rate || w.sta.rx_rate) ? row("Speed", `↓ ${esc(w.sta.tx_rate || "?")} &nbsp; ↑ ${esc(w.sta.rx_rate || "?")}`) : ""}
+        ${w ? row("Connected for", w.sta.connected ? esc(w.sta.connected) : "") : ""}
+        ${w ? row("Security", w.sta.security ? esc(w.sta.security) : "") : ""}
+        ${w && w.sta.vlan ? row("VLAN", esc(w.sta.vlan)) : ""}
+        ${wired && !wired.port ? row("Connected to", `<strong>${esc(wired.device.name)}</strong> · LAN`) : ""}
+        ${wired && wired.port ? row("Connected to", `<strong>${esc(wired.device.name)}</strong> · port ${esc(wired.port.name)}${wired.port.label ? ` (${esc(wired.port.label)})` : ""}${wired.port.speed ? ` · ${esc(wired.port.speed >= 1000 ? `${wired.port.speed / 1000} Gbit/s` : `${wired.port.speed} Mbit/s`)}` : ""}`) : ""}
+        ${wired && wired.vlan != null ? row("VLAN", esc(wired.vlan)) : ""}
+        ${ha ? row("In Home Assistant", `<a href="/config/devices/device/${esc(ha.id)}" target="_top">${esc(ha.name || "Device")}</a>${[ha.manufacturer, ha.model].filter(Boolean).length ? `<br><span class="muted">${esc([ha.manufacturer, ha.model].filter(Boolean).join(" "))}</span>` : ""}${ha.area ? `<br><span class="muted">${esc(ha.area)}</span>` : ""}`) : ""}
+        ${info.key ? row("Wi-Fi key", `${esc(info.key.name)}${info.key.wifi ? ` <span class="muted">on ${esc(info.key.wifi)}</span>` : ""}`) : ""}
+        ${info.name_source && info.name_source !== "nickname" ? row("Name from", esc({ home_assistant: "Home Assistant", key: "its Wi-Fi key", onboarding: "the onboarding portal", hostname: "its hostname (DHCP)" }[info.name_source] || info.name_source)) : ""}
+      </dl></section>
+      ${admin ? `<section><label class="section-title" for="client-nick">Nickname</label>
+        <div class="field"><input type="text" id="client-nick" maxlength="64" data-field="nickname" value="${esc(form.nickname ?? info.nickname ?? "")}" placeholder="${esc(info.name && info.name_source !== "nickname" ? info.name : "e.g. Kitchen tablet")}" data-enter="client-rename" autocomplete="off">
+          <button class="btn" data-action="client-rename" ${busyName ? "disabled" : ""}>${icon("edit")}Save</button></div>
+        <div class="muted" style="font-size:12px;margin-top:6px">Shown everywhere in the panel instead of the MAC address. Leave empty to remove.</div></section>` : ""}
+      <div class="dlg-actions">
+        ${wired && wired.port ? `<button class="btn" data-action="client-port" data-device="${esc(wired.device.entry_id)}" data-port="${esc(wired.port.name)}">${icon("switch")}Open port ${esc(wired.port.name)}</button>` : ""}
+        ${w && admin ? `<button class="btn danger" data-action="client-disconnect">${icon("close")}Disconnect</button>` : ""}
+        <button class="btn primary" data-action="close">Done</button></div></div>`;
+  }
+
   _portSpeedSection(device, port, d, busy) {
     const options = port.speed_options || [];
     if (!(device.features && device.features.port_speed) || !options.length) return "";
@@ -1313,7 +1398,12 @@ class AerohiveBase extends HTMLElement {
                   .slice(0, 50)
                   .map(
                     (c) =>
-                      `<li><span>${names.get(c.mac) ? `${esc(names.get(c.mac))} <span class="muted mono">${esc(c.mac)}</span>` : `<span class="mono">${esc(c.mac)}</span>`}</span><span class="muted">${c.vlan != null ? `VLAN ${esc(c.vlan)}` : ""}</span></li>`,
+                      `<li><button class="link-btn" data-action="client-open" data-mac="${esc(c.mac)}">${(() => {
+                        const info = (this._data.clients || {})[c.mac] || {};
+                        const label = names.get(c.mac);
+                        const sub = info.vendor || (info.private ? "Private address" : "");
+                        return `${label ? `${esc(label)} ` : ""}<span class="muted mono">${esc(c.mac)}</span>${sub ? ` <span class="muted">${esc(sub)}</span>` : ""}`;
+                      })()}</button><span class="muted">${c.vlan != null ? `VLAN ${esc(c.vlan)}` : ""}${(this._data.clients || {})[c.mac]?.ip ? ` ${esc(this._data.clients[c.mac].ip)}` : ""}</span></li>`,
                   )
                   .join("")}</ul>${clients.length > 50 ? `<div class="muted">and ${clients.length - 50} more</div>` : ""}`
               : `<div class="muted">None learned.</div>`
@@ -1511,6 +1601,41 @@ class AerohiveBase extends HTMLElement {
       case "poe-cycle": {
         const key = `${device.entry_id}:${dialog.port}`;
         this._call("power_cycle_poe", { device_id: device.device_id, port: dialog.port }, { busyKey: `cycle:${key}`, success: `PoE on port ${dialog.port} restarted` });
+        break;
+      }
+      case "client-open":
+        this._dialog = { type: "client", mac: el.dataset.mac, back: dialog ? { ...dialog } : null, focus: '.dialog [data-action="close"]' };
+        this._render();
+        break;
+      case "client-port":
+        this._dialog = { type: "port", device: el.dataset.device, port: el.dataset.port, focus: '.dialog [data-action="close"]' };
+        if (this._navigate) this._navigate(el.dataset.device);
+        this._render();
+        break;
+      case "client-rename": {
+        const input = this.shadowRoot.querySelector("#client-nick");
+        const name = (input ? input.value : "").trim();
+        if (input) input.blur();
+        this._call({ type: `${DOMAIN}/client/rename`, mac: dialog.mac, name }, { busyKey: `client-name:${dialog.mac}`, success: name ? `Named ${name}` : "Nickname removed" }).then((ok) => {
+          if (ok && this._dialog) this._dialog.form = {};
+        });
+        break;
+      }
+      case "client-disconnect": {
+        const info = clientInfo(this._data, dialog.mac);
+        if (!info.wifi) break;
+        const back = { ...dialog };
+        this._dialog = {
+          type: "confirm",
+          title: `Disconnect ${clientTitle(info)}?`,
+          text: "It's dropped from the Wi-Fi now. It can join again straight away unless its key is revoked.",
+          confirm: "Disconnect",
+          danger: true,
+          back,
+          onYes: () => this._call("disconnect_client", { device_id: info.wifi.device.device_id, mac: dialog.mac }, { busyKey: `disc:${dialog.mac}`, success: `${clientTitle(info)} disconnected` }),
+          focus: '.dialog [data-action="close"]',
+        };
+        this._render();
         break;
       }
       case "port-speed": {
@@ -2208,16 +2333,40 @@ class AerohiveNetworkPanel extends AerohiveBase {
     for (const d of devices) {
       for (const s of d.stations || []) {
         wirelessMacs.add(s.mac);
-        rows.push({ mac: s.mac, name: s.hostname, ip: s.ip, where: `${d.name} · ${s.ssid || s.radio || "Wi-Fi"}`, signal: s.signal, kind: "wifi", device: d.entry_id });
+        const info = (this._data.clients || {})[s.mac] || {};
+        rows.push({ mac: s.mac, name: info.name || s.hostname, vendor: info.vendor, private: info.private, type: info.kind, ip: info.ip || s.ip, where: `${d.name} · ${s.ssid || s.radio || "Wi-Fi"}`, signal: s.signal, kind: "wifi", device: d.entry_id });
       }
     }
+    // A device can be learned on several switches (on the way to it): list it once, at the
+    // port with the fewest devices (its edge port).
+    const edge = new Map();
     for (const d of devices) {
       for (const p of d.ports || []) {
         if (p.uplink) continue;
         for (const c of p.clients || []) {
-          if (wirelessMacs.has(c.mac)) continue;
-          rows.push({ mac: c.mac, name: names.get(c.mac) || (p.neighbor && p.clients.length === 1 ? p.neighbor.name : null), ip: null, where: `${d.name} · port ${p.name}${p.label ? ` (${p.label})` : ""}`, vlan: c.vlan, kind: "wired", device: d.entry_id, port: p.name });
+          const best = edge.get(c.mac);
+          if (!best || (p.clients || []).length < best) edge.set(c.mac, (p.clients || []).length);
         }
+      }
+    }
+    const listed = new Set();
+    for (const d of devices) {
+      for (const p of d.ports || []) {
+        if (p.uplink) continue;
+        for (const c of p.clients || []) {
+          if (wirelessMacs.has(c.mac) || listed.has(c.mac) || (p.clients || []).length !== edge.get(c.mac)) continue;
+          listed.add(c.mac);
+          const info = (this._data.clients || {})[c.mac] || {};
+          rows.push({ mac: c.mac, name: names.get(c.mac) || (p.neighbor && p.clients.length === 1 ? p.neighbor.name : null), vendor: info.vendor, private: info.private, type: info.kind, ip: info.ip, where: `${d.name} · port ${p.name}${p.label ? ` (${p.label})` : ""}`, vlan: c.vlan, kind: "wired", device: d.entry_id, port: p.name });
+        }
+      }
+    }
+    for (const d of devices) {
+      for (const mac of d.lan_clients || []) {
+        if (wirelessMacs.has(mac) || listed.has(mac)) continue;
+        listed.add(mac);
+        const info = (this._data.clients || {})[mac] || {};
+        rows.push({ mac, name: names.get(mac), vendor: info.vendor, private: info.private, type: info.kind, ip: info.ip, where: `${d.name} · LAN`, kind: "wired", device: d.entry_id });
       }
     }
     return rows;
@@ -2225,13 +2374,13 @@ class AerohiveNetworkPanel extends AerohiveBase {
 
   _clientRows() {
     const query = this._search.trim().toLowerCase();
-    const rows = this._allClients().filter((r) => !query || [r.mac, r.name, r.ip, r.where].some((v) => v && String(v).toLowerCase().includes(query)));
+    const rows = this._allClients().filter((r) => !query || [r.mac, r.name, r.ip, r.where, r.vendor, KIND_LABELS[r.type]].some((v) => v && String(v).toLowerCase().includes(query)));
     if (!rows.length) return `<tr><td colspan="4" class="muted">${query ? "No clients match." : "No clients."}</td></tr>`;
     return rows
       .sort((a, b) => (a.name || "~" + a.mac).localeCompare(b.name || "~" + b.mac))
       .map(
-        (r) => `<tr class="${r.port ? "click" : ""}" ${r.port ? `data-client-port="${esc(r.port)}" data-client-device="${esc(r.device)}" tabindex="0"` : ""}>
-          <td>${r.name ? `${esc(r.name)}<br>` : ""}<span class="mono muted">${esc(r.mac)}</span></td>
+        (r) => `<tr class="click" data-client-mac="${esc(r.mac)}" tabindex="0">
+          <td>${r.name ? `<strong>${esc(r.name)}</strong><br>` : ""}<span class="muted">${esc([r.type ? KIND_LABELS[r.type] : null, r.vendor || (r.private ? "Private address" : null)].filter(Boolean).join(" · "))}</span>${r.type || r.vendor || r.private ? "<br>" : ""}<span class="mono muted">${esc(r.mac)}</span></td>
           <td><span class="chip">${r.kind === "wifi" ? `${icon("wifi")}Wi-Fi` : `${icon("switch")}Wired`}</span></td>
           <td>${esc(r.where)}</td>
           <td class="num hide-sm">${r.kind === "wifi" ? `${signalBars(r.signal)}${r.signal != null ? `${esc(r.signal)} dBm` : ""}` : r.vlan != null ? `VLAN ${esc(r.vlan)}` : ""}${r.ip ? `<br><span class="muted">${esc(r.ip)}</span>` : ""}</td>
@@ -2243,7 +2392,7 @@ class AerohiveNetworkPanel extends AerohiveBase {
   _clientsView() {
     const total = this._allClients().length;
     return `
-      <label class="search">${icon("search")}<input id="client-search" type="search" placeholder="Search ${total} clients by name, MAC, IP or port" value="${esc(this._search)}" aria-label="Search clients"></label>
+      <label class="search">${icon("search")}<input id="client-search" type="search" placeholder="Search ${total} clients by name, maker, MAC, IP or port" value="${esc(this._search)}" aria-label="Search clients"></label>
       <div class="card"><div class="table-wrap"><table>
         <thead><tr><th>Client</th><th>Type</th><th>Connected to</th><th class="hide-sm">Details</th></tr></thead>
         <tbody id="client-results">${this._clientRows()}</tbody>
@@ -2308,10 +2457,9 @@ class AerohiveNetworkPanel extends AerohiveBase {
   /* ---------------- events ---------------- */
 
   _onClick(ev) {
-    const clientRow = ev.target.closest("[data-client-port]");
-    if (clientRow) {
-      this._navigate(clientRow.dataset.clientDevice);
-      this._openDialog({ type: "port", device: clientRow.dataset.clientDevice, port: clientRow.dataset.clientPort });
+    const clientRow = ev.target.closest("[data-client-mac]");
+    if (clientRow && !clientRow.closest(".dialog")) {
+      this._openDialog({ type: "client", mac: clientRow.dataset.clientMac });
       return;
     }
     super._onClick(ev);

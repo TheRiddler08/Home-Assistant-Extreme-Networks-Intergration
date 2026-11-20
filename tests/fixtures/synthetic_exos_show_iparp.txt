@@ -1,0 +1,6 @@
+VR         Destination      Mac                Age  Static  VLAN          VID   Port
+VR-Default 192.168.9.30     02:00:00:03:00:cb    1      NO  Default       1     3
+VR-Default 192.168.9.41     b8:a4:4f:00:d3:de    3      NO  Default       1     4
+VR-Mgmt    10.0.0.1         00:00:00:00:00:00    0      NO  Mgmt          4095  Mgmt
+
+Dynamic Entries  :          2         Static Entries  :           0

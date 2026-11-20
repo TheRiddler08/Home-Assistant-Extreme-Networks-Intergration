@@ -1545,6 +1545,27 @@ class FdbEntry:
     entry_type: str | None = None
 
 
+_ARP_ROW_RE = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3})\s+(?:\S+\s+)?([0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5})\b")
+
+
+def parse_arp_table(text: str) -> dict[str, str]:
+    """ARP tables of switches (ExtremeXOS 'show iparp', FASTPATH 'show arp'): MAC -> IP.
+
+    Any row with an IPv4 address followed (directly, or after one column) by a
+    MAC address counts; incomplete and broadcast entries are skipped.
+    """
+    result: dict[str, str] = {}
+    for line in clean_output(text).split("\n"):
+        match = _ARP_ROW_RE.search(line)
+        if not match:
+            continue
+        mac = match.group(2).lower().replace("-", ":")
+        if mac in ("00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff"):
+            continue
+        result.setdefault(mac, match.group(1))
+    return result
+
+
 _FDB_SELF = {"self", "cpu", "mgmt", "management", "local", "system"}
 
 

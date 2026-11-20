@@ -86,6 +86,7 @@ from .parsers import (
     parse_exos_show_switch,
     parse_exos_temperature,
     parse_exos_version,
+    parse_arp_table,
     parse_exos_vlans,
     parse_fastpath_vlans,
     fan_rpms,
@@ -220,6 +221,7 @@ class AerohiveData:
     poe: PoeSummary | None = None
     poe_ports: dict[str, PoePort] = field(default_factory=dict)
     fdb: list[FdbEntry] = field(default_factory=list)
+    neighbors: dict[str, dict[str, str | None]] = field(default_factory=dict)  # MAC -> {"ip", "hostname"} (ARP, DHCP)
     lldp: dict[str, LldpNeighbor] = field(default_factory=dict)
     config: RunningConfigSummary | None = None
     cli: str = commands.DIALECT_HIVEOS
@@ -497,6 +499,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._config_text: str | None = None
         self._environment: EnvironmentInfo | None = None
         self._vlans: dict[str, ExosVlan] = {}
+        self._arp: dict[str, str] = {}  # switches: MAC -> IP (slow refresh)
+        self._ow_leases: dict[str, tuple[str | None, str | None]] = {}  # OpenWrt DHCP: MAC -> (IP, hostname)
         self._port_speed_cfg: dict[str, tuple[str, str]] = {}  # ExtremeXOS: from show ports configuration
         self._speed_overrides: dict[str, tuple[str, str]] = {}  # set from HA, until the device is read again
         self._port_media: dict[str, tuple[str, str | None]] = {}
@@ -805,6 +809,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             self._config_dirty = True
             if out := await self._optional(commands.SW_SHOW_NETWORK):
                 self._mgt = parse_show_network(out)
+            if out := await self._optional(commands.SW_SHOW_ARP):
+                self._arp = parse_arp_table(out)
             out = await self._optional(commands.SW_SHOW_VLAN) or await self._optional(commands.SW_SHOW_VLAN_FALLBACK)
             if out:
                 self._vlans = parse_fastpath_vlans(out) or self._vlans
@@ -822,6 +828,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         data.config = self._config
         data.lldp = self._lldp
         data.vlans = self._vlans
+        data.neighbors = {mac: {"ip": ip, "hostname": None} for mac, ip in self._arp.items()}
         description = data.version.raw.get("system_description") or data.version.raw.get("machine_type")
         if combos := combo_port_count(description):
             front = [p for p in data.ports() if not p.startswith("0/")]
@@ -946,9 +953,15 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         await self._fetch_openwrt_wifi(data)
         # Wired clients: neighbours on the LAN side that aren't Wi-Fi clients.
         wan_devices = {i.device for i in ip_ifaces if i.name.startswith("wan")}
-        for _ip, mac, device in ow.parse_arp(await run(ow.ARP)):
-            if device not in wan_devices and mac not in data.stations:
-                data.fdb.append(FdbEntry(mac=mac, port=None))
+        for ip, mac, device in ow.parse_arp(await run(ow.ARP)):
+            if device not in wan_devices:
+                data.neighbors.setdefault(mac, {"ip": ip, "hostname": None})
+                if mac not in data.stations:
+                    data.fdb.append(FdbEntry(mac=mac, port=None))
+        for mac, (ip, hostname) in self._ow_leases.items():
+            entry = data.neighbors.setdefault(mac, {"ip": ip, "hostname": None})
+            entry["ip"] = entry.get("ip") or ip
+            entry["hostname"] = hostname or entry.get("hostname")
         # Staged but uncommitted UCI changes (e.g. LuCI without "Save & Apply"): like ExtremeXOS's "*".
         changes = await run(ow.UCI_CHANGES)
         data.config_unsaved = bool(changes.strip()) and not ow.load_json(changes)
@@ -979,9 +992,10 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         status = ow.parse_wireless_status(await run(ow.WIRELESS_STATUS))
         self._ow_wifi = wifaces
         self._ow_ifnames = {sec: ifn for st in status.values() for sec, ifn in st.ifnames.items()}
+        leases = ow.parse_dhcp_leases(await run(ow.DHCP_LEASES))
+        self._ow_leases = leases  # also names wired devices
         if not radios:
             return
-        leases = ow.parse_dhcp_leases(await run(ow.DHCP_LEASES))
         for name, radio in sorted(radios.items()):
             st = status.get(name)
             channel = int(radio.channel) if radio.channel and radio.channel.isdigit() else None
@@ -1296,6 +1310,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 self._serial = parse_exos_version(out)[0] or self._serial
             if out := await self._optional(commands.EXOS_SHOW_VLAN):
                 self._vlans = parse_exos_vlans(out)
+            if out := await self._optional(commands.EXOS_SHOW_IPARP):
+                self._arp = parse_arp_table(out)
             if out := await self._optional(commands.EXOS_SHOW_PORT_CONFIG):
                 self._port_media = parse_exos_port_media(out) or self._port_media
                 self._port_speed_cfg = parse_exos_port_speed_cfg(out) or self._port_speed_cfg
@@ -1314,6 +1330,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         data.environment = self._environment
         data.lldp = self._lldp
         data.vlans = self._vlans
+        data.neighbors = {mac: {"ip": ip, "hostname": None} for mac, ip in self._arp.items()}
         for port, (primary, redundant) in self._port_media.items():
             if (iface := data.interfaces.get(port)) is not None:
                 media, module = media_kind(primary, redundant)

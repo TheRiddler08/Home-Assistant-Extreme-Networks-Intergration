@@ -303,6 +303,7 @@ async def test_key_rotation(hass: HomeAssistant, hass_ws_client, freezer, ow_ent
     assert new and new != old
     sent = " ".join(_client().commands)
     assert f"wireless.hn_k_{kid}_radio0.key={old}" in sent and f"wireless.hn_k_{kid}n_radio0.key={new}" in sent
+    await hass.async_block_till_done()  # events are delivered on the next loop turn
     item = reply["result"]["plan"]["keys"][0]
     assert item["rotation"]["cutoff"] and events and events[0]["key_id"] == kid
     reveal = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/reveal", "ref": f"key:{kid}:next"})

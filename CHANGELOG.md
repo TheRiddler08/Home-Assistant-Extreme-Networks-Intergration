@@ -3,6 +3,29 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.18.0] - 2026-11-20
+
+### Added
+- **Client details.** The Clients tab shows each device's name, kind, maker and IP address;
+  select one for everything known about it: name (and where it came from), maker from the
+  MAC address (or that it's a private, randomised address), IP and hostname, where it's
+  connected (access point, Wi-Fi network, band, channel, signal with SNR, speeds, connected
+  time, security, VLAN; or switch port with its speed; or the router's LAN), the matching
+  Home Assistant device (model, maker, area, link), and its per-device key.
+  [Details](docs/dashboard.md#clients)
+- **Names from more places:** your nickname, a Home Assistant device with the same MAC
+  address, the device's per-device key or onboarding request, or its DHCP hostname.
+- **Nicknames** for devices (administrators), shown everywhere in the panel, and
+  **Disconnect** / **Open port** in the details.
+- **IP addresses of wired devices** from ARP tables: ExtremeXOS `show iparp`, SR switches
+  `show arp`, and an OpenWrt router's ARP table and DHCP leases. An OpenWrt router's wired
+  LAN devices are now listed too.
+- Devices in a port's dialog show their name, maker and IP, and open their details.
+
+### Changed
+- A device learned on several switches is listed once, at its edge port.
+- New requirement: `aiooui` (offline maker lookup, also used by Home Assistant itself).
+
 ## [0.17.0] - 2026-11-19
 
 ### Added

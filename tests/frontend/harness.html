@@ -178,6 +178,14 @@
       window.serviceCalls.push({ domain: "ws", service: msg.type.replace("aerohive_local/", ""), data: msg });
       await new Promise((r) => setTimeout(r, 300));
       if (msg.type.startsWith("aerohive_local/plan/")) return planMock(msg);
+      if (msg.type === "aerohive_local/client/rename") {
+        const info = (snapshot.clients[msg.mac] = snapshot.clients[msg.mac] || { private: false });
+        info.nickname = msg.name || null;
+        info.name = msg.name || info.hostname || null;
+        info.name_source = msg.name ? "nickname" : info.hostname ? "hostname" : null;
+        setTimeout(push, 100);
+        return null;
+      }
       const aps = snapshot.devices.filter((d) => d.online && d.radios && d.radios.length);
       const targets = (msg.entry_ids ? aps.filter((d) => msg.entry_ids.includes(d.entry_id)) : aps);
       const radiosFor = (d, bands) => d.radios.filter((r) => !bands || bands.includes(r.band)).map((r) => r.name);

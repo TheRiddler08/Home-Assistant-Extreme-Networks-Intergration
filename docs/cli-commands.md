@@ -141,6 +141,12 @@ has a `vlan database` block): `show vlan brief` (fallback `show vlan`) to read V
 (trunk) or `no vlan tagging <id>` + `vlan pvid <id>` (access) → `exit` → `exit`; then
 `write memory`.
 
+### Client details
+
+`show iparp` (ExtremeXOS) and `show arp` (SR switches, FASTPATH) are read every few minutes for
+wired devices' IP addresses; OpenWrt's are from `/proc/net/arp` and `/tmp/dhcp.leases`. Any row
+with an IPv4 address followed by a MAC address counts.
+
 ## Configuration backups (all devices)
 
 `show running-config` (HiveOS, SR switches) or `show configuration` (ExtremeXOS) is read to

@@ -153,6 +153,10 @@ def _stations(data: AerohiveData) -> list[dict[str, Any]]:
             "tx_rate": sta.tx_rate,
             "rx_rate": sta.rx_rate,
             "connected": sta.assoc_time,
+            "snr": sta.snr,
+            "vlan": sta.vlan,
+            "security": sta.auth_mode,
+            "channel": sta.channel,
         }
         for sta in data.stations.values()
     ]
@@ -230,6 +234,9 @@ def device_snapshot(hass: HomeAssistant, coordinator: AerohiveCoordinator) -> di
         if data.is_wireless
         else [],
         "stations": _stations(data),
+        "neighbors": data.neighbors,
+        # Wired devices known without a port (an OpenWrt router's LAN neighbours).
+        "lan_clients": sorted({e.mac for e in data.fdb if not e.port and e.mac not in data.stations}),
         "wired_clients": len(data.wired_client_macs()),
         "vlans": [
             {"name": v.name, "vid": v.vid, "ip": v.ip_address, "prefix": v.prefix, "active": v.active_ports, "total": v.total_ports}
@@ -281,9 +288,17 @@ def network_snapshot(hass: HomeAssistant) -> dict[str, Any]:
     from .wifi import DATA_TIMERS  # noqa: PLC0415
 
     timers = hass.data.get(DATA_TIMERS)
+    from . import clients as clients_mod  # noqa: PLC0415
+    from .plan import DATA_PLAN  # noqa: PLC0415
+
+    manager = hass.data.get(DATA_PLAN)
+    directory = clients_mod.directory(hass, devices, manager.plan if manager else None, manager.requests if manager else None)
+    for device in devices:
+        device.pop("neighbors", None)  # folded into the client directory
     return {
         "version": SNAPSHOT_VERSION,
         "generated": datetime.now(UTC).isoformat(),
         "devices": devices,
         "wifi_timers": timers.as_list() if timers else [],
+        "clients": directory,
     }

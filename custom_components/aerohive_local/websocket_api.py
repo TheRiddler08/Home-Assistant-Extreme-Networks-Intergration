@@ -38,7 +38,7 @@ def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_wifi_create)
     websocket_api.async_register_command(hass, ws_wifi_delete)
     websocket_api.async_register_command(hass, ws_wifi_timer_cancel)
-    for command in (ws_plan_get, ws_plan_save, ws_plan_preview, ws_plan_apply, ws_plan_reveal, ws_plan_template, ws_key_add, ws_key_revoke, ws_onboard_approve, ws_onboard_decline, ws_portal_preview, ws_portal_template, ws_key_rotate, ws_key_rotate_finish, ws_key_rotate_cancel):
+    for command in (ws_plan_get, ws_plan_save, ws_plan_preview, ws_plan_apply, ws_plan_reveal, ws_plan_template, ws_key_add, ws_key_revoke, ws_onboard_approve, ws_onboard_decline, ws_portal_preview, ws_portal_template, ws_key_rotate, ws_key_rotate_finish, ws_key_rotate_cancel, ws_client_rename):
         websocket_api.async_register_command(hass, command)
 
 
@@ -415,3 +415,22 @@ async def ws_key_rotate_cancel(hass: HomeAssistant, connection: websocket_api.Ac
         return {"results": results, **manager.state()}
 
     await _plan_call(connection, msg, run())
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/client/rename", vol.Required("mac"): str, vol.Optional("name"): vol.Any(str, None)}
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_client_rename(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """Give a connected device a nickname (empty: remove it)."""
+    from . import clients  # noqa: PLC0415
+    from homeassistant.helpers.dispatcher import async_dispatcher_send  # noqa: PLC0415
+
+    try:
+        await clients.async_set_nickname(hass, msg["mac"], msg.get("name"))
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid", str(err))
+        return
+    async_dispatcher_send(hass, SIGNAL_SNAPSHOT)
+    connection.send_result(msg["id"])

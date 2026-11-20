@@ -72,7 +72,8 @@
   ],
   "requirements": [
     "asyncssh>=2.21.0",
-    "segno>=1.6.1"
+    "segno>=1.6.1",
+    "aiooui>=0.1.9"
   ],
-  "version": "0.17.0"
+  "version": "0.18.0"
 }

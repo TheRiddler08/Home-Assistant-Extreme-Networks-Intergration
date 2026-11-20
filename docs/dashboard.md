@@ -98,8 +98,33 @@ clients, add or delete networks. See [Wi-Fi networks](wifi.md#in-the-network-pan
 
 ### Clients
 
-The **Clients** tab lists every Wi-Fi and wired client in one place. Search it by name, MAC
-address, IP address, device or port. Select a wired client to open its switch port.
+The **Clients** tab lists every Wi-Fi and wired client in one place, with what's known about
+it: name, kind of device, maker and IP address. Search it by any of those, or by MAC address,
+access point or port.
+
+Select a client for its details:
+
+![Client details](images/panel-client.png)
+
+- **Name**, from the best source: your **nickname**, else the name another Home Assistant
+  integration gives the device (same MAC address), its per-device key or onboarding request,
+  or its DHCP hostname. *Name from* says which.
+- **Maker** from the MAC address (an offline list). A **private address** (phones and laptops
+  make one up per network) is marked as such: its maker can't be known and it can change.
+- **IP address and hostname** from the access points, the OpenWrt router's DHCP leases, and
+  ARP tables (OpenWrt, ExtremeXOS `show iparp`, SR `show arp`), so wired devices have them
+  too.
+- **Where it's connected:** access point, Wi-Fi network, band, channel, signal (with SNR),
+  speeds, connected time, security and VLAN; or switch and port (with the port's speed) and
+  VLAN; or the router's LAN.
+- **In Home Assistant:** the device with the same MAC address, with model, maker and area,
+  linked to its page.
+- A guess of the **kind of device** (phone, computer, TV, speaker, camera, printer…).
+- **Nickname** (administrators): shown everywhere in the panel instead of the MAC address,
+  including the devices listed in a port's dialog. **Disconnect** drops a Wi-Fi client;
+  **Open port** opens a wired client's port.
+
+A device learned on several switches is listed once, at its own (edge) port.
 
 ### Setup
 
