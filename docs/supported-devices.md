@@ -55,6 +55,13 @@ Before adding one:
 Please [report](https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/issues/new/choose)
 how it works on yours.
 
+## OPNsense
+
+🧪 Preview: current OPNsense releases, read through the REST API with an API key (no SSH):
+version, CPU, memory, temperature, ports, networks, internet gateways and the devices behind
+the router; reboot. Ports are read-only, and configuration backups and the network setup's
+router role aren't offered yet. See [OPNsense](opnsense.md).
+
 ## OpenWrt
 
 🧪 Preview: OpenWrt 21.02 and later (routers and access points), read with `ubus` and UCI over

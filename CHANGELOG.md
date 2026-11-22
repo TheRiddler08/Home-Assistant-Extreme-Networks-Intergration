@@ -3,6 +3,23 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.19.0] - 2026-11-22
+
+### Added
+- **OPNsense routers (preview), through the REST API.** Add one with *OPNsense router (API
+  key)*: host, API key and secret (System → Access → Users → API keys), with or without
+  certificate checking. Read: hostname and version, CPU, uptime, memory, temperature,
+  physical ports (link, speed, duplex, assignment, traffic, errors; WAN as uplink), assigned
+  networks with VLAN tags, internet gateways (online, delay, loss; a gateway that's down is a
+  problem), and devices behind the router with names and IPs from ARP and Kea / Dnsmasq / ISC
+  DHCP leases. Reboot through the API. Re-authentication if the key stops working.
+  [Details](docs/opnsense.md)
+- Network panel: *Internet gateways* and *Networks* cards for routers that report them.
+
+### Changed
+- Save / Back up buttons and backup info are hidden for devices that don't have them
+  (OPNsense saves every change itself; its configuration isn't copied, as it holds keys).
+
 ## [0.18.1] - 2026-11-20
 
 ### Fixed

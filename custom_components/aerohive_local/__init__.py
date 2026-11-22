@@ -40,7 +40,12 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
 
 from .client import AerohiveClient
+from homeassistant.const import CONF_API_KEY, CONF_VERIFY_SSL
+
 from .const import (
+    CONF_API_SECRET,
+    CONF_DEVICE_TYPE,
+    DEVICE_TYPE_OPNSENSE,
     ATTR_COMMAND,
     ATTR_DEVICE_ID,
     ATTR_MAC,
@@ -183,6 +188,19 @@ def load_client_key(path: str | None) -> Any | None:
 
 
 async def async_create_client(hass: HomeAssistant, data: dict[str, Any]) -> AerohiveClient:
+    if data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_OPNSENSE:
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession  # noqa: PLC0415
+
+        from .opnsense import DEFAULT_PORT as OPN_PORT, OPNsenseClient  # noqa: PLC0415
+
+        return OPNsenseClient(  # type: ignore[return-value]
+            async_get_clientsession(hass),
+            data[CONF_HOST],
+            data.get(CONF_PORT, OPN_PORT),
+            data[CONF_API_KEY],
+            data[CONF_API_SECRET],
+            verify_ssl=data.get(CONF_VERIFY_SSL, False),
+        )
     key = None
     if data.get(CONF_SSH_KEY):
         key = await hass.async_add_executor_job(load_client_key, data[CONF_SSH_KEY])

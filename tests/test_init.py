@@ -162,7 +162,7 @@ def _entity_id(hass: HomeAssistant, platform: str, key: str) -> str:
 async def _start_manual(hass: HomeAssistant) -> dict[str, Any]:
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     assert result["type"] is FlowResultType.MENU
-    assert result["menu_options"] == ["scan", "manual"]
+    assert result["menu_options"] == ["scan", "manual", "opnsense"]
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "manual"})
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "manual"

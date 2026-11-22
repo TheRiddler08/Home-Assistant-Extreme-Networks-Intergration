@@ -1,0 +1,9 @@
+{
+ "name": "opnsense.home.arpa",
+ "versions": [
+  "OPNsense 25.7.3-amd64",
+  "FreeBSD 14.3-RELEASE-p2",
+  "OpenSSL 3.0.17 1 Jul 2025"
+ ],
+ "updates": "Click to check for updates."
+}

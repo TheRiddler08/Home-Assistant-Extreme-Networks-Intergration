@@ -41,7 +41,7 @@ def _speed_mbps(value: str | None) -> int | None:
 
 
 def device_kind(data: AerohiveData) -> str:
-    if data.cli == "openwrt":
+    if data.cli in ("openwrt", "opnsense"):
         return "router"
     if data.is_switch:
         return "switch"
@@ -174,6 +174,9 @@ def _problems(coordinator: AerohiveCoordinator, data: AerohiveData) -> list[dict
         problems.append({"kind": "save_failed", "text": "Saving a change on the device failed (retrying)"})
     for text in data.environment.problems if data.environment else []:
         problems.append({"kind": "hardware", "text": text[0].upper() + text[1:]})
+    for gateway in data.gateways:
+        if gateway.get("online") is False:
+            problems.append({"kind": "gateway", "text": f"Gateway {gateway['name']} is {gateway.get('status') or 'down'}"})
     return problems
 
 
@@ -238,6 +241,8 @@ def device_snapshot(hass: HomeAssistant, coordinator: AerohiveCoordinator) -> di
         # Wired devices known without a port (an OpenWrt router's LAN neighbours).
         "lan_clients": sorted({e.mac for e in data.fdb if not e.port and e.mac not in data.stations}),
         "wired_clients": len(data.wired_client_macs()),
+        "gateways": data.gateways,
+        "networks": data.networks,
         "vlans": [
             {"name": v.name, "vid": v.vid, "ip": v.ip_address, "prefix": v.prefix, "active": v.active_ports, "total": v.total_ports}
             for v in data.vlans.values()
@@ -263,11 +268,12 @@ def device_snapshot(hass: HomeAssistant, coordinator: AerohiveCoordinator) -> di
         "problems": _problems(coordinator, data),
         "features": {
             "port_names": data.cli == commands.DIALECT_EXOS,
-            "port_control": data.cli != "openwrt",
-            "port_speed": data.cli != "openwrt",
-            "restore": data.cli != "openwrt",
+            "port_control": data.cli not in ("openwrt", "opnsense"),
+            "port_speed": data.cli not in ("openwrt", "opnsense"),
+            "restore": data.cli not in ("openwrt", "opnsense"),
             "poe": bool(data.poe_ports),
-            "save": True,
+            "save": data.cli != "opnsense",  # OPNsense saves every change itself
+            "backup": data.cli != "opnsense",
             "reboot_save_prompt": data.cli == commands.DIALECT_EXOS,
         },
     }

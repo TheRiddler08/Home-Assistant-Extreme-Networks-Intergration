@@ -1,0 +1,88 @@
+{
+ "total": 6,
+ "rowCount": 6,
+ "current": 1,
+ "rows": [
+  {
+   "device": "igc0",
+   "is_physical": true,
+   "status": "up",
+   "description": "WAN",
+   "identifier": "wan",
+   "enabled": true,
+   "macaddr": "02:5a:00:00:01:00",
+   "media": "Ethernet autoselect (1000baseT <full-duplex>)",
+   "addr4": "203.0.113.20/24",
+   "gateways": [
+    "203.0.113.1"
+   ],
+   "vlan_tag": null,
+   "statistics": {
+    "bytes received": "912345678",
+    "bytes transmitted": "123456789",
+    "input errors": "0",
+    "output errors": "0"
+   }
+  },
+  {
+   "device": "igc1",
+   "is_physical": true,
+   "status": "up",
+   "description": "LAN",
+   "identifier": "lan",
+   "enabled": true,
+   "macaddr": "02:5a:00:00:01:01",
+   "media": "Ethernet autoselect (2500Base-T <full-duplex>)",
+   "addr4": "192.168.1.1/24",
+   "gateways": [],
+   "vlan_tag": null,
+   "statistics": {
+    "bytes received": "45678901",
+    "bytes transmitted": "567890123",
+    "input errors": "2",
+    "output errors": "0"
+   }
+  },
+  {
+   "device": "igc2",
+   "is_physical": true,
+   "status": "no carrier",
+   "description": "Unassigned Interface",
+   "identifier": "",
+   "macaddr": "02:5a:00:00:01:02",
+   "media": "Ethernet autoselect",
+   "gateways": []
+  },
+  {
+   "device": "igc3",
+   "is_physical": true,
+   "status": "down",
+   "description": "Unassigned Interface",
+   "identifier": "",
+   "macaddr": "02:5a:00:00:01:03",
+   "media": "Ethernet autoselect",
+   "gateways": []
+  },
+  {
+   "device": "igc1.30",
+   "is_physical": false,
+   "status": "up",
+   "description": "IoT",
+   "identifier": "opt1",
+   "enabled": true,
+   "macaddr": "02:5a:00:00:01:01",
+   "addr4": "10.15.19.1/24",
+   "gateways": [],
+   "vlan_tag": 30
+  },
+  {
+   "device": "lo0",
+   "is_physical": false,
+   "status": "up",
+   "description": "Loopback",
+   "identifier": "lo0",
+   "addr4": "127.0.0.1/8",
+   "gateways": []
+  }
+ ]
+}

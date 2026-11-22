@@ -3331,6 +3331,198 @@
     "reboot_save_prompt": false,
     "port_speed": true
    }
+  },
+  {
+   "entry_id": "opnsense",
+   "device_id": "dev-opn",
+   "name": "opnsense",
+   "host": "192.168.1.1",
+   "online": true,
+   "kind": "router",
+   "cli": "opnsense",
+   "model": "OPNsense",
+   "firmware": "25.7.3",
+   "serial": null,
+   "mac": "02:5a:00:00:01:01",
+   "ip": "192.168.1.1",
+   "uptime": 274353,
+   "boot_time": null,
+   "cpu": 3.6,
+   "memory": 8.3,
+   "temperature": 44.0,
+   "temperature_status": null,
+   "fans": null,
+   "fan_rpm": {},
+   "power_supplies": {},
+   "poe": null,
+   "ports": [
+    {
+     "name": "igc0",
+     "label": "WAN",
+     "media": null,
+     "module": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 1000,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": true,
+     "rx_kbps": 12956.7,
+     "tx_kbps": 1361.9,
+     "rx_bytes": 7091709584,
+     "tx_bytes": 2302595691,
+     "errors": 0,
+     "poe": null,
+     "neighbor": null,
+     "clients": [],
+     "speed_options": [],
+     "speed_setting": null
+    },
+    {
+     "name": "igc1",
+     "label": "LAN",
+     "media": null,
+     "module": null,
+     "up": true,
+     "enabled": true,
+     "present": true,
+     "speed": 2500,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 12956.7,
+     "tx_kbps": 1361.9,
+     "rx_bytes": 7091709584,
+     "tx_bytes": 2302595691,
+     "errors": 0,
+     "poe": null,
+     "neighbor": null,
+     "clients": [],
+     "speed_options": [],
+     "speed_setting": null
+    },
+    {
+     "name": "igc2",
+     "label": null,
+     "media": null,
+     "module": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 12956.7,
+     "tx_kbps": 1361.9,
+     "rx_bytes": 7091709584,
+     "tx_bytes": 2302595691,
+     "errors": 0,
+     "poe": null,
+     "neighbor": null,
+     "clients": [],
+     "speed_options": [],
+     "speed_setting": null
+    },
+    {
+     "name": "igc3",
+     "label": null,
+     "media": null,
+     "module": null,
+     "up": false,
+     "enabled": true,
+     "present": true,
+     "speed": null,
+     "duplex": "Full",
+     "vlan": "Default",
+     "uplink": false,
+     "rx_kbps": 12956.7,
+     "tx_kbps": 1361.9,
+     "rx_bytes": 7091709584,
+     "tx_bytes": 2302595691,
+     "errors": 0,
+     "poe": null,
+     "neighbor": null,
+     "clients": [],
+     "speed_options": [],
+     "speed_setting": null
+    }
+   ],
+   "radios": [],
+   "ssids": [],
+   "stations": [],
+   "wired_clients": 2,
+   "lan_clients": [
+    "b8:27:eb:12:34:56"
+   ],
+   "gateways": [
+    {
+     "name": "WAN_DHCP",
+     "address": "203.0.113.1",
+     "status": "none",
+     "online": true,
+     "loss": "0.0 %",
+     "delay": "4.2 ms",
+     "interface": null
+    },
+    {
+     "name": "STARLINK_DHCP",
+     "address": "100.64.0.1",
+     "status": "down",
+     "online": false,
+     "loss": "100.0 %",
+     "delay": "~",
+     "interface": null
+    }
+   ],
+   "networks": [
+    {
+     "name": "LAN",
+     "device": "igc1",
+     "address": "192.168.1.1/24",
+     "vlan": null
+    },
+    {
+     "name": "IoT",
+     "device": "igc1.30",
+     "address": "10.15.19.1/24",
+     "vlan": 30
+    }
+   ],
+   "vlans": [],
+   "config": {
+    "unsaved": false,
+    "changed_after_reboot": false,
+    "change_summary": null,
+    "boot_problems": [],
+    "image_booted": null,
+    "config_booted": null,
+    "last_backup": null,
+    "backups": 0
+   },
+   "hardware": {
+    "console": null,
+    "mgmt": null,
+    "usb": null,
+    "psus": []
+   },
+   "problems": [
+    {
+     "kind": "gateway",
+     "text": "Gateway STARLINK_DHCP is down"
+    }
+   ],
+   "features": {
+    "port_names": false,
+    "port_control": false,
+    "port_speed": false,
+    "restore": false,
+    "poe": false,
+    "save": false,
+    "backup": false,
+    "reboot_save_prompt": false
+   }
   }
  ],
  "wifi_timers": [],
@@ -3734,6 +3926,18 @@
    "vendor": null,
    "private": true,
    "kind": null,
+   "ha_device": null,
+   "key": null
+  },
+  "b8:27:eb:12:34:56": {
+   "name": "pihole",
+   "name_source": "hostname",
+   "nickname": null,
+   "hostname": "pihole",
+   "ip": "10.15.19.20",
+   "vendor": "Raspberry Pi Foundation",
+   "private": false,
+   "kind": "smart home",
    "ha_device": null,
    "key": null
   }

@@ -12,7 +12,7 @@ import asyncssh
 import voluptuous as vol
 from homeassistant.components import network
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME
+from homeassistant.const import CONF_API_KEY, CONF_VERIFY_SSL, CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.selector import (
@@ -33,7 +33,10 @@ from . import async_create_client, commands
 from .client import AerohiveAuthError, AerohiveError
 from .commands import DIALECT_EXOS, DIALECT_SWITCH
 from .const import (
+    CONF_API_SECRET,
     CONF_DETAILED_STATS,
+    CONF_DEVICE_TYPE,
+    DEVICE_TYPE_OPNSENSE,
     CONF_ENABLE_ALL,
     CONF_ENTRY_TYPE,
     CONF_RAW_SENSORS,
@@ -167,8 +170,23 @@ async def _is_openwrt(client: Any) -> bool:
     return client.dialect == ow.DIALECT_OPENWRT
 
 
+async def _probe_opnsense(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
+    """Read an OPNsense router's identity through its API. Raises AerohiveError subclasses."""
+    from . import opnsense as opn  # noqa: PLC0415
+
+    client = await async_create_client(hass, data)
+    info = opn.parse_system_information(await client.get(opn.SYSTEM_INFORMATION))  # type: ignore[attr-defined]
+    if info.hostname is None and info.version is None:
+        raise AerohiveError("not an OPNsense API")
+    ports = opn.parse_interfaces(await client.get(opn.INTERFACES))  # type: ignore[attr-defined]
+    lan = next((p for p in ports.values() if p.identifier == "lan"), None) or next(iter(ports.values()), None)
+    return {"mac": normalize_mac(lan.mac) if lan else None, "hostname": info.hostname, "platform": "OPNsense"}
+
+
 async def _probe(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Connect, read identity, disconnect. Raises AerohiveError subclasses."""
+    if data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_OPNSENSE:
+        return await _probe_opnsense(hass, data)
     client = await async_create_client(hass, data)
     try:
         if client.dialect == ow.DIALECT_OPENWRT or (not client.connected and await _is_openwrt(client)):
@@ -253,7 +271,43 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
     # ---------------------------------------------------------------- #
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return self.async_show_menu(step_id="user", menu_options=["scan", "manual"])
+        return self.async_show_menu(step_id="user", menu_options=["scan", "manual", "opnsense"])
+
+    async def async_step_opnsense(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """An OPNsense router, through its REST API (API key and secret)."""
+        errors: dict[str, str] = {}
+        values = dict(user_input or {})
+        if user_input is not None:
+            data = {
+                CONF_DEVICE_TYPE: DEVICE_TYPE_OPNSENSE,
+                CONF_HOST: user_input[CONF_HOST].strip(),
+                CONF_PORT: int(user_input.get(CONF_PORT, 443)),
+                CONF_API_KEY: user_input[CONF_API_KEY].strip(),
+                CONF_API_SECRET: user_input[CONF_API_SECRET].strip(),
+                CONF_VERIFY_SSL: bool(user_input.get(CONF_VERIFY_SSL, False)),
+                CONF_SCAN_INTERVAL: int(user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),
+            }
+            info = await self._validate(data, errors)
+            if info is not None:
+                await self.async_set_unique_id(info["mac"] or f"opnsense-{data[CONF_HOST]}", raise_on_progress=False)
+                self._abort_if_unique_id_configured(updates={CONF_HOST: data[CONF_HOST]})
+                return self.async_create_entry(title=info["hostname"] or data[CONF_HOST], data=data)
+        return self.async_show_form(
+            step_id="opnsense",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST, default=values.get(CONF_HOST, "")): str,
+                    vol.Optional(CONF_PORT, default=values.get(CONF_PORT, 443)): vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
+                    vol.Required(CONF_API_KEY, default=values.get(CONF_API_KEY, "")): str,
+                    vol.Required(CONF_API_SECRET): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+                    vol.Optional(CONF_VERIFY_SSL, default=values.get(CONF_VERIFY_SSL, False)): bool,
+                    vol.Optional(CONF_SCAN_INTERVAL, default=values.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): vol.All(
+                        vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL)
+                    ),
+                }
+            ),
+            errors=errors,
+        )
 
     async def async_step_manual(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
@@ -411,6 +465,17 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
             data = {**entry.data, **{k: v for k, v in user_input.items() if v}}
             if await self._validate(data, errors) is not None:
                 return self.async_update_reload_and_abort(entry, data=data)
+        if entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_OPNSENSE:
+            return self.async_show_form(
+                step_id="reauth_confirm",
+                data_schema=vol.Schema(
+                    {
+                        vol.Required(CONF_API_KEY, default=entry.data.get(CONF_API_KEY, "")): str,
+                        vol.Required(CONF_API_SECRET): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+                    }
+                ),
+                errors=errors,
+            )
         return self.async_show_form(
             step_id="reauth_confirm",
             data_schema=vol.Schema(

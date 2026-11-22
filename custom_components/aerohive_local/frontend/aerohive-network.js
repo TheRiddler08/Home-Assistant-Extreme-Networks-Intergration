@@ -1728,8 +1728,8 @@ function deviceActions(base, device) {
   return `
     <div class="actions">
       <button class="btn" data-action="refresh" ${busy("refresh") ? "disabled" : ""} title="Read everything from the device now">${icon("reboot", busy("refresh") ? "spin" : "")}${busy("refresh") ? "Refreshing…" : "Refresh"}</button>
-      <button class="btn ${cfg.unsaved ? "attention" : ""}" data-action="save" ${busy("save") || !device.online ? "disabled" : ""}>${icon("save")}${busy("save") ? "Saving…" : "Save configuration"}</button>
-      <button class="btn" data-action="backup" ${busy("backup") || !device.online || cfg.changed_after_reboot ? "disabled" : ""}>${icon("backup")}${busy("backup") ? "Backing up…" : "Back up now"}</button>
+      ${device.features && device.features.save === false ? "" : `<button class="btn ${cfg.unsaved ? "attention" : ""}" data-action="save" ${busy("save") || !device.online ? "disabled" : ""}>${icon("save")}${busy("save") ? "Saving…" : "Save configuration"}</button>`}
+      ${device.features && device.features.backup === false ? "" : `<button class="btn" data-action="backup" ${busy("backup") || !device.online || cfg.changed_after_reboot ? "disabled" : ""}>${icon("backup")}${busy("backup") ? "Backing up…" : "Back up now"}</button>`}
       <button class="btn danger" data-action="reboot" ${!device.online ? "disabled" : ""}>${icon("reboot")}Reboot</button>
     </div>`;
 }
@@ -1790,8 +1790,8 @@ function infoList(device) {
     ["Serial number", device.serial],
     ["Booted image", cfg.image_booted],
     ["Booted config", cfg.config_booted],
-    ["Last backup", cfg.last_backup ? `${fmtAgo(cfg.last_backup)} (${cfg.backups} kept)` : "None yet"],
-  ].filter(([, v]) => v != null && v !== "");
+    device.features && device.features.backup === false ? null : ["Last backup", cfg.last_backup ? `${fmtAgo(cfg.last_backup)} (${cfg.backups} kept)` : "None yet"],
+  ].filter((row) => row && row[1] != null && row[1] !== "");
   return `<dl class="kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
 }
 
@@ -1900,6 +1900,11 @@ tbody tr.click:hover { background: color-mix(in srgb, var(--ah-accent) 6%, trans
 .chip.bad { color: var(--ah-err); }
 .activity { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
 .qr-box { display: flex; justify-content: center; margin: 14px 0 4px; }
+.gw-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; font-size: 13.5px; }
+.gw-list li { display: flex; gap: 10px; align-items: flex-start; }
+.gw-list .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; flex: none; background: var(--ah-muted); }
+.gw-list .dot.ok { background: var(--ah-ok); }
+.gw-list .dot.bad { background: var(--ah-err); }
 .portal-dialog { width: min(1040px, 100%); }
 .rules { display: grid; gap: 10px; margin-bottom: 12px; }
 .rule-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto auto; gap: 8px; align-items: center; padding: 10px; border: 1px solid var(--ah-line); border-radius: 10px; }
@@ -2166,13 +2171,30 @@ class AerohiveNetworkPanel extends AerohiveBase {
             ${device.ssids && device.ssids.length ? this._ssidsCard(device) : ""}
             ${device.stations && device.stations.length ? this._stationsCard(device) : ""}
             ${device.vlans && device.vlans.length ? this._vlansCard(device) : ""}
+            ${device.networks && device.networks.length ? this._networksCard(device) : ""}
           </div>
           <div>
+            ${device.gateways && device.gateways.length ? this._gatewaysCard(device) : ""}
             <div class="card panel-card"><div class="section-title">Health</div>${healthTiles(device)}</div>
             <div class="card panel-card"><div class="section-title">Device</div>${infoList(device)}</div>
           </div>
         </div>
       </div>`;
+  }
+
+  _gatewaysCard(device) {
+    return `<div class="card panel-card"><div class="section-title">Internet gateways</div>
+      <ul class="gw-list">${device.gateways
+        .map((g) => `<li><span class="dot ${g.online === false ? "bad" : g.online ? "ok" : ""}"></span><div class="grow"><strong>${esc(g.name)}</strong>${g.address ? ` <span class="muted mono">${esc(g.address)}</span>` : ""}<br>
+          <span class="muted">${g.online === false ? esc(g.status || "down") : g.online ? "Online" : esc(g.status || "Unknown")}${g.delay ? ` · ${esc(g.delay)}` : ""}${g.loss ? ` · loss ${esc(g.loss)}` : ""}</span></div></li>`)
+        .join("")}</ul></div>`;
+  }
+
+  _networksCard(device) {
+    return `<div class="card panel-card"><div class="section-title">Networks</div><div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Interface</th><th>Address</th><th class="num">VLAN</th></tr></thead>
+      <tbody>${device.networks.map((n) => `<tr><td>${esc(n.name)}</td><td class="mono">${esc(n.device)}</td><td class="mono">${esc(n.address)}</td><td class="num">${n.vlan != null ? esc(n.vlan) : ""}</td></tr>`).join("")}</tbody>
+    </table></div></div>`;
   }
 
   _unknownCard(device) {
@@ -3728,7 +3750,7 @@ class AerohiveDeviceCard extends AerohiveCardBase {
       ${(device.problems || []).length || !device.online ? `<div class="chips" style="margin:0 0 12px">${problemChips(device, 4)}</div>` : ""}
       ${healthTiles(device)}
       ${device.radios && device.radios.length ? `<div class="foot">${device.radios.map((r) => `<span><span class="dot ${r.up ? "ok" : "err"}" style="display:inline-block;margin-right:4px"></span>${esc(r.band || r.name)} ch <b class="num">${esc(r.channel ?? "–")}</b> · <b class="num">${esc(r.clients)}</b> clients</span>`).join("")}</div>` : ""}
-      <div class="foot"><span>${cfg.last_backup ? `Last backup <b>${esc(fmtAgo(cfg.last_backup))}</b>` : "No backup yet"}</span></div>
+      ${device.features && device.features.backup === false ? "" : `<div class="foot"><span>${cfg.last_backup ? `Last backup <b>${esc(fmtAgo(cfg.last_backup))}</b>` : "No backup yet"}</span></div>`}
       ${
         actions
           ? `<div class="actions" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px" data-device="${esc(device.entry_id)}">

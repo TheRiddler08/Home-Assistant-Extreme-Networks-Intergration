@@ -6,8 +6,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Monitor and control **Aerohive / Extreme Networks access points, branch routers, SR switches,
-ExtremeXOS switches and OpenWrt routers locally over SSH**. It doesn't use the cloud,
-HiveManager, ExtremeCloud IQ or an OpenWrt controller.
+ExtremeXOS switches and OpenWrt routers locally over SSH**, and **OPNsense routers through
+their local REST API**. It doesn't use the cloud, HiveManager, ExtremeCloud IQ or an OpenWrt
+controller.
 
 ![Network panel](docs/images/panel-switch.png)
 
@@ -53,6 +54,7 @@ HiveManager, ExtremeCloud IQ or an OpenWrt controller.
 | Aerohive BR100 (HiveOS) | 🟡 Partial |
 | Extreme Networks Summit X450e-48p (ExtremeXOS) | 🧪 Preview, needs testing |
 | OpenWrt routers and access points (21.02 and later) | 🧪 Preview, needs testing ([details](docs/openwrt.md)) |
+| OPNsense routers (REST API, current releases) | 🧪 Preview, needs testing ([details](docs/opnsense.md)) |
 | Other HiveOS / IQ Engine APs, SR switches and ExtremeXOS switches | Expected to work, untested |
 
 Full details: [Supported devices](docs/supported-devices.md).
@@ -83,6 +85,7 @@ Networks (Local SSH)**, and choose **Scan my network** or **Enter IP address man
 | [Roadmap](docs/roadmap.md) | What's planned, on hold, and what open items need |
 | [Wi-Fi manager](docs/wifi.md) | Managing SSIDs and passwords |
 | [Network overview](docs/overview.md) | The combined *Aerohive Network* device |
+| [OPNsense](docs/opnsense.md) | OPNsense routers through the REST API: ports, gateways, clients, reboot |
 | [OpenWrt](docs/openwrt.md) | OpenWrt routers and access points: what's read, Wi-Fi control, limits |
 | [Switches](docs/switches.md) | SR-series and ExtremeXOS switches: ports, PoE, LLDP |
 | [Power-loss protection and backups](docs/backups.md) | Backups, change-after-reboot alerts, restore |

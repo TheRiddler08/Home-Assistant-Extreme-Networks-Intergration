@@ -8,6 +8,9 @@ DOMAIN: Final = "aerohive_local"
 MANUFACTURER: Final = "Extreme Networks / Aerohive"
 
 CONF_SSH_KEY: Final = "ssh_key_path"
+CONF_DEVICE_TYPE: Final = "device_type"  # absent: SSH; "opnsense": REST API
+DEVICE_TYPE_OPNSENSE: Final = "opnsense"
+CONF_API_SECRET: Final = "api_secret"
 CONF_ENTRY_TYPE: Final = "entry_type"
 ENTRY_TYPE_OVERVIEW: Final = "overview"
 CONF_SCAN_INTERVAL: Final = "scan_interval"

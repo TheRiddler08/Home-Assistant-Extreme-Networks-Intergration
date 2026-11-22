@@ -1,0 +1,50 @@
+[
+ {
+  "mac": "02:11:22:33:44:01",
+  "ip": "192.168.1.101",
+  "intf": "igc1",
+  "expired": false,
+  "expires": 1180,
+  "permanent": false,
+  "type": "ethernet",
+  "manufacturer": "",
+  "hostname": "pixel-8.home.arpa",
+  "intf_description": "LAN"
+ },
+ {
+  "mac": "b8:27:eb:12:34:56",
+  "ip": "10.15.19.20",
+  "intf": "igc1.30",
+  "expired": false,
+  "expires": 900,
+  "permanent": false,
+  "type": "ethernet",
+  "manufacturer": "Raspberry Pi Foundation",
+  "hostname": "",
+  "intf_description": "IoT"
+ },
+ {
+  "mac": "02:ee:00:00:00:01",
+  "ip": "203.0.113.1",
+  "intf": "igc0",
+  "expired": false,
+  "expires": 1100,
+  "permanent": false,
+  "type": "ethernet",
+  "manufacturer": "",
+  "hostname": "",
+  "intf_description": "WAN"
+ },
+ {
+  "mac": "02:5a:00:00:01:01",
+  "ip": "192.168.1.1",
+  "intf": "igc1",
+  "expired": false,
+  "expires": null,
+  "permanent": true,
+  "type": "ethernet",
+  "manufacturer": "",
+  "hostname": "",
+  "intf_description": "LAN"
+ }
+]

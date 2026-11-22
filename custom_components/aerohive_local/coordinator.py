@@ -46,6 +46,7 @@ from .const import (
 from .discovery import is_aerohive_mac
 from . import netplan as netplan_mod
 from . import openwrt as ow
+from . import opnsense as opn
 from .parsers import (
     combo_port_count,
     media_kind,
@@ -172,6 +173,13 @@ def _lldp_model(neighbor: LldpNeighbor) -> str | None:
     return _short_model(neighbor)
 
 
+def _int_or_none(value: str | None) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except ValueError:
+        return None
+
+
 def _prefix_to_netmask(prefix: int | None) -> str | None:
     if prefix is None or not 0 <= prefix <= 32:
         return None
@@ -222,6 +230,8 @@ class AerohiveData:
     poe_ports: dict[str, PoePort] = field(default_factory=dict)
     fdb: list[FdbEntry] = field(default_factory=list)
     neighbors: dict[str, dict[str, str | None]] = field(default_factory=dict)  # MAC -> {"ip", "hostname"} (ARP, DHCP)
+    gateways: list[dict[str, Any]] = field(default_factory=list)  # OPNsense: name, address, online, loss, delay
+    networks: list[dict[str, Any]] = field(default_factory=list)  # OPNsense: assigned interfaces with addresses
     lldp: dict[str, LldpNeighbor] = field(default_factory=dict)
     config: RunningConfigSummary | None = None
     cli: str = commands.DIALECT_HIVEOS
@@ -501,6 +511,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._vlans: dict[str, ExosVlan] = {}
         self._arp: dict[str, str] = {}  # switches: MAC -> IP (slow refresh)
         self._ow_leases: dict[str, tuple[str | None, str | None]] = {}  # OpenWrt DHCP: MAC -> (IP, hostname)
+        self._opn_leases: dict[str, tuple[str | None, str | None]] = {}  # OPNsense DHCP: MAC -> (IP, hostname)
         self._port_speed_cfg: dict[str, tuple[str, str]] = {}  # ExtremeXOS: from show ports configuration
         self._speed_overrides: dict[str, tuple[str, str]] = {}  # set from HA, until the device is read again
         self._port_media: dict[str, tuple[str, str | None]] = {}
@@ -631,6 +642,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             await self.client.connect()
         if self.client.dialect == ow.DIALECT_OPENWRT:
             return await self._fetch_openwrt(data)
+        if self.client.dialect == opn.DIALECT_OPNSENSE:
+            return await self._fetch_opnsense(data)
         version_out = await self.client.run("show version")
         detected = dialect_from_version(version_out)
         if detected and detected != self.client.dialect:
@@ -892,6 +905,95 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
     def is_openwrt(self) -> bool:
         return self.client.dialect == ow.DIALECT_OPENWRT
 
+    @property
+    def is_opnsense(self) -> bool:
+        return self.client.dialect == opn.DIALECT_OPNSENSE
+
+    async def _fetch_opnsense(self, data: AerohiveData) -> AerohiveData:
+        """Poll an OPNsense router through its REST API."""
+        client: opn.OPNsenseClient = self.client  # type: ignore[assignment]
+        data.cli = opn.DIALECT_OPNSENSE
+        info = opn.parse_system_information(await client.get(opn.SYSTEM_INFORMATION))
+        if info.hostname is None and info.version is None:
+            raise AerohiveConnectionError(f"{client.host} answered, but not like an OPNsense router")
+        client.hostname = info.hostname
+        data.hostname = info.hostname
+        activity = opn.parse_activity(await self._opn_optional(opn.ACTIVITY))
+        data.version = VersionInfo(
+            version=info.version, firmware=info.firmware, os_name="OPNsense", platform="OPNsense", uptime_seconds=activity.uptime_seconds
+        )
+        if activity.cpu_percent is not None:
+            data.cpu = SystemStats(cpu_total=activity.cpu_percent)
+        total, used = opn.parse_memory(await self._opn_optional(opn.SYSTEM_RESOURCES))
+        if total:
+            data.memory = SystemStats(memory_total_kb=total, memory_free_kb=max(total - (used or 0), 0))
+        overview = await client.get(opn.INTERFACES)
+        ports = opn.parse_interfaces(overview)
+        data.networks = opn.assigned_networks(overview)
+        now = time.monotonic()
+        wan_devices: set[str] = set()
+        for name, port in ports.items():
+            extra: dict[str, str] = {"port": "yes"}
+            if port.label:
+                extra["display_string"] = port.label
+            if port.wan:
+                extra.update(uplink="yes", role="WAN")
+                wan_devices.add(name)
+            data.interfaces[name] = Interface(
+                name=name,
+                mac=normalize_mac(port.mac),
+                state="Up" if port.up else "Down",
+                speed=str(port.speed) if port.speed else None,
+                duplex=port.duplex,
+                admin_state="Disable" if port.enabled is False else "Enable",
+                vlan=port.identifier,
+                extra=extra,
+            )
+            detail = InterfaceDetail(
+                name=name, rx_bytes=port.rx_bytes, tx_bytes=port.tx_bytes, rx_errors=port.rx_errors, tx_errors=port.tx_errors,
+                speed=str(port.speed) if port.speed else None, duplex=port.duplex,
+                ip_address=port.ipv4.split("/")[0] if port.ipv4 else None,
+            )  # fmt: skip
+            data.details[name] = detail
+            if (rate := self._rate(name, detail, now)) is not None:
+                data.throughput[name] = rate
+        # The router's MAC: the LAN port's (else the first port's).
+        lan = next((p for p in ports.values() if p.identifier == "lan"), None) or next(iter(ports.values()), None)
+        data.version.mac = normalize_mac(lan.mac) if lan else None
+        mgmt = next((p for p in ports.values() if p.ipv4 and p.ipv4.split("/")[0] == client.host), None) or lan
+        if mgmt and mgmt.ipv4:
+            address, _, prefix = mgmt.ipv4.partition("/")
+            data.details["mgt0"] = InterfaceDetail(name=mgmt.device, ip_address=address, netmask=_prefix_to_netmask(_int_or_none(prefix)))
+        data.gateways = [vars(g) for g in opn.parse_gateways(await self._opn_optional(opn.GATEWAYS))]
+        # Neighbours (wired and Wi-Fi devices behind the router) from ARP and DHCP.
+        for neighbor in opn.parse_arp(await self._opn_optional(opn.ARP)):
+            if neighbor.interface in wan_devices:
+                continue
+            data.neighbors[neighbor.mac] = {"ip": neighbor.ip, "hostname": neighbor.hostname}
+            data.fdb.append(FdbEntry(mac=neighbor.mac, port=None))
+        if self._slow_at is None or now - self._slow_at > SLOW_REFRESH_SECONDS:
+            self._slow_at = now
+            self._opn_leases = opn.parse_leases(await client.first(opn.LEASES)) or self._opn_leases
+            self._environment = EnvironmentInfo(temperature_c=opn.parse_temperature(await self._opn_optional(opn.SYSTEM_TEMPERATURE)))
+        for mac, (ip, hostname) in self._opn_leases.items():
+            entry = data.neighbors.get(mac)
+            if entry is not None:
+                entry["ip"] = entry.get("ip") or ip
+                entry["hostname"] = entry.get("hostname") or hostname
+        data.environment = self._environment
+        self._update_boot_time(data)
+        return data
+
+    async def _opn_optional(self, path: str) -> Any:
+        """An endpoint that may be missing (older OPNsense, a plugin not installed): None instead of failing."""
+        try:
+            return await self.client.get(path)  # type: ignore[attr-defined]
+        except opn.OPNsenseAuthError:
+            raise
+        except opn.OPNsenseError as err:
+            _LOGGER.debug("%s: %s not available: %s", self.client.host, path, err)
+            return None
+
     async def _fetch_openwrt(self, data: AerohiveData) -> AerohiveData:
         """Poll an OpenWrt router or access point (ubus JSON + UCI over SSH)."""
         run = self.client.run
@@ -1137,9 +1239,9 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             raise
         await self.async_request_refresh()
 
-    @staticmethod
-    def _not_on_openwrt(what: str) -> HomeAssistantError:
-        return HomeAssistantError(f"{what} isn't supported on OpenWrt devices")
+    def _not_on_openwrt(self, what: str) -> HomeAssistantError:
+        kind = "OPNsense" if self.is_opnsense else "OpenWrt"
+        return HomeAssistantError(f"{what} isn't supported on {kind} devices")
 
     async def async_apply_openwrt_plan(
         self, lines: list[str], secrets: list[str], configs: tuple[str, ...] = netplan_mod.OPENWRT_CONFIGS
@@ -1968,7 +2070,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         await self.async_request_refresh()  # the network disappears without waiting for the save
 
     async def async_set_port_enabled(self, port: str, enable: bool, force: bool = False) -> None:
-        if self.is_openwrt:
+        if self.is_openwrt or self.is_opnsense:
             raise self._not_on_openwrt("Turning ports on and off")
         if not enable and not force and port in self.data.uplink_ports():
             raise HomeAssistantError(
@@ -1998,7 +2100,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
 
     def port_speed_options(self, port: str) -> list[str]:
         """Speeds a port can be set to (Mbit/s, plus 'auto'); empty when it can't be set from here."""
-        if self.is_openwrt or self.data is None:
+        if self.is_openwrt or self.is_opnsense or self.data is None:
             return []
         iface = self.data.interfaces.get(port)
         media = iface.extra.get("media") if iface else None
@@ -2012,7 +2114,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return ["auto", "10", "100", "1000"]
 
     async def async_set_port_speed(self, port: str, speed: str, duplex: str | None = None, force: bool = False) -> None:
-        if self.is_openwrt:
+        if self.is_openwrt or self.is_opnsense:
             raise self._not_on_openwrt("Setting port speeds")
         speed, duplex = self._validated(commands.validate_speed, speed, duplex)
         options = self.port_speed_options(port)
@@ -2037,7 +2139,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         await self.async_request_refresh()
 
     async def async_set_poe(self, port: str, enable: bool) -> None:
-        if self.is_openwrt:
+        if self.is_openwrt or self.is_opnsense:
             raise self._not_on_openwrt("PoE control")
         state = {("poe", port): enable}
         if self.is_exos:
@@ -2049,7 +2151,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
 
     async def async_power_cycle_poe(self, port: str, off_seconds: float = 5) -> None:
         """Turn PoE off and on again (runtime only, nothing is saved)."""
-        if self.is_openwrt:
+        if self.is_openwrt or self.is_opnsense:
             raise self._not_on_openwrt("PoE control")
         if self.is_exos:
             try:
@@ -2141,6 +2243,13 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 "or use the Reboot action with save_changes set to true (save, then reboot) or false "
                 "(reboot and lose them)."
             )
+        if self.is_opnsense:
+            _LOGGER.info("%s: rebooting", self.client.host)
+            try:
+                await self.client.reboot()
+            except AerohiveError as err:
+                raise HomeAssistantError(f"Error communicating with {self.client.host}: {err}") from err
+            return
         await self.async_flush_save()  # Home Assistant's own changes are always kept
         try:
             if save_changes and not self.is_exos:
@@ -2167,7 +2276,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         await self._apply([self._validated(commands.exos_port_display_string, port, description)])
 
     async def async_run_show(self, command: str, redact: bool = True) -> str:
-        if self.is_openwrt:
+        if self.is_openwrt or self.is_opnsense:
             raise self._not_on_openwrt("run_show_command")
         command = self._validated(commands.validate_show_command, command)
         try:

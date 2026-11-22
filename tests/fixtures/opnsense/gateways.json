@@ -1,0 +1,24 @@
+{
+ "items": [
+  {
+   "name": "WAN_DHCP",
+   "address": "203.0.113.1",
+   "status": "none",
+   "status_translated": "Online",
+   "loss": "0.0 %",
+   "delay": "4.2 ms",
+   "stddev": "0.8 ms",
+   "monitor": "203.0.113.1"
+  },
+  {
+   "name": "STARLINK_DHCP",
+   "address": "100.64.0.1",
+   "status": "down",
+   "status_translated": "Offline",
+   "loss": "100.0 %",
+   "delay": "~",
+   "stddev": "~"
+  }
+ ],
+ "status": "ok"
+}

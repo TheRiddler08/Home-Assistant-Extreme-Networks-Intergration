@@ -44,6 +44,15 @@ every AP (`clear auth roaming-cache mac <mac> hive-neighbors`).
   lists 1/0/10. Needed: what was typed in the switch's trunk / access port fields, and the
   new error text (0.18.1 shows the ports read from the switch).
 
+## Next: OPNsense in the network setup
+
+0.19.0 reads OPNsense routers through the REST API. Using one as the Setup tab's router
+(VLAN devices `interfaces/vlan_settings`, assignment and addresses `interfaces/assignment`,
+DHCP `kea/dhcpv4` or `dnsmasq/settings`, firewall rules `firewall/filter` + `apply`) is next.
+Current OPNsense has no rollback through the API (the older firewall "savepoint" is gone), so
+the apply needs its own safety: staged changes, a reachability check and undoing what was
+added if Home Assistant loses contact.
+
 ## Open: smaller items
 
 - **SR2208P VLANs: confirm the assumed commands.** Built in 0.16.0 with FASTPATH-style

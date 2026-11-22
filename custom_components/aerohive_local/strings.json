@@ -6,7 +6,8 @@
         "description": "Find access points, routers and switches on your network automatically, or enter an IP address yourself. OpenWrt devices are added by IP address with their SSH login.",
         "menu_options": {
           "scan": "Scan my network",
-          "manual": "Enter IP address manually"
+          "manual": "Enter IP address manually",
+          "opnsense": "OPNsense router (API key)"
         }
       },
       "manual": {
@@ -62,7 +63,25 @@
         "description": "The device rejected the stored credentials.",
         "data": {
           "username": "Username",
-          "password": "Password"
+          "password": "Password",
+          "api_key": "API key",
+          "api_secret": "API secret"
+        }
+      },
+      "opnsense": {
+        "title": "OPNsense router",
+        "description": "Connects with OPNsense's REST API, not SSH. In OPNsense, create an API key under System → Access → Users (edit a user → API keys → +); you get a file with the key and secret. A user with read access to the dashboard, diagnostics, interfaces and gateways is enough to monitor the router; rebooting needs System: Firmware or full access.",
+        "data": {
+          "host": "Host",
+          "port": "HTTPS port",
+          "api_key": "API key",
+          "api_secret": "API secret",
+          "verify_ssl": "Check the HTTPS certificate",
+          "scan_interval": "Update interval (seconds)"
+        },
+        "data_description": {
+          "host": "The router's address, e.g. 192.168.1.1.",
+          "verify_ssl": "Leave off for OPNsense's own self-signed certificate. Turn on if the router has a trusted certificate."
         }
       }
     },

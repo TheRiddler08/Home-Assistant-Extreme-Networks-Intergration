@@ -51,8 +51,8 @@ async function open(query, viewport = { width: 1280, height: 900 }) {
 // Overview: one tile per device, problems counted.
 let page = await open("?view=panel");
 const panel = () => page.locator("aerohive-network-panel");
-check((await panel().locator(".tile").count()) === 5, "overview shows 5 device tiles");
-check((await panel().locator(".summary .bad .big").textContent()).trim() === "3", "overview counts 3 problems");
+check((await panel().locator(".tile").count()) === 6, "overview shows 6 device tiles");
+check((await panel().locator(".summary .bad .big").textContent()).trim() === "4", "overview counts 4 problems");
 await panel().locator(".tile").first().click();
 await page.waitForTimeout(200);
 check((await panel().locator(".faceplate .port").count()) === 52, "switch faceplate has 52 ports");
@@ -104,6 +104,13 @@ await page.waitForTimeout(900);
 const speedCalls = await page.evaluate(() => window.serviceCalls.filter((c) => c.service === "set_port_speed").map((c) => c.data));
 check(speedCalls.length === 2 && speedCalls[0].port === "3" && speedCalls[0].speed === "100" && speedCalls[0].duplex === "half" && !speedCalls[0].force
   && speedCalls[1].port === "49" && speedCalls[1].speed === "1000" && speedCalls[1].force === true, `port speed calls: ${JSON.stringify(speedCalls)}`);
+await page.close();
+
+// OPNsense router: gateways and networks, no Save/Back up, LAN devices listed.
+page = await open("?view=panel&path=opnsense");
+const opnText = (await panel().locator(".content").textContent()) || "";
+check(opnText.includes("Internet gateways") && opnText.includes("STARLINK_DHCP") && opnText.includes("igc1.30"), "OPNsense page shows gateways and networks");
+check((await panel().locator('.detail-head [data-action="save"], .detail-head [data-action="backup"]').count()) === 0, "OPNsense has no Save or Back up buttons");
 await page.close();
 
 // Restore flow on the SR switch.
