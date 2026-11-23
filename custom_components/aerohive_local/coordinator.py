@@ -519,6 +519,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._opn_ports: dict[str, Any] = {}  # OPNsense: physical ports by device (igc0 -> opn.Port)
         self._opn_media: dict[str, tuple[str, dict[tuple[str, str], str]]] = {}  # device -> (selected, choices)
         self._opn_media_at: float | None = None
+        self._opn_denied: set[str] = set()  # OPNsense pages the API key may not read (logged once)
         self._port_media: dict[str, tuple[str, str | None]] = {}
         self._mgmt_link: bool | None = None
         self._usb: list[dict[str, Any]] | None = None
@@ -934,7 +935,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         total, used = opn.parse_memory(await self._opn_optional(opn.SYSTEM_RESOURCES))
         if total:
             data.memory = SystemStats(memory_total_kb=total, memory_free_kb=max(total - (used or 0), 0))
-        overview = await client.get(opn.INTERFACES)
+        overview = await self._opn_optional(opn.INTERFACES)  # without it: no ports, the rest still works
         ports = opn.parse_interfaces(overview)
         data.networks = opn.assigned_networks(overview)
         now = time.monotonic()
@@ -944,7 +945,11 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             media = {}
             for name, port in ports.items():
                 if port.identifier:
-                    payload = await self._opn_optional(f"interfaces/assignment/get_item/{port.identifier}")
+                    try:  # optional: a key without the Interfaces rights just can't set port speeds
+                        payload = await client.get(f"interfaces/assignment/get_item/{port.identifier}")
+                    except opn.OPNsenseError as err:
+                        _LOGGER.debug("%s: port settings not readable: %s", client.host, err)
+                        break
                     if payload:
                         media[name] = opn.parse_media_options(payload)
             self._opn_media = media
@@ -1021,8 +1026,14 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         """An endpoint that may be missing (older OPNsense, a plugin not installed): None instead of failing."""
         try:
             return await self.client.get(path)  # type: ignore[attr-defined]
-        except opn.OPNsenseAuthError:
-            raise
+        except opn.OPNsenseAuthError as err:
+            # The key works (system information was read) but this page isn't allowed for its
+            # user: that value stays unknown instead of the whole router failing.
+            if path not in self._opn_denied:
+                self._opn_denied.add(path)
+                _LOGGER.info("%s: the API key may not read %s; give its user that page to see it", self.client.host, path)
+            _LOGGER.debug("%s: %s refused: %s", self.client.host, path, err)
+            return None
         except opn.OPNsenseError as err:
             _LOGGER.debug("%s: %s not available: %s", self.client.host, path, err)
             return None

@@ -115,9 +115,8 @@ def test_hiveos_commands() -> None:
     )
     assert out.commands == [
         "user-profile hn40 qos-policy def-user-qos vlan-id 40 attribute 40",
-        "security-object guest-obj",
-        "security-object guest-obj default-user-profile-attr 40",
         "security-object guest-obj security protocol-suite wpa2-aes-psk ascii-key guest-pass-1",
+        "security-object guest-obj default-user-profile-attr 40",
         'ssid "Guest Wifi"',
         'ssid "Guest Wifi" security-object guest-obj',
         'no ssid "Guest Wifi" hide-ssid',

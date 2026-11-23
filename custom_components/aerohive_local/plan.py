@@ -40,7 +40,7 @@ from . import router_extras
 from . import portal
 from . import portal_server
 from . import qr
-from .const import DOMAIN
+from .const import CONF_DEVICE_TYPE, DEVICE_TYPE_OPNSENSE, DOMAIN
 from .parsers import radio_band
 
 if TYPE_CHECKING:
@@ -287,6 +287,35 @@ class PlanManager:
                     "wireless": bool(data and data.is_wireless),
                     "router_capable": c.is_openwrt or c.is_opnsense,
                     "note": note,
+                }
+            )
+        # Added but not running (wrong key, unreachable, still retrying): listed with why, so it
+        # doesn't just seem to be missing.
+        reasons = {
+            ConfigEntryState.SETUP_RETRY: "can't be reached yet (Home Assistant keeps retrying)",
+            ConfigEntryState.SETUP_ERROR: "failed to set up",
+            ConfigEntryState.NOT_LOADED: "is disabled or not loaded",
+            ConfigEntryState.SETUP_IN_PROGRESS: "is still starting",
+        }
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            if entry.state is ConfigEntryState.LOADED:
+                continue
+            opnsense = entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_OPNSENSE
+            reason = reasons.get(entry.state, entry.state.value)
+            if getattr(entry, "reason", None):
+                reason += f": {entry.reason}"
+            result.append(
+                {
+                    "entry_id": entry.entry_id,
+                    "name": entry.title,
+                    "host": entry.data.get("host"),
+                    "kind": "opnsense" if opnsense else None,
+                    "online": False,
+                    "role": ROLE_NONE,
+                    "wireless": False,
+                    "router_capable": False,
+                    "unavailable": True,
+                    "note": f"{reason}. It can be used here once it works: see Settings → Devices & services",
                 }
             )
         return result

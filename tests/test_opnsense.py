@@ -364,6 +364,25 @@ async def test_opnsense_backups(hass: HomeAssistant, router, opn_entry: MockConf
 
 
 @needs_ha
+async def test_router_that_failed_setup_is_listed_with_why(hass: HomeAssistant, router) -> None:
+    from custom_components.aerohive_local.plan import get_plan
+
+    router.missing.add(opn.SYSTEM_INFORMATION)  # unreachable as an OPNsense router
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="02:5a:00:00:01:02", title="gw", minor_version=3, data=ENTRY_DATA)
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state.value != "loaded"
+    from custom_components.aerohive_local import plan as plan_mod
+
+    if plan_mod.DATA_PLAN not in hass.data:
+        await plan_mod.async_setup_plan(hass)
+    device = next(d for d in get_plan(hass).devices() if d["entry_id"] == entry.entry_id)
+    assert device["unavailable"] and not device["router_capable"] and device["kind"] == "opnsense"
+    assert "Settings → Devices & services" in device["note"]
+
+
+@needs_ha
 async def test_opnsense_config_flow(hass: HomeAssistant, router) -> None:
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
     assert "opnsense" in result["menu_options"]

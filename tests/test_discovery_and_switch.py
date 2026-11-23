@@ -191,7 +191,6 @@ async def test_create_and_delete_ssid(hass: HomeAssistant, entry: MockConfigEntr
         blocking=True,
     )  # fmt: skip
     assert [c for c in client.commands if not c.startswith("show")] == [
-        "security-object Guest",
         "security-object Guest security protocol-suite wpa2-aes-psk ascii-key guest-pass-1",
         "ssid Guest",
         "ssid Guest security-object Guest",
@@ -754,7 +753,6 @@ async def test_wifi_manager_add_and_delete(hass: HomeAssistant, entry: MockConfi
     )
     assert result["step_id"] == "wifi"
     assert [c for c in client.commands if not c.startswith("show")] == [
-        "security-object Guest",
         "security-object Guest security protocol-suite wpa2-aes-psk ascii-key guest-pass-1",
         "ssid Guest",
         "ssid Guest security-object Guest",

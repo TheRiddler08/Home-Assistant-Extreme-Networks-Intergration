@@ -695,13 +695,14 @@ def hiveos_commands(
             profiles_done.add(vid)
         obj = security_objects.get(ssid, ssid)
         q_ssid, q_obj = quote(ssid, "SSID"), quote(obj, "security object")
-        cmds.append(f"security-object {q_obj}")
-        cmds.append(f"security-object {q_obj} default-user-profile-attr {vid}")
+        # No bare "security-object <name>": an AP460C (IQ Engine 10.5) rejected it with "Invalid
+        # parameter(s)". Like user-profile, the object is created by its first setting.
         if key:
             out.secrets.append(key)
             if security == "wpa2_wpa3":
                 out.warnings.append(f"{ssid}: set as WPA2 on Aerohive access points")
             cmds.append(f"security-object {q_obj} security protocol-suite wpa2-aes-psk ascii-key {quote(key, 'key')}")
+        cmds.append(f"security-object {q_obj} default-user-profile-attr {vid}")
         cmds.append(f"ssid {q_ssid}")
         cmds.append(f"ssid {q_ssid} security-object {q_obj}")
         cmds.append(f"ssid {q_ssid} hide-ssid" if wifi.get("hidden") else f"no ssid {q_ssid} hide-ssid")

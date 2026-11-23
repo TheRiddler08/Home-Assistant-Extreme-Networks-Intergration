@@ -85,7 +85,6 @@ def test_port_commands() -> None:
 
 def test_ssid_lifecycle_commands() -> None:
     assert c.create_ssid("Guest Wifi", ["wifi0", "wifi1"], "password123") == [
-        'security-object "Guest Wifi"',
         'security-object "Guest Wifi" security protocol-suite wpa2-aes-psk ascii-key password123',
         'ssid "Guest Wifi"',
         'ssid "Guest Wifi" security-object "Guest Wifi"',

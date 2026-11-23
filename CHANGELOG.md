@@ -3,6 +3,19 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.22.1] - 2026-11-24
+
+### Fixed
+- **A router that's added but not working no longer just vanishes from the Setup tab.** It's
+  listed under Devices with why (can't be reached, failed to set up, disabled), and the router
+  choice says so.
+- **OPNsense: an API key without rights to some pages no longer stops the router from
+  loading.** Pages it may not read (port settings, gateways, temperature, ports…) are skipped
+  and logged once; only the system information is required.
+- **Aerohive access points: no bare `security-object <name>` any more.** The AP460C rejected
+  it with "Invalid parameter(s)"; the object is now created by its first setting (password,
+  then VLAN), like the user profile it accepted. Also for Wi-Fi networks added in the Wi-Fi tab.
+
 ## [0.22.0] - 2026-11-23
 
 ### Added

@@ -177,9 +177,9 @@ def create_ssid(ssid: str, radios: list[str], password: str | None) -> list[str]
     """
     validate_ssid_name(ssid)
     name = quote(ssid, "SSID")
-    cmds = [f"security-object {name}"]
-    if password:
-        cmds.append(ssid_psk(ssid, password))
+    # The password line creates the security object; a bare "security-object <name>" was rejected
+    # by an AP460C (IQ Engine 10.5), so it's only sent for an open network.
+    cmds = [ssid_psk(ssid, password)] if password else [f"security-object {name}"]
     cmds += [f"ssid {name}", f"ssid {name} security-object {name}"]
     cmds += [ssid_bind(radio, ssid, True) for radio in radios]
     return cmds

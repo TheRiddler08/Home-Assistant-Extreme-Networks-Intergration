@@ -39,7 +39,9 @@ every AP (`clear auth roaming-cache mac <mac> hive-neighbors`).
   configurations and community notes, so the reason is on the AP: an object limit, a name
   rule, or a CLI difference on IQ Engine 10.5. Needed: `show running-config | include
   security-object` and `show running-config | include user-profile` from that AP. Since
-  0.18.1 the other networks are applied anyway and the result lists each.
+  0.18.1 the other networks are applied anyway and the result lists each. 0.22.1 no longer
+  sends the bare command (the object is created by its password/VLAN line); waiting for the
+  result of the next apply.
 - **SR2208P: "port 10 doesn't exist on this switch"** although its saved `show port all`
   lists 1/0/10. Needed: what was typed in the switch's trunk / access port fields, and the
   new error text (0.18.1 shows the ports read from the switch).

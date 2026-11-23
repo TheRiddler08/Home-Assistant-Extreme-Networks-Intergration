@@ -397,13 +397,13 @@ async def test_aerohive_one_network_rejected_others_applied(hass: HomeAssistant,
 
     async def run(self, command, **kwargs):
         out = await original(self, command, **kwargs)
-        return "ERROR: Invalid parameter(s)" if command == "security-object homeOB" else out
+        return "ERROR: Invalid parameter(s)" if command.startswith("security-object homeOB ") else out
 
     with patch.object(FakeClient, "run", run):
         results = await manager.async_apply()
     result = results[0]
     assert not result["ok"]
-    assert "homeOB: " in result["error"] and "security-object homeOB" in result["error"] and "(done: Guest Wifi)" in result["error"]
+    assert "homeOB: " in result["error"] and "security-object homeOB " in result["error"] and "(done: Guest Wifi)" in result["error"]
     assert "homeob-pass-1" not in result["error"]
     assert 'ssid "Guest Wifi" security-object "Guest Wifi"' in client.commands  # applied after homeOB failed
     assert manager.managed[entry.entry_id]["ssids"] == ["Guest Wifi"]

@@ -3080,7 +3080,7 @@ const SetupMixin = {
       <div class="form-row" style="margin-top:0"><label class="section-title" for="plan-router">Router (addresses, DHCP, firewall)</label>
         <select id="plan-router" class="plan-select" data-plan="router"><option value="">None: my router is set up separately</option>
           ${routers.map((d) => `<option value="${esc(d.entry_id)}" ${plan.devices.router === d.entry_id ? "selected" : ""}>${esc(d.name)} (${d.kind === "opnsense" ? "OPNsense, " : ""}${esc(d.host)})</option>`).join("")}</select>
-        ${routers.length ? "" : '<div class="hint">No OpenWrt or OPNsense router added yet.</div>'}</div>
+        ${routers.length ? "" : `<div class="hint">${devices.some((d) => d.unavailable) ? "A device you added isn't working yet (see below), so it can't be chosen." : "No OpenWrt or OPNsense router added yet: add one under Settings → Devices &amp; services → Add integration → Aerohive, Extreme Networks &amp; OpenWrt."}</div>`}</div>
       ${plan.devices.router ? `<div class="form-row"><label class="section-title" for="plan-trunks">Router ports to the switch (carry every VLAN, tagged)</label>
         <div class="field"><input type="text" id="plan-trunks" data-plan="router_trunks" value="${esc((plan.devices.router_trunks || []).join(", "))}" placeholder="br-lan" spellcheck="false"></div>
         <div class="hint">${(routers.find((d) => d.entry_id === plan.devices.router) || {}).kind === "opnsense"
