@@ -3,6 +3,21 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.20.0] - 2026-11-23
+
+### Added
+- **OPNsense as the router in the network setup (preview).** Choose it under Setup →
+  Devices → Router. Apply creates, through the API, for each network: a VLAN device on the
+  trunk port (default: the LAN port), an `hn_` interface with the router address, a DHCP range
+  on Kea or Dnsmasq (whichever is enabled) and firewall rules from the access grid. Only
+  objects it made are changed (marked `[HA]` / `hn_`), never LAN, WAN or your own rules; a
+  failed step removes what that apply added; the router is checked afterwards. The review
+  lists every change. [Details](docs/opnsense.md#network-setup)
+
+### Changed
+- The Setup tab's router can be OpenWrt or OPNsense; "No router chosen" replaces "No OpenWrt
+  router chosen".
+
 ## [0.19.0] - 2026-11-22
 
 ### Added

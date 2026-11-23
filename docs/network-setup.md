@@ -108,11 +108,13 @@ Setup tab says so.
 
 ## Devices
 
-- **Router**: the OpenWrt device that gives every network its address, DHCP and firewall.
+- **Router**: the OpenWrt or OPNsense router that gives every network its address, DHCP and
+  firewall.
   *None* if your router is set up separately: the VLANs are still set up on switches and
   access points.
 - **Router ports to the switch**: the interface(s) that carry every VLAN tagged
-  (`br-lan` by default, or e.g. `eth1` on a router with separate ports).
+  (`br-lan` by default, or e.g. `eth1` on a router with separate ports). On OPNsense, the
+  physical port, e.g. `igc1`; `br-lan` or empty means its LAN port.
 - **Trunk ports** on each ExtremeXOS or SR switch: the ports to the router and access points;
   every VLAN is tagged on them. Port numbers like `47-48` (SR switches also take `1/0/9`).
 - **Access points** that broadcast the Wi-Fi (all by default).
@@ -122,6 +124,7 @@ Setup tab says so.
 | Device | What the setup sets |
 | --- | --- |
 | **OpenWrt router** | For each network a bridge `br-hn<VLAN>` on `<trunk>.<VLAN>`, an interface with the router address, DHCP, a firewall zone `hn<VLAN>` with the access grid, the Wi-Fi networks, per-device keys (`wifi-station`, with `wifi-vlan` for keys that put a device in another network). |
+| **OPNsense router** 🧪 | Through the API, for each network: a VLAN device `vlan0.<VLAN>` on the trunk port (or the VLAN you already have with that tag), an interface `hn_<network>` with the router address, a DHCP range on Kea or Dnsmasq (whichever is enabled), and firewall rules from the access grid marked `[HA]`. No Wi-Fi (OPNsense only routes the access points' VLANs) and no onboarding portal yet. [Details](opnsense.md#network-setup) |
 | **OpenWrt access point** (not the router) | The same bridges without addresses (the router does DHCP), and the Wi-Fi networks and keys. |
 | **Aerohive access point** | Per network a user profile `hn<VLAN>` (VLAN ID), per Wi-Fi network its security object pointing to it, password, hidden name, max clients and bands. |
 | **ExtremeXOS switch** | Creates the VLANs (or reuses one that already has the tag), tags them on the trunk ports, puts the access ports in their VLAN. VLANs it created and that leave the setup are deleted. |
@@ -144,6 +147,11 @@ them. Until then, use a WPA2 password for networks your Aerohive access points m
   unsaved changes made in LuCI, nothing is touched until you apply or revert them.
 - **Only its own sections.** Everything the setup creates on OpenWrt is named `hn_*`; your
   existing LAN, WAN, Wi-Fi and firewall rules are left alone.
+- **OPNsense: only its own objects, undone on failure.** OPNsense has no rollback through its
+  API, so the setup only touches what it made (`vlan0.*` devices marked `[HA]`, `hn_*`
+  interfaces, `[HA]` DHCP ranges and rules) and never LAN or WAN, so Home Assistant keeps its
+  way to the router. New firewall rules are added before the old ones are removed. If a step
+  fails, what that apply added is removed again; afterwards the router must still answer.
 - **Passwords and keys** are stored encrypted (Fernet) in
   `.storage/aerohive_local.network_plan`. The encryption key is a separate file,
   `.storage/aerohive_local.vault_key`, readable only by Home Assistant. They never appear in

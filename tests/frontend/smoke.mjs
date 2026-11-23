@@ -292,6 +292,22 @@ check(saved && saved.plan.devices.switch_trunks && Object.values(saved.plan.devi
 const keyCall = planCalls.find((c) => c.type === "aerohive_local/plan/key_add");
 check(keyCall && keyCall.minutes === 15 && keyCall.wifi === "homeiso", `key request: ${JSON.stringify(keyCall)}`);
 await page.close();
+
+// OPNsense as the Setup router: its trunk hint and the API changes in the review.
+page = await open("?view=panel&path=setup");
+await panel().locator('[data-action="plan-template"]').click();
+await page.waitForTimeout(400);
+await panel().locator("#plan-router").selectOption("opnsense");
+await page.waitForTimeout(400);
+check(((await panel().locator("#plan-trunks").locator("xpath=../..").textContent()) || "").includes("LAN port"), "OPNsense trunk hint");
+await panel().locator('[data-action="plan-save"]').click();
+await page.waitForTimeout(500);
+await panel().locator('[data-action="plan-review"]').click();
+await page.waitForTimeout(700);
+const review = (await panel().locator(".dialog").last().textContent()) || "";
+check(review.includes("vlan0.") && review.includes("no undo through its API"), "OPNsense review shows the API changes");
+await page.screenshot({ path: process.env.SHOT_DIR ? `${process.env.SHOT_DIR}/opnsense-review.png` : "/dev/null" }).catch(() => {});
+await page.close();
 page = await open("?view=panel&path=setup&admin=0");
 check(((await panel().locator(".content").textContent()) || "").includes("Only administrators"), "non-admins can't see the setup");
 await page.close();

@@ -47,8 +47,8 @@
   // Network setup (plan) commands: an in-memory stand-in for the integration.
   const planDevices = () => snapshot.devices.map((d) => ({
     entry_id: d.entry_id, name: d.name, host: d.host, kind: d.cli === "openwrt" ? "openwrt" : d.cli, online: d.online,
-    role: d.cli === "exos" || d.cli === "switch" ? "switch" : d.cli === "openwrt" && planState.plan.devices.router === d.entry_id ? "router" : (d.radios || []).length ? "ap" : "none",
-    wireless: (d.radios || []).length > 0, router_capable: d.cli === "openwrt",
+    role: d.cli === "exos" || d.cli === "switch" ? "switch" : (d.cli === "openwrt" || d.cli === "opnsense") && planState.plan.devices.router === d.entry_id ? "router" : (d.radios || []).length ? "ap" : "none",
+    wireless: (d.radios || []).length > 0, router_capable: d.cli === "openwrt" || d.cli === "opnsense",
     note: d.cli === "switch" ? "VLAN commands for SR switches are assumed until confirmed on a real SR2208P (shown in the review)" : null,
   }));
   const planSecrets = {};
@@ -88,10 +88,11 @@
       log("plan_saved", `${planState.plan.networks.length} networks`);
       return planView();
     }
-    if (t === "preview") return { errors: planErrors(), notes: planState.plan.devices.router ? [] : ["No OpenWrt router chosen"], devices: planDevices().filter((d) => d.role !== "none").map((d) => ({
+    if (t === "preview") return { errors: planErrors(), notes: planState.plan.devices.router ? [] : ["No router chosen"], devices: planDevices().filter((d) => d.role !== "none").map((d) => ({
       entry_id: d.entry_id, name: d.name, role: d.role, online: d.online, errors: [],
-      warnings: d.role === "ap" && d.kind === "hiveos" ? ["homeISO: per-device keys on Aerohive access points aren't supported yet; skipped here"] : [],
-      commands: planState.plan.networks.map((n) => d.role === "switch" ? `create vlan ${n.id}` : `uci set network.hn_if${n.vlan}=interface`),
+      warnings: d.kind === "opnsense" ? ["OPNsense has no undo through its API: only the VLANs, interfaces (hn_…), DHCP ranges and rules marked [HA] are changed, LAN and WAN never; if a step fails, what was added is removed again"] : d.role === "ap" && d.kind === "hiveos" ? ["homeISO: per-device keys on Aerohive access points aren't supported yet; skipped here"] : [],
+      commands: d.kind === "opnsense" ? planState.plan.networks.flatMap((n) => [`VLAN vlan0.${n.vlan} on the LAN port (tag ${n.vlan})`, `interface hn_${n.id} on vlan0.${n.vlan}: static ${n.subnet}`, `firewall pass hn_${n.id} -> any  ([HA] ${n.name}: internet)`])
+        : planState.plan.networks.map((n) => d.role === "switch" ? `create vlan ${n.id}` : `uci set network.hn_if${n.vlan}=interface`),
     })) };
     if (t === "apply") {
       const results = planDevices().filter((d) => d.role !== "none").map((d) => ({ entry_id: d.entry_id, name: d.name, role: d.role, ok: true, error: null, warnings: [] }));

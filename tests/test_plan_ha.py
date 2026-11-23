@@ -173,7 +173,7 @@ async def test_aerohive_ap_gets_its_part(hass: HomeAssistant, entry: MockConfigE
     errors = await manager.async_save_plan(_plan(None), {"wifi:guest": "guest-pass-1"})
     assert errors == []
     preview = manager.preview()
-    assert preview["errors"] == [] and "No OpenWrt router chosen" in preview["notes"][0]
+    assert preview["errors"] == [] and "No router chosen" in preview["notes"][0]
     ap = preview["devices"][0]
     assert ap["role"] == "ap"
     assert "user-profile hn30 qos-policy def-user-qos vlan-id 30 attribute 30" in ap["commands"]

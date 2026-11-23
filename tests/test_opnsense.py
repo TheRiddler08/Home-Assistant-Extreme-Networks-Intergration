@@ -152,6 +152,48 @@ async def test_opnsense_optional_endpoints_and_auth(hass: HomeAssistant, router)
 
 
 @needs_ha
+async def test_opnsense_as_setup_router(hass: HomeAssistant, router, opn_entry: MockConfigEntry) -> None:
+    from custom_components.aerohive_local import opnsense_setup
+    from custom_components.aerohive_local.plan import get_plan
+
+    manager = get_plan(hass)
+    device = next(d for d in manager.devices() if d["entry_id"] == opn_entry.entry_id)
+    assert device["kind"] == "opnsense" and device["router_capable"] and device["role"] == "none"
+    plan = {
+        "networks": [{"id": "iot", "name": "IoT", "vlan": 30, "subnet": "10.15.19.1/24"}],
+        "devices": {"router": opn_entry.entry_id, "router_trunks": ["igc2"]},
+    }
+    assert await manager.async_save_plan(plan, {}) == []
+    preview = manager.preview()["devices"][0]
+    assert preview["role"] == "router" and preview["errors"] == []
+    assert preview["commands"][0] == "VLAN vlan0.30 on igc2 (tag 30)"
+    assert any("no undo" in w for w in preview["warnings"])
+
+    seen = {}
+
+    async def fake_apply(client, plan, trunks):
+        seen.update(client=client, trunks=trunks, vlans=[n["vlan"] for n in plan["networks"]])
+        return opnsense_setup.Result(done=["VLAN vlan0.30"], warnings=["No DHCP server"])
+
+    with patch.object(opnsense_setup, "async_apply", fake_apply):
+        results = await manager.async_apply()
+    assert results[0]["ok"] and results[0]["done"] == ["VLAN vlan0.30", "note: No DHCP server"]
+    assert seen["trunks"] == ["igc2"] and seen["vlans"] == [30] and isinstance(seen["client"], opn.OPNsenseClient)
+
+    async def failing(client, plan, trunks):
+        raise opnsense_setup.SetupError("VLAN 30: the router refused it")
+
+    with patch.object(opnsense_setup, "async_apply", failing):
+        results = await manager.async_apply()
+    assert not results[0]["ok"] and "refused it. What this apply added was removed again" in results[0]["error"]
+
+    # The onboarding portal needs OpenWrt.
+    plan["onboarding"] = {"enabled": True}
+    await manager.async_save_plan(plan, {})
+    assert any("OpenWrt router" in e for e in manager.preview()["devices"][0]["errors"])
+
+
+@needs_ha
 async def test_opnsense_config_flow(hass: HomeAssistant, router) -> None:
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
     assert "opnsense" in result["menu_options"]

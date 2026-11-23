@@ -46,15 +46,50 @@ and addresses from ARP and DHCP (see [client details](dashboard.md#clients)).
 **Reboot** works from the device page and the `aerohive_local.reboot` action (it calls
 `core/system/reboot`).
 
+## Network setup
+
+Choose the OPNsense router as **Router** in the Setup tab's Devices card (see
+[network setup](network-setup.md)). **Router ports to the switch** is the physical port that
+carries the VLANs tagged, e.g. `igc1`; leave `br-lan` or empty to use the LAN port.
+
+On **Apply**, for each network, through the API:
+
+| Step | API | What |
+| --- | --- | --- |
+| VLAN | `interfaces/vlan_settings` | `vlan0.<VLAN>` on the trunk port, description `[HA] <network>`. A VLAN you already have with that tag on that port is used as it is (and never deleted). |
+| Interface | `interfaces/assignment` | `hn_<network>` on that VLAN, enabled, static IPv4 with the router address, e.g. `10.15.19.1/24`. |
+| DHCP | `kea/dhcpv4` or `dnsmasq/settings` | Whichever server is enabled: a Kea subnet (pool, lease time, router and DNS options from the interface) and Kea listening on the interface, or a Dnsmasq range. Description `[HA] <network>`. If neither is enabled, the result says so. |
+| Firewall | `firewall/filter` (+ `apply`) | Rules on each `hn_` interface, in order: DHCP; DNS to the router; the router itself (pass if the network may open the router's pages, else block); the networks it may reach (and the main LAN); block other private addresses (10/8, 172.16/12, 192.168/16); internet if allowed. Descriptions start with `[HA]`. |
+
+Each kind of change is applied with its own *reconfigure* / *apply* call. A network removed
+from the setup loses its interface, `[HA]` VLAN, DHCP range and rules.
+
+**The API key's user** needs, besides the read access above, the privileges *Interfaces:
+VLAN*, interface assignments (*Interfaces: Assignments*), *Firewall: Rules [new]*, and
+*Services: DHCP: Kea(v4)* or *Services: Dnsmasq DNS/DHCP: Settings* (or simply full access).
+Without them the apply stops and says the key may not make the change.
+
+**Safety.** OPNsense has no rollback through its API, so the setup:
+
+- only changes what it made (`[HA]` VLANs and rules, `hn_` interfaces, `[HA]` DHCP ranges),
+  never LAN, WAN or your own rules: Home Assistant keeps reaching the router on its LAN
+  address;
+- refuses to take over a VLAN interface you assigned yourself;
+- adds new firewall rules before removing the old ones;
+- removes what that apply added if a step fails (best effort; the result lists anything it
+  couldn't remove);
+- checks the router still answers afterwards.
+
+Built from the controllers and models in OPNsense's source and tested against a simulated
+router; **not yet confirmed on a real OPNsense**. Try it with one test network first.
+
 ## Not (yet) on OPNsense
 
 - **Port on/off, speed, PoE:** ports are read-only.
 - **Configuration backups and change-after-reboot alerts:** OPNsense's configuration
   (`config.xml`) holds certificates, keys and password hashes, so it isn't copied into Home
   Assistant. OPNsense keeps its own configuration history (System → Configuration → History).
-- **Network setup** (the Setup tab's router role: VLANs, addresses, DHCP, firewall rules):
-  planned. Current OPNsense has the APIs for it, including interface assignment, but no
-  automatic rollback through the API, so it needs care. See the [roadmap](roadmap.md).
+- **Onboarding portal**: it's served by an OpenWrt router; not on OPNsense yet.
 - `run_show_command` and other SSH-only actions.
 
 Built from the API controllers in OPNsense's source (opnsense/core, November 2026) and tested

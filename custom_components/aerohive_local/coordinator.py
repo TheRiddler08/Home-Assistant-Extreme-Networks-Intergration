@@ -47,6 +47,7 @@ from .discovery import is_aerohive_mac
 from . import netplan as netplan_mod
 from . import openwrt as ow
 from . import opnsense as opn
+from . import opnsense_setup
 from .parsers import (
     combo_port_count,
     media_kind,
@@ -1311,6 +1312,34 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             await asyncio.sleep(CONFIRM_RETRY_SECONDS)
         _LOGGER.info("%s: network setup applied and confirmed", host)
         await self.async_request_refresh()
+
+    async def async_apply_opnsense_plan(self, plan: dict[str, Any]) -> list[str]:
+        """Apply the network setup to an OPNsense router; returns what was done.
+
+        The API has no rollback, so opnsense_setup only touches objects it made
+        and removes what it added when a step fails. Afterwards the router must
+        still answer, otherwise the error says so.
+        """
+        if not self.is_opnsense:
+            raise HomeAssistantError("Not an OPNsense router")
+        client: opn.OPNsenseClient = self.client  # type: ignore[assignment]
+        host = client.host
+        _LOGGER.info("%s: applying network setup through the API", host)
+        try:
+            result = await opnsense_setup.async_apply(client, plan, plan["devices"].get("router_trunks"))
+        except opnsense_setup.SetupError as err:
+            raise HomeAssistantError(f"{host}: {err}. What this apply added was removed again.") from err
+        try:
+            opn.parse_system_information(await client.get(opn.SYSTEM_INFORMATION))
+        except AerohiveError as err:
+            raise HomeAssistantError(
+                f"{host} applied the setup but doesn't answer any more ({err}). Check the router's console; "
+                "the changes are the VLANs, hn_ interfaces and [HA] rules"
+            ) from err
+        await self.async_request_refresh()
+        for warning in result.warnings:
+            _LOGGER.warning("%s: %s", host, warning)
+        return result.done + [f"note: {w}" for w in result.warnings]
 
     async def async_run_router_lines(self, lines: list[str], secrets: list[str] | None = None) -> str:
         """Run shell lines on an OpenWrt device (joined into a few SSH lines); raise if one fails.

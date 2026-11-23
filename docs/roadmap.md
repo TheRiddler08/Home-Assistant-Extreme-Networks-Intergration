@@ -44,14 +44,12 @@ every AP (`clear auth roaming-cache mac <mac> hive-neighbors`).
   lists 1/0/10. Needed: what was typed in the switch's trunk / access port fields, and the
   new error text (0.18.1 shows the ports read from the switch).
 
-## Next: OPNsense in the network setup
+## Open: OPNsense in the network setup (0.20.0)
 
-0.19.0 reads OPNsense routers through the REST API. Using one as the Setup tab's router
-(VLAN devices `interfaces/vlan_settings`, assignment and addresses `interfaces/assignment`,
-DHCP `kea/dhcpv4` or `dnsmasq/settings`, firewall rules `firewall/filter` + `apply`) is next.
-Current OPNsense has no rollback through the API (the older firewall "savepoint" is gone), so
-the apply needs its own safety: staged changes, a reachability check and undoing what was
-added if Home Assistant loses contact.
+Built from OPNsense's source and tested against a simulated router. To confirm on a real one:
+apply one test network and send the review's result, plus a screenshot of Interfaces →
+Assignments and Firewall → Rules for the new interface. Not on OPNsense yet: the onboarding
+portal (served by OpenWrt), dual-stack (IPv6) addresses.
 
 ## Open: smaller items
 
@@ -67,6 +65,9 @@ added if Home Assistant loses contact.
 
 ## Done
 
+- 0.20.0: OPNsense as the Setup tab's router (VLANs, interfaces, Kea/Dnsmasq DHCP, firewall
+  rules from the access grid), with undo on failure.
+- 0.19.0: OPNsense routers read through the REST API.
 - 0.17.0: adjustable port speed and duplex (ExtremeXOS documented; SR and HiveOS assumed).
 - 0.16.0: key rotation (old and new key together, reminders, confirm or cut-off, scheduled
   every 3/6/12 months, whole network at once); onboarding rules by kind of device (with

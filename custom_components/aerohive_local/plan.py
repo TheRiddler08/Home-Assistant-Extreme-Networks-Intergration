@@ -35,6 +35,7 @@ from homeassistant.util import dt as dt_util
 
 from . import commands
 from . import netplan
+from . import opnsense_setup
 from . import portal
 from . import qr
 from .const import DOMAIN
@@ -250,6 +251,8 @@ class PlanManager:
             if entry_id == plan["devices"].get("router"):
                 return ROLE_ROUTER
             return ROLE_AP if data.is_wireless and ap_ok else ROLE_NONE
+        if coordinator.is_opnsense:
+            return ROLE_ROUTER if entry_id == plan["devices"].get("router") else ROLE_NONE
         if data.cli in (commands.DIALECT_EXOS, commands.DIALECT_SWITCH):
             return ROLE_SWITCH
         if data.cli == commands.DIALECT_HIVEOS and data.is_wireless and ap_ok:
@@ -260,7 +263,7 @@ class PlanManager:
         result = []
         for c in _coordinators(self.hass):
             data = c.data
-            kind = "openwrt" if c.is_openwrt else (data.cli if data else None)
+            kind = "openwrt" if c.is_openwrt else "opnsense" if c.is_opnsense else (data.cli if data else None)
             note = None
             if data is not None and data.cli == commands.DIALECT_SWITCH:
                 note = "VLAN commands for SR switches are assumed until confirmed on a real SR2208P (shown in the review)"
@@ -275,7 +278,7 @@ class PlanManager:
                     "online": bool(c.last_update_success and data is not None),
                     "role": self.role(c),
                     "wireless": bool(data and data.is_wireless),
-                    "router_capable": c.is_openwrt,
+                    "router_capable": c.is_openwrt or c.is_opnsense,
                     "note": note,
                 }
             )
@@ -291,6 +294,8 @@ class PlanManager:
         if role == ROLE_NONE:
             return role, netplan.DevicePlan()
         try:
+            if coordinator.is_opnsense:
+                return role, self._opnsense_preview(plan)
             if coordinator.is_openwrt:
                 return role, netplan.openwrt_lines(
                     plan,
@@ -317,6 +322,20 @@ class PlanManager:
             result = netplan.DevicePlan()
             result.errors.append(str(err))
             return role, result
+
+    @staticmethod
+    def _opnsense_preview(plan: dict[str, Any]) -> netplan.DevicePlan:
+        out = netplan.DevicePlan()
+        out.commands = opnsense_setup.describe(plan, plan["devices"].get("router_trunks"))
+        out.warnings.append(
+            "OPNsense has no undo through its API: only the VLANs, interfaces (hn_…), DHCP ranges and rules "
+            "marked [HA] are changed, LAN and WAN never; if a step fails, what was added is removed again"
+        )
+        if plan["wifi"]:
+            out.warnings.append("Wi-Fi networks go to the access points; OPNsense only routes their VLANs")
+        if plan["onboarding"].get("enabled"):
+            out.errors.append("The onboarding portal needs an OpenWrt router; it can't run on OPNsense yet. Turn it off to apply")
+        return out
 
     @staticmethod
     def _scrub(text: str, secrets: list[str]) -> str:
@@ -347,7 +366,7 @@ class PlanManager:
         notes = []
         if not self.plan["devices"].get("router") and self.plan["networks"]:
             notes.append(
-                "No OpenWrt router chosen: the VLANs are set up on switches and access points, but addresses, "
+                "No router chosen: the VLANs are set up on switches and access points, but addresses, "
                 "DHCP and firewall rules must come from your own router"
             )
         return {"errors": errors, "notes": notes, "devices": devices}
@@ -389,6 +408,14 @@ class PlanManager:
             result["done"] = done
             if failed:
                 result["error"] = "; ".join(failed) + (f" (done: {', '.join(done)})" if done else "")
+                return result
+            result["ok"] = True
+            return result
+        if coordinator.is_opnsense:
+            try:
+                result["done"] = await coordinator.async_apply_opnsense_plan(plan)
+            except HomeAssistantError as err:
+                result["error"] = str(err)
                 return result
             result["ok"] = True
             return result

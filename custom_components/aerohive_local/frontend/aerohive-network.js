@@ -2961,11 +2961,13 @@ const SetupMixin = {
     return `<div class="card panel-card"><div class="card-head"><h2 class="grow">Devices</h2></div>
       <div class="form-row" style="margin-top:0"><label class="section-title" for="plan-router">Router (addresses, DHCP, firewall)</label>
         <select id="plan-router" class="plan-select" data-plan="router"><option value="">None: my router is set up separately</option>
-          ${routers.map((d) => `<option value="${esc(d.entry_id)}" ${plan.devices.router === d.entry_id ? "selected" : ""}>${esc(d.name)} (${esc(d.host)})</option>`).join("")}</select>
-        ${routers.length ? "" : '<div class="hint">No OpenWrt device added yet.</div>'}</div>
+          ${routers.map((d) => `<option value="${esc(d.entry_id)}" ${plan.devices.router === d.entry_id ? "selected" : ""}>${esc(d.name)} (${d.kind === "opnsense" ? "OPNsense, " : ""}${esc(d.host)})</option>`).join("")}</select>
+        ${routers.length ? "" : '<div class="hint">No OpenWrt or OPNsense router added yet.</div>'}</div>
       ${plan.devices.router ? `<div class="form-row"><label class="section-title" for="plan-trunks">Router ports to the switch (carry every VLAN, tagged)</label>
         <div class="field"><input type="text" id="plan-trunks" data-plan="router_trunks" value="${esc((plan.devices.router_trunks || []).join(", "))}" placeholder="br-lan" spellcheck="false"></div>
-        <div class="hint">Interface names, e.g. <span class="mono">br-lan</span> or <span class="mono">eth1</span>.</div></div>` : ""}
+        <div class="hint">${(routers.find((d) => d.entry_id === plan.devices.router) || {}).kind === "opnsense"
+          ? 'The physical port, e.g. <span class="mono">igc1</span>. Leave <span class="mono">br-lan</span> or empty for the LAN port. The VLANs, <span class="mono">hn_</span> interfaces, DHCP ranges and firewall rules marked <span class="mono">[HA]</span> are made through the API; LAN, WAN and your own rules are left alone.'
+          : 'Interface names, e.g. <span class="mono">br-lan</span> or <span class="mono">eth1</span>.'}</div></div>` : ""}
       ${switches.map((d) => `<div class="form-row"><label class="section-title" for="trunk-${esc(d.entry_id)}">${esc(d.name)}: trunk ports (to router and access points)</label>
         <div class="field"><input type="text" id="trunk-${esc(d.entry_id)}" data-plan="switch_trunk" data-entry="${esc(d.entry_id)}" value="${esc((plan.devices.switch_trunks || {})[d.entry_id] || "")}" placeholder="${d.kind === "switch" ? "e.g. 9-10" : "e.g. 47-48"}" spellcheck="false"></div>
         <div class="hint">Port numbers like <span class="mono">47-48</span>${d.kind === "switch" ? " (or <span class=\"mono\">1/0/9</span>)" : ""}.</div></div>`).join("")}
@@ -3163,7 +3165,7 @@ const SetupMixin = {
     if (d.results) {
       body = d.results
         .map((r) => `<div class="apply-row"><span class="chip ${r.ok ? "ok" : "bad"}">${r.ok ? "Done" : "Failed"}</span> <strong>${esc(r.name)}</strong> <span class="muted">${esc(ROLE_LABELS[r.role] || r.role)}</span>
-          ${r.error ? `<div class="hint err">${esc(r.error)}</div>` : ""}${(r.warnings || []).map((w) => `<div class="hint">${esc(w)}</div>`).join("")}</div>`)
+          ${r.error ? `<div class="hint err">${esc(r.error)}</div>` : ""}${(r.warnings || []).map((w) => `<div class="hint">${esc(w)}</div>`).join("")}${(r.done || []).filter((d) => typeof d === "string" && d.startsWith("note: ")).map((d) => `<div class="hint">${esc(d.slice(6))}</div>`).join("")}</div>`)
         .join("");
     } else if (d.preview) {
       const p = d.preview;
@@ -3173,8 +3175,8 @@ const SetupMixin = {
           .map((x) => `<div class="apply-row"><strong>${esc(x.name)}</strong> <span class="muted">${esc(ROLE_LABELS[x.role] || x.role)}${x.online ? "" : " · offline"}</span>
             ${x.errors.map((e) => `<div class="hint err">${esc(e)}</div>`).join("")}${x.warnings.map((w) => `<div class="hint">${esc(w)}</div>`).join("")}
             <details><summary>${x.commands.length} command${x.commands.length === 1 ? "" : "s"}</summary><pre class="cmds">${esc(x.commands.join("\n"))}</pre></details></div>`)
-          .join("") : '<p class="muted">No device to set up: add an OpenWrt router, an access point or an ExtremeXOS switch.</p>'}
-        <p class="hint">Switches go first, then the router, then the access points. An OpenWrt device goes back to its previous settings on its own if Home Assistant can't reach it within 90 seconds of the change.</p>`;
+          .join("") : '<p class="muted">No device to set up: add an OpenWrt or OPNsense router, an access point or a switch.</p>'}
+        <p class="hint">Switches go first, then the router, then the access points. An OpenWrt device goes back to its previous settings on its own if Home Assistant can't reach it within 90 seconds of the change. On OPNsense, a failed step removes what that apply added.</p>`;
     }
     const canApply = d.preview && !d.results && !d.preview.errors.length && d.preview.devices.length;
     return `<div class="dialog wide-dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
