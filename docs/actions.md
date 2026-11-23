@@ -194,6 +194,32 @@ it).
 
 Decline a waiting device; the portal tells it so. Field: `request_id`.
 
+## Blocking devices
+
+### `aerohive_local.block_client`
+
+Block a device on the router chosen in the [network setup](network-setup.md) (OpenWrt or
+OPNsense), for good or as a pause. Administrators only (automations may call it), e.g. pause
+the kids' tablets at bedtime.
+
+| Field | |
+| --- | --- |
+| `mac` | Required. The device's MAC address. |
+| `minutes` | A pause: minutes until it may go online again (1 to 43200). Empty: until unblocked. |
+| `name` | Shown in the Clients tab and the activity list. |
+
+```yaml
+action: aerohive_local.block_client
+data:
+  mac: "aa:bb:cc:dd:ee:01"
+  minutes: 600
+  name: Kid's tablet
+```
+
+### `aerohive_local.unblock_client`
+
+Let a blocked or paused device go online again. Field: `mac`.
+
 ## Configuration backups
 
 See [Power-loss protection and backups](backups.md) for the full picture.

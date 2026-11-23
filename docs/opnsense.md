@@ -83,6 +83,15 @@ Without them the apply stops and says the key may not make the change.
 Built from the controllers and models in OPNsense's source and tested against a simulated
 router; **not yet confirmed on a real OPNsense**. Try it with one test network first.
 
+## Fixed IPs, blocked devices and port forwards
+
+See [network setup](network-setup.md#fixed-ips-blocked-devices-and-port-forwards). On
+OPNsense they use Kea reservations or Dnsmasq hosts, Unbound host overrides (domain from the
+router's own), a MAC alias `HA_blocked` with one block rule, and destination NAT rules on WAN.
+Blocking by MAC works for devices in the same network as one of the router's interfaces
+(the router learns the address from ARP). The API key needs *Firewall: Aliases* and
+*Firewall: NAT: Destination NAT* (or full access) too, and *Services: Unbound DNS* for DNS names.
+
 ## Not (yet) on OPNsense
 
 - **Port on/off, speed, PoE:** ports are read-only.

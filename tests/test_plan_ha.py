@@ -13,6 +13,7 @@ pytestmark = pytest.mark.skipif(not HAS_HA, reason="needs pytest-homeassistant-c
 
 if HAS_HA:
     from homeassistant.core import HomeAssistant
+    from homeassistant.exceptions import HomeAssistantError
     from homeassistant.util import dt as dt_util
     from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
@@ -406,3 +407,45 @@ async def test_aerohive_one_network_rejected_others_applied(hass: HomeAssistant,
     assert "homeob-pass-1" not in result["error"]
     assert 'ssid "Guest Wifi" security-object "Guest Wifi"' in client.commands  # applied after homeOB failed
     assert manager.managed[entry.entry_id]["ssids"] == ["Guest Wifi"]
+
+
+async def test_router_extras_on_openwrt(hass: HomeAssistant, hass_ws_client, freezer, ow_entry: MockConfigEntry) -> None:  # noqa: F811
+    manager = get_plan(hass)
+    # Without a router chosen there's nowhere to apply them.
+    reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/fixed_ip", "mac": "aa:bb:cc:dd:ee:01", "ip": "10.15.19.20"})
+    assert not reply["success"] and "Choose your router" in reply["error"]["message"]
+
+    await manager.async_save_plan(_plan(ow_entry.entry_id), {"wifi:guest": "guest-pass-1"})
+    reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/fixed_ip", "mac": "AA:BB:CC:DD:EE:01", "ip": "10.15.19.20", "name": "Pi-hole"})
+    assert reply["success"], reply
+    assert reply["result"]["plan"]["reservations"] == [{"mac": "aa:bb:cc:dd:ee:01", "ip": "10.15.19.20", "name": "Pi-hole"}]
+    sent = "\n".join(_client().commands)
+    assert "uci set dhcp.hn_res_aabbccddee01.ip=10.15.19.20" in sent and "uci commit dhcp" in sent
+
+    reply = await _ws(hass, hass_ws_client, {"type": "aerohive_local/plan/fixed_ip", "mac": "aa:bb:cc:dd:ee:02", "ip": "8.8.8.8"})
+    assert not reply["success"] and "private" in reply["error"]["message"]
+
+    # Pause a device for 30 minutes through the action; it ends on its own.
+    await hass.services.async_call("aerohive_local", "block_client", {"mac": "aa:bb:cc:dd:ee:03", "minutes": 30, "name": "Console"}, blocking=True)
+    assert manager.plan["blocked"][0]["mac"] == "aa:bb:cc:dd:ee:03"
+    assert "src_mac=aa:bb:cc:dd:ee:03" in "\n".join(_client().commands)
+    _client().commands.clear()
+    freezer.tick(timedelta(minutes=31))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert manager.plan["blocked"] == []
+    assert any("uci commit firewall" in c for c in _client().commands) and not any("aa:bb:cc:dd:ee:03" in c for c in _client().commands)
+
+    # (the clock moved on, so the WebSocket token is stale: the manager directly from here)
+    await manager.async_save_forwards([{"name": "Web", "protocol": "tcp", "port": "443", "to_ip": "10.15.19.20", "to_port": "8443"}])
+    assert manager.plan["forwards"][0]["id"] == "web"
+    assert "uci set firewall.hn_fwd_web.dest=hn30" in "\n".join(_client().commands)
+
+    # Saving the setup from a stale page keeps them; they don't make the setup "pending".
+    plan = _plan(ow_entry.entry_id)
+    await manager.async_save_plan({**plan, "reservations": [], "forwards": []}, {})
+    assert manager.plan["reservations"] and manager.plan["forwards"]
+    # Unsaved LuCI changes in DHCP or the firewall: refused.
+    _client().responses["for c in dhcp firewall; do uci -q changes $c; done || echo 'ERROR: OpenWrt did not accept the change'"] = "dhcp.lan.start='10'"
+    with pytest.raises(HomeAssistantError, match="aren't saved yet"):
+        await manager.async_unblock("aa:bb:cc:dd:ee:03")

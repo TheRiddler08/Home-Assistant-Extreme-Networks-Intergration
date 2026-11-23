@@ -38,7 +38,7 @@ def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_wifi_create)
     websocket_api.async_register_command(hass, ws_wifi_delete)
     websocket_api.async_register_command(hass, ws_wifi_timer_cancel)
-    for command in (ws_plan_get, ws_plan_save, ws_plan_preview, ws_plan_apply, ws_plan_reveal, ws_plan_template, ws_key_add, ws_key_revoke, ws_onboard_approve, ws_onboard_decline, ws_portal_preview, ws_portal_template, ws_key_rotate, ws_key_rotate_finish, ws_key_rotate_cancel, ws_client_rename):
+    for command in (ws_plan_get, ws_plan_save, ws_plan_preview, ws_plan_apply, ws_plan_reveal, ws_plan_template, ws_key_add, ws_key_revoke, ws_onboard_approve, ws_onboard_decline, ws_portal_preview, ws_portal_template, ws_key_rotate, ws_key_rotate_finish, ws_key_rotate_cancel, ws_client_rename, ws_fixed_ip, ws_fixed_ip_remove, ws_block, ws_unblock, ws_forwards):
         websocket_api.async_register_command(hass, command)
 
 
@@ -67,10 +67,12 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
             pending = async_call_later(hass, COALESCE_SECONDS, send)
 
     disconnect = async_dispatcher_connect(hass, SIGNAL_SNAPSHOT, changed)
+    disconnect_plan = async_dispatcher_connect(hass, plan_mod.SIGNAL_PLAN, changed)  # fixed IPs, blocks
 
     @callback
     def unsubscribe() -> None:
         disconnect()
+        disconnect_plan()
         if pending is not None:
             pending()
 
@@ -434,3 +436,53 @@ async def ws_client_rename(hass: HomeAssistant, connection: websocket_api.Active
         return
     async_dispatcher_send(hass, SIGNAL_SNAPSHOT)
     connection.send_result(msg["id"])
+
+
+def _extras_call(name: str):
+    """A router-extras command: run it, answer with what was done and the plan state."""
+
+    async def handler(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+        manager = plan_mod.get_plan(hass)
+        user = _user(connection)
+        method = getattr(manager, name)
+        args = {k: v for k, v in msg.items() if k not in ("id", "type")}
+
+        async def run() -> dict[str, Any]:
+            done = await method(**args, user=user)
+            return {"done": done, **manager.state()}
+
+        await _plan_call(connection, msg, run())
+
+    return handler
+
+
+_MINUTES = vol.Any(None, vol.All(int, vol.Range(min=1, max=30 * 24 * 60)))
+
+ws_fixed_ip = websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/plan/fixed_ip", vol.Required("mac"): str, vol.Required("ip"): str, vol.Optional("name", default=""): str}
+)(websocket_api.require_admin(websocket_api.async_response(_extras_call("async_set_reservation"))))
+ws_fixed_ip_remove = websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/plan/fixed_ip_remove", vol.Required("mac"): str})(
+    websocket_api.require_admin(websocket_api.async_response(_extras_call("async_remove_reservation")))
+)
+ws_block = websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/plan/block", vol.Required("mac"): str, vol.Optional("minutes"): _MINUTES, vol.Optional("name", default=""): str}
+)(websocket_api.require_admin(websocket_api.async_response(_extras_call("async_block"))))
+ws_unblock = websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/plan/unblock", vol.Required("mac"): str})(
+    websocket_api.require_admin(websocket_api.async_response(_extras_call("async_unblock")))
+)
+ws_forwards = websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/plan/forwards",
+        vol.Required("forwards"): [
+            {
+                vol.Required("name"): str,
+                vol.Optional("id"): vol.Any(str, None),
+                vol.Required("protocol"): vol.In(["tcp", "udp", "both"]),
+                vol.Required("port"): vol.Coerce(str),
+                vol.Required("to_ip"): str,
+                vol.Optional("to_port"): vol.Any(None, vol.Coerce(str)),
+                vol.Optional("enabled", default=True): bool,
+            }
+        ],
+    }
+)(websocket_api.require_admin(websocket_api.async_response(_extras_call("async_save_forwards"))))

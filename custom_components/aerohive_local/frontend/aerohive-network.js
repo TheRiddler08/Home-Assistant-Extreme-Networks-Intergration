@@ -211,7 +211,18 @@ function clientInfo(data, mac) {
     if (router) info.wired = { device: router, port: null, vlan: null };
   }
   if (info.wifi) delete info.wired; // seen on Wi-Fi: the switch port is just the way to its access point
+  const extras = data && data.router_extras;
+  if (extras) {
+    info.fixed = (extras.reservations || []).find((r) => r.mac === mac) || null;
+    info.blocked = (extras.blocked || []).find((b) => b.mac === mac) || null;
+  }
   return info;
+}
+
+function untilText(iso) {
+  const when = new Date(iso);
+  const today = when.toDateString() === new Date().toDateString();
+  return today ? when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : when.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 function clientTitle(info) {
@@ -1297,16 +1308,40 @@ class AerohiveBase extends HTMLElement {
         ${wired && wired.vlan != null ? row("VLAN", esc(wired.vlan)) : ""}
         ${ha ? row("In Home Assistant", `<a href="/config/devices/device/${esc(ha.id)}" target="_top">${esc(ha.name || "Device")}</a>${[ha.manufacturer, ha.model].filter(Boolean).length ? `<br><span class="muted">${esc([ha.manufacturer, ha.model].filter(Boolean).join(" "))}</span>` : ""}${ha.area ? `<br><span class="muted">${esc(ha.area)}</span>` : ""}`) : ""}
         ${info.key ? row("Wi-Fi key", `${esc(info.key.name)}${info.key.wifi ? ` <span class="muted">on ${esc(info.key.wifi)}</span>` : ""}`) : ""}
+        ${info.fixed ? row("Fixed IP", `<span class="mono">${esc(info.fixed.ip)}</span>${info.fixed.name ? ` <span class="muted">· DNS name ${esc(info.fixed.name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, ""))}</span>` : ""}`) : ""}
+        ${info.blocked ? row("Internet", `<span class="chip bad">${info.blocked.until ? `Paused until ${esc(untilText(info.blocked.until))}` : "Blocked"}</span>`) : ""}
         ${info.name_source && info.name_source !== "nickname" ? row("Name from", esc({ home_assistant: "Home Assistant", key: "its Wi-Fi key", onboarding: "the onboarding portal", hostname: "its hostname (DHCP)" }[info.name_source] || info.name_source)) : ""}
       </dl></section>
       ${admin ? `<section><label class="section-title" for="client-nick">Nickname</label>
         <div class="field"><input type="text" id="client-nick" maxlength="64" data-field="nickname" value="${esc(form.nickname ?? info.nickname ?? "")}" placeholder="${esc(info.name && info.name_source !== "nickname" ? info.name : "e.g. Kitchen tablet")}" data-enter="client-rename" autocomplete="off">
           <button class="btn" data-action="client-rename" ${busyName ? "disabled" : ""}>${icon("edit")}Save</button></div>
         <div class="muted" style="font-size:12px;margin-top:6px">Shown everywhere in the panel instead of the MAC address. Leave empty to remove.</div></section>` : ""}
+      ${admin ? this._clientRouterSection(info, form) : ""}
       <div class="dlg-actions">
         ${wired && wired.port ? `<button class="btn" data-action="client-port" data-device="${esc(wired.device.entry_id)}" data-port="${esc(wired.port.name)}">${icon("switch")}Open port ${esc(wired.port.name)}</button>` : ""}
         ${w && admin ? `<button class="btn danger" data-action="client-disconnect">${icon("close")}Disconnect</button>` : ""}
         <button class="btn primary" data-action="close">Done</button></div></div>`;
+  }
+
+  _clientRouterSection(info, form) {
+    const extras = this._data && this._data.router_extras;
+    if (!extras) return "";
+    if (!extras.router) return `<section><span class="section-title">Router</span><div class="muted" style="font-size:12px">Choose your router in Setup → Devices to give devices a fixed IP or block them.</div></section>`;
+    const mac = info.mac;
+    const busy = this._isBusy(`fixed:${mac}`) || this._isBusy(`block:${mac}`);
+    const ip = form.fixed_ip ?? (info.fixed ? info.fixed.ip : info.ip || "");
+    return `<section><label class="section-title" for="client-fixed">Fixed IP address</label>
+        <div class="field"><input type="text" id="client-fixed" class="mono" data-field="fixed_ip" value="${esc(ip)}" placeholder="e.g. 10.15.19.20" inputmode="decimal" data-enter="client-fix" autocomplete="off" spellcheck="false">
+          <button class="btn" data-action="client-fix" ${busy ? "disabled" : ""}>${icon("check")}${info.fixed ? "Change" : "Fix"}</button>
+          ${info.fixed ? `<button class="btn" data-action="client-unfix" ${busy ? "disabled" : ""}>Remove</button>` : ""}</div>
+        <div class="muted" style="font-size:12px;margin-top:6px">The router always gives this device the same address${info.nickname || info.name ? `, and the name <span class="mono">${esc(String(info.nickname || info.name).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, ""))}</span> on your local DNS` : ""}. It takes effect when the device next renews its address.</div></section>
+      <section><span class="section-title" style="display:block;margin-bottom:6px">Internet access</span>
+        <div class="row-actions" style="justify-content:flex-start">${info.blocked
+          ? `<button class="btn" data-action="client-unblock" ${busy ? "disabled" : ""}>${icon("check")}${info.blocked.until ? "End the pause" : "Unblock"}</button>`
+          : `<button class="btn" data-action="client-block" data-minutes="60" ${busy ? "disabled" : ""}>Pause 1 hour</button>
+             <button class="btn" data-action="client-block" data-minutes="480" ${busy ? "disabled" : ""}>Pause 8 hours</button>
+             <button class="btn danger" data-action="client-block" ${busy ? "disabled" : ""}>Block</button>`}</div>
+        <div class="muted" style="font-size:12px;margin-top:6px">Blocks everything this device sends through the router (internet and other networks). A pause ends on its own.</div></section>`;
   }
 
   _portSpeedSection(device, port, d, busy) {
@@ -1619,6 +1654,49 @@ class AerohiveBase extends HTMLElement {
         this._call({ type: `${DOMAIN}/client/rename`, mac: dialog.mac, name }, { busyKey: `client-name:${dialog.mac}`, success: name ? `Named ${name}` : "Nickname removed" }).then((ok) => {
           if (ok && this._dialog) this._dialog.form = {};
         });
+        break;
+      }
+      case "client-fix": {
+        const input = this.shadowRoot.querySelector("#client-fixed");
+        const ip = (input ? input.value : "").trim();
+        if (input) input.blur();
+        const info = clientInfo(this._data, dialog.mac);
+        this._call({ type: `${DOMAIN}/plan/fixed_ip`, mac: dialog.mac, ip, name: info.nickname || info.name || "" }, { busyKey: `fixed:${dialog.mac}`, success: `${clientTitle(info)} always gets ${ip}` }).then((ok) => {
+          if (ok && this._dialog) this._dialog.form = {};
+        });
+        break;
+      }
+      case "client-unfix": {
+        this._call({ type: `${DOMAIN}/plan/fixed_ip_remove`, mac: dialog.mac }, { busyKey: `fixed:${dialog.mac}`, success: "Fixed IP removed" }).then((ok) => {
+          if (ok && this._dialog) this._dialog.form = {};
+        });
+        break;
+      }
+      case "client-block": {
+        const info = clientInfo(this._data, dialog.mac);
+        const minutes = el.dataset.minutes ? Number(el.dataset.minutes) : null;
+        const send = () => this._call({ type: `${DOMAIN}/plan/block`, mac: dialog.mac, name: info.nickname || info.name || "", ...(minutes ? { minutes } : {}) },
+          { busyKey: `block:${dialog.mac}`, success: minutes ? `${clientTitle(info)} paused for ${minutes / 60} hour${minutes === 60 ? "" : "s"}` : `${clientTitle(info)} blocked` });
+        if (minutes) {
+          send();
+          break;
+        }
+        this._dialog = {
+          type: "confirm",
+          title: `Block ${clientTitle(info)}?`,
+          text: "The router drops everything it sends until you unblock it here.",
+          confirm: "Block",
+          danger: true,
+          back: { ...dialog },
+          onYes: send,
+          focus: '.dialog [data-action="close"]',
+        };
+        this._render();
+        break;
+      }
+      case "client-unblock": {
+        const info = clientInfo(this._data, dialog.mac);
+        this._call({ type: `${DOMAIN}/plan/unblock`, mac: dialog.mac }, { busyKey: `block:${dialog.mac}`, success: `${clientTitle(info)} can go online again` });
         break;
       }
       case "client-disconnect": {
@@ -2403,7 +2481,10 @@ class AerohiveNetworkPanel extends AerohiveBase {
       .map(
         (r) => `<tr class="click" data-client-mac="${esc(r.mac)}" tabindex="0">
           <td>${r.name ? `<strong>${esc(r.name)}</strong><br>` : ""}<span class="muted">${esc([r.type ? KIND_LABELS[r.type] : null, r.vendor || (r.private ? "Private address" : null)].filter(Boolean).join(" · "))}</span>${r.type || r.vendor || r.private ? "<br>" : ""}<span class="mono muted">${esc(r.mac)}</span></td>
-          <td><span class="chip">${r.kind === "wifi" ? `${icon("wifi")}Wi-Fi` : `${icon("switch")}Wired`}</span></td>
+          <td><span class="chip">${r.kind === "wifi" ? `${icon("wifi")}Wi-Fi` : `${icon("switch")}Wired`}</span>${(() => {
+            const extra = clientInfo(this._data, r.mac);
+            return (extra.blocked ? ` <span class="chip bad">${extra.blocked.until ? `Paused until ${esc(untilText(extra.blocked.until))}` : "Blocked"}</span>` : "") + (extra.fixed ? ' <span class="chip">Fixed IP</span>' : "");
+          })()}</td>
           <td>${esc(r.where)}</td>
           <td class="num hide-sm">${r.kind === "wifi" ? `${signalBars(r.signal)}${r.signal != null ? `${esc(r.signal)} dBm` : ""}` : r.vlan != null ? `VLAN ${esc(r.vlan)}` : ""}${r.ip ? `<br><span class="muted">${esc(r.ip)}</span>` : ""}</td>
         </tr>`,
@@ -2677,6 +2758,7 @@ const SetupMixin = {
         ${this._setupKeysCard(st)}
         ${this._setupOnboardingCard(plan, st)}
         ${this._setupDevicesCard(plan, st)}
+        ${this._setupForwardsCard(st)}
         ${this._setupActivityCard(st)}
       </div>`;
   },
@@ -2762,6 +2844,42 @@ const SetupMixin = {
       ${plan.keys.length ? `<div class="table-wrap"><table><thead><tr><th>Device</th><th>Wi-Fi</th><th class="hide-sm">Valid</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${ppsk.length ? "Give each device its own key: revoking one only disconnects that device." : "Save a Wi-Fi network with <em>Per-device keys</em> to hand out keys."}</p>`}
       <p class="muted" style="font-size:12px;margin:10px 0 0">Keys take effect straight away on the devices already set up (OpenWrt today). Timed keys are removed on their own, also after a restart.</p>
     </div>`;
+  },
+
+  _setupForwardsCard(st) {
+    const plan = { ...st.plan, forwards: st.plan.forwards || [] }; // saved straight away, like keys
+    const proto = { tcp: "TCP", udp: "UDP", both: "TCP+UDP" };
+    const rows = plan.forwards
+      .map(
+        (f, i) => `<tr${f.enabled ? "" : ' class="muted"'}><td><strong>${esc(f.name)}</strong>${f.enabled ? "" : ' <span class="chip">Off</span>'}</td>
+          <td class="mono">${esc(proto[f.protocol])} ${esc(f.port)}</td>
+          <td class="mono">${esc(f.to_ip)}:${esc(f.to_port)}</td>
+          <td class="num"><span class="row-actions"><button class="btn small" data-action="plan-fwd-edit" data-index="${i}">${icon("edit")}Edit</button>
+            <button class="btn small danger" data-action="plan-fwd-delete" data-index="${i}">${icon("trash")}Remove</button></span></td></tr>`,
+      )
+      .join("");
+    return `<div class="card panel-card"><div class="card-head"><h2 class="grow">Port forwards</h2>
+        <button class="btn" data-action="plan-fwd-add" ${plan.devices.router ? "" : "disabled"}>${icon("plus")}Add</button></div>
+      ${plan.forwards.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>From the internet</th><th>To</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+        : `<p class="muted">${plan.devices.router ? "Open a port on your internet address to a device at home, e.g. a game console or a web server." : "Choose your router under Devices first."}</p>`}
+      <p class="muted" style="font-size:12px;margin:10px 0 0">Saved on the router straight away. Fixed IPs and blocked devices are in each device's dialog (Clients tab).</p>
+    </div>`;
+  },
+
+  _planForwardDialog(d) {
+    const f = (d.form = d.form || { protocol: "tcp", enabled: true });
+    const busy = this._isBusy("plan-fwd");
+    return `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+      ${this._dlgHead(d.index == null ? "Add a port forward" : `Edit ${f.name || "port forward"}`, "From your internet address to a device at home")}
+      ${this._textRow("fwd-name", "Name", "name", f.name || "", { placeholder: "e.g. Minecraft server" })}
+      <div class="form-row"><label class="section-title" for="fwd-proto">Protocol</label>
+        <select id="fwd-proto" class="plan-select" data-field="protocol">${[["tcp", "TCP"], ["udp", "UDP"], ["both", "TCP and UDP"]].map(([v, l]) => `<option value="${v}" ${f.protocol === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+      ${this._textRow("fwd-port", "Port on your internet address", "port", f.port || "", { placeholder: "e.g. 25565 or 8000-8010" })}
+      ${this._textRow("fwd-ip", "Device's IP address", "to_ip", f.to_ip || "", { placeholder: "e.g. 10.40.33.20", hint: "Give the device a fixed IP first (Clients tab), so the address doesn't change." })}
+      ${this._textRow("fwd-to", "Port on the device (optional)", "to_port", f.to_port || "", { placeholder: "Same as above" })}
+      <div class="form-row"><label class="toggle"><input type="checkbox" data-field="enabled" ${f.enabled !== false ? "checked" : ""}><span class="track"></span><span>On</span></label></div>
+      <div class="dlg-actions"><button class="btn" data-action="close">Cancel</button>
+        <button class="btn primary" data-action="plan-fwd-save" ${busy ? "disabled" : ""}>${icon("check")}${busy ? "Saving…" : "Save"}</button></div></div>`;
   },
 
   _setupOnboardingCard(plan, st) {
@@ -3043,6 +3161,7 @@ const SetupMixin = {
     if (d.type === "plan-portal") return this._planPortalDialog(d);
     if (d.type === "plan-rotate") return this._planRotateDialog(d);
     if (d.type === "plan-rules") return this._planRulesDialog(d);
+    if (d.type === "plan-fwd") return this._planForwardDialog(d);
     return "";
   },
 
@@ -3318,6 +3437,50 @@ const SetupMixin = {
         if (s.dirty) return this._toast("Save the setup first", true);
         this._openDialog({ type: "plan-key-add", focus: "#key-name" });
         break;
+      case "plan-fwd-add":
+        this._dialog = { type: "plan-fwd", index: null, form: { protocol: "tcp", enabled: true }, focus: "#fwd-name" };
+        this._render();
+        break;
+      case "plan-fwd-edit": {
+        const item = (s.state.plan.forwards || [])[Number(el.dataset.index)];
+        this._dialog = { type: "plan-fwd", index: Number(el.dataset.index), form: { ...item }, focus: "#fwd-name" };
+        this._render();
+        break;
+      }
+      case "plan-fwd-save": {
+        const f = d.form || {};
+        const item = { name: (f.name || "").trim(), protocol: f.protocol || "tcp", port: String(f.port || "").trim(), to_ip: (f.to_ip || "").trim(), to_port: String(f.to_port || "").trim() || null, enabled: f.enabled !== false };
+        if (f.id) item.id = f.id;
+        if (!item.name || !item.port || !item.to_ip) return this._toast("Fill in the name, the port and the device's IP address", true);
+        const list = (s.state.plan.forwards || []).map((x) => ({ ...x }));
+        if (d.index == null) list.push(item);
+        else list[d.index] = item;
+        this._setupWs({ type: `${DOMAIN}/plan/forwards`, forwards: list }, "plan-fwd").then((result) => {
+          if (!result) return;
+          this._setupTake(result);
+          this._toast(`${item.name} saved on the router`);
+          this._closeDialog();
+        });
+        break;
+      }
+      case "plan-fwd-delete": {
+        const index = Number(el.dataset.index);
+        const item = s.state.plan.forwards[index];
+        this._dialog = {
+          type: "confirm",
+          title: `Remove the port forward ${item.name}?`,
+          text: `Port ${item.port} on your internet address closes.`,
+          confirm: "Remove",
+          danger: true,
+          onYes: () =>
+            this._setupWs({ type: `${DOMAIN}/plan/forwards`, forwards: s.state.plan.forwards.filter((_, i) => i !== index) }, "plan-fwd").then((result) => {
+              if (result) this._setupTake(result);
+            }),
+          focus: '.dialog [data-action="close"]',
+        };
+        this._render();
+        break;
+      }
       case "plan-key-create": {
         const f = d.form || {};
         const ppsk = s.state.plan.wifi.filter((w) => w.security === "ppsk");

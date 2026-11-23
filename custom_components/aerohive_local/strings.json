@@ -707,6 +707,34 @@
           "description": "Also change an uplink port, which can disconnect Home Assistant from the device."
         }
       }
+    },
+    "block_client": {
+      "name": "Block a device",
+      "description": "Block a device's traffic on the router (the router chosen in the network setup), for good or as a pause for some minutes. Works on OpenWrt and OPNsense. Administrators only.",
+      "fields": {
+        "mac": {
+          "name": "MAC address",
+          "description": "The device's MAC address."
+        },
+        "minutes": {
+          "name": "Pause for",
+          "description": "Minutes until the device may go online again. Empty: until unblocked."
+        },
+        "name": {
+          "name": "Name",
+          "description": "Shown in the Clients tab and the activity list."
+        }
+      }
+    },
+    "unblock_client": {
+      "name": "Unblock a device",
+      "description": "Let a blocked or paused device go online again. Administrators only.",
+      "fields": {
+        "mac": {
+          "name": "MAC address",
+          "description": "The device's MAC address."
+        }
+      }
     }
   },
   "issues": {

@@ -39,6 +39,7 @@
   const params = new URLSearchParams(location.search);
   if (params.get("theme") === "dark") document.documentElement.dataset.theme = "dark";
   const snapshot = await (await fetch("demo.json")).json();
+  snapshot.router_extras = snapshot.router_extras || { router: null, reservations: [], blocked: [], forwards: 0 };
   const listeners = new Set();
   const push = () => { snapshot.generated = new Date().toISOString(); for (const cb of listeners) cb(structuredClone(snapshot)); };
   window.serviceCalls = [];
@@ -53,7 +54,7 @@
   }));
   const planSecrets = {};
   const planState = {
-    plan: { networks: [], wifi: [], keys: [], devices: { router: null, router_trunks: ["br-lan"], switch_trunks: {}, aps: null } },
+    plan: { networks: [], wifi: [], keys: [], reservations: [], blocked: [], forwards: [], devices: { router: null, router_trunks: ["br-lan"], switch_trunks: {}, aps: null } },
     errors: [], pending: false, applied_at: null, last_results: [], needs_apply: [], audit: [],
     requests: [{ id: "021122334455", mac: "02:11:22:33:44:55", ip: "10.8.10.60", name: "Living room TV", kind: "tv_or_streaming", kind_label: "TV or streaming box", suggested: { wifi: "homeiso", network: "iot", minutes: null, auto: false }, wants: "homeiso", time: 1, status: "pending", seen: new Date().toISOString() }],
   };
@@ -125,6 +126,23 @@
       k.rotation = null; k.rotated = new Date().toISOString();
       log(t === "key_rotate_finish" ? "key_rotated" : "key_rotation_cancelled", k.name);
       return { results: [], ...planView() };
+    }
+    if (["fixed_ip", "fixed_ip_remove", "block", "unblock", "forwards"].includes(t)) {
+      const p = planState.plan;
+      for (const k of ["reservations", "blocked", "forwards"]) p[k] = p[k] || [];
+      if (!p.devices.router) throw new Error("Choose your router first (Setup → Devices → Router)");
+      if (t === "fixed_ip") {
+        if (!/^\d+\.\d+\.\d+\.\d+$/.test(msg.ip)) throw new Error(`'${msg.ip}' isn't an IPv4 address`);
+        p.reservations = p.reservations.filter((r) => r.mac !== msg.mac).concat([{ mac: msg.mac, ip: msg.ip, name: msg.name || "" }]);
+      }
+      if (t === "fixed_ip_remove") p.reservations = p.reservations.filter((r) => r.mac !== msg.mac);
+      if (t === "block") p.blocked = p.blocked.filter((b) => b.mac !== msg.mac).concat([{ mac: msg.mac, name: msg.name || "", until: msg.minutes ? new Date(Date.now() + msg.minutes * 60000).toISOString() : null }]);
+      if (t === "unblock") p.blocked = p.blocked.filter((b) => b.mac !== msg.mac);
+      if (t === "forwards") p.forwards = msg.forwards.map((f) => ({ id: f.id || f.name.toLowerCase().replace(/[^a-z0-9]+/g, "_"), ...f, to_port: f.to_port || f.port }));
+      snapshot.router_extras = { router: p.devices.router, reservations: p.reservations, blocked: p.blocked, forwards: p.forwards.length };
+      setTimeout(push, 100);
+      log(t, msg.mac || `${(msg.forwards || []).length} forwards`);
+      return { done: ["done"], ...planView() };
     }
     if (t === "key_revoke") {
       planState.plan.keys = planState.plan.keys.filter((k) => k.id !== msg.key_id);

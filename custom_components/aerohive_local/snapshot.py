@@ -301,10 +301,22 @@ def network_snapshot(hass: HomeAssistant) -> dict[str, Any]:
     directory = clients_mod.directory(hass, devices, manager.plan if manager else None, manager.requests if manager else None)
     for device in devices:
         device.pop("neighbors", None)  # folded into the client directory
+    from . import router_extras  # noqa: PLC0415
+
+    extras = None
+    if manager is not None:
+        plan = manager.plan
+        extras = {
+            "router": plan["devices"].get("router"),
+            "reservations": plan["reservations"],
+            "blocked": router_extras.active_blocks(plan, datetime.now(UTC)),
+            "forwards": len(plan["forwards"]),
+        }
     return {
         "version": SNAPSHOT_VERSION,
         "generated": datetime.now(UTC).isoformat(),
         "devices": devices,
         "wifi_timers": timers.as_list() if timers else [],
         "clients": directory,
+        "router_extras": extras,
     }

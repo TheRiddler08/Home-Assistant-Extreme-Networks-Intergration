@@ -27,6 +27,7 @@ from datetime import datetime
 from typing import Any
 
 from . import portal as portal_mod
+from . import router_extras
 from .commands import InvalidArgument, quote, validate_psk, validate_radio, validate_ssid_name
 
 SECURITY = ("wpa2", "wpa2_wpa3", "wpa3", "open", "ppsk")
@@ -53,8 +54,13 @@ def empty_plan() -> dict[str, Any]:
         "keys": [],
         "devices": {"router": None, "router_trunks": ["br-lan"], "switch_trunks": {}, "aps": None},
         "onboarding": copy.deepcopy(ONBOARDING_DEFAULTS),
+        "reservations": [],  # fixed IPs: {"mac", "ip", "name"} (router_extras)
+        "blocked": [],  # {"mac", "name", "until"}
+        "forwards": [],  # port forwards: {"id", "name", "protocol", "port", "to_ip", "to_port", "enabled"}
     }
 
+
+EXTRAS = ("reservations", "blocked", "forwards")  # applied on their own, straight away
 
 ONBOARDING_DEFAULTS: dict[str, Any] = {
     "enabled": False,
@@ -76,7 +82,7 @@ def normalize(plan: dict[str, Any] | None) -> dict[str, Any]:
     """Fill in missing sections and defaults (older or partial plans)."""
     result = empty_plan()
     plan = plan or {}
-    for key in ("networks", "wifi", "keys"):
+    for key in ("networks", "wifi", "keys", *EXTRAS):
         result[key] = [dict(item) for item in plan.get(key) or [] if isinstance(item, dict)]
     devices = plan.get("devices") or {}
     result["devices"].update({k: v for k, v in devices.items() if k in result["devices"]})
@@ -535,6 +541,9 @@ def openwrt_lines(
                 cmds.append(_uci("firewall", fwd, "dest", dest))
         else:
             cmds.append(_uci("network", iface, "proto", "none"))
+
+    if is_router and not wireless_only:
+        cmds += router_extras.openwrt_lines(plan, now)
 
     keys = active_keys(plan, now)
     for wifi in plan["wifi"]:

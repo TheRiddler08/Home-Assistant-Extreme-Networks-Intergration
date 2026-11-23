@@ -318,3 +318,28 @@ decline_device:
       required: true
       selector:
         text:
+
+block_client:
+  fields:
+    mac:
+      required: true
+      example: "aa:bb:cc:dd:ee:01"
+      selector:
+        text:
+    minutes:
+      selector:
+        number:
+          min: 1
+          max: 43200
+          unit_of_measurement: min
+    name:
+      selector:
+        text:
+
+unblock_client:
+  fields:
+    mac:
+      required: true
+      example: "aa:bb:cc:dd:ee:01"
+      selector:
+        text:

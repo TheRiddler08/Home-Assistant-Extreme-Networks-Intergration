@@ -123,6 +123,8 @@ Select a client for its details:
 - **Nickname** (administrators): shown everywhere in the panel instead of the MAC address,
   including the devices listed in a port's dialog. **Disconnect** drops a Wi-Fi client;
   **Open port** opens a wired client's port.
+- **Fixed IP** and **Block / Pause** (administrators, with a router chosen in Setup): see
+  [fixed IPs, blocked devices and port forwards](network-setup.md#fixed-ips-blocked-devices-and-port-forwards).
 
 A device learned on several switches is listed once, at its own (edge) port.
 

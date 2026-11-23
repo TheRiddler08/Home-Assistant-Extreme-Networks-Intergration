@@ -194,6 +194,31 @@ async def test_opnsense_as_setup_router(hass: HomeAssistant, router, opn_entry: 
 
 
 @needs_ha
+async def test_opnsense_router_extras(hass: HomeAssistant, router, opn_entry: MockConfigEntry) -> None:
+    from custom_components.aerohive_local import router_extras
+    from custom_components.aerohive_local.plan import get_plan
+
+    manager = get_plan(hass)
+    await manager.async_save_plan({"networks": [], "devices": {"router": opn_entry.entry_id}}, {})
+    seen = []
+
+    async def fake_sync(client, plan, now):
+        seen.append((client, [b["mac"] for b in plan["blocked"]]))
+        return ["1 device(s) blocked"]
+
+    with patch.object(router_extras, "sync_opnsense", fake_sync):
+        assert await manager.async_block("AA:BB:CC:DD:EE:02", None, "Console") == ["1 device(s) blocked"]
+    assert isinstance(seen[0][0], opn.OPNsenseClient) and seen[0][1] == ["aa:bb:cc:dd:ee:02"]
+
+    async def refusing(client, plan, now):
+        raise router_extras.ExtrasError("block rule: the router refused it")
+
+    with patch.object(router_extras, "sync_opnsense", refusing), pytest.raises(HomeAssistantError, match="refused it"):
+        await manager.async_unblock("aa:bb:cc:dd:ee:02")
+    assert manager.plan["blocked"][0]["mac"] == "aa:bb:cc:dd:ee:02"  # unchanged when the router refused
+
+
+@needs_ha
 async def test_opnsense_config_flow(hass: HomeAssistant, router) -> None:
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
     assert "opnsense" in result["menu_options"]

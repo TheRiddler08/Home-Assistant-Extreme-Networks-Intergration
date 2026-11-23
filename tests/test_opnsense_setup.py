@@ -139,6 +139,9 @@ class FakeOPNsense:
             uuid = self._uuid()
             self.kea_subnets[uuid] = dict(payload["subnet4"])
             return {"result": "saved", "uuid": uuid}
+        if base == "kea/dhcpv4/set_subnet":
+            self.kea_subnets[item] = dict(payload["subnet4"])
+            return {"result": "saved"}
         if base == "kea/dhcpv4/del_subnet":
             self.kea_subnets.pop(item)
             return {"result": "deleted"}

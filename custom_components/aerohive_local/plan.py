@@ -36,6 +36,7 @@ from homeassistant.util import dt as dt_util
 from . import commands
 from . import netplan
 from . import opnsense_setup
+from . import router_extras
 from . import portal
 from . import qr
 from .const import DOMAIN
@@ -216,7 +217,7 @@ class PlanManager:
         Keys aren't taken from ``plan``: they're added and revoked on their own
         (async_add_key / async_revoke_key), so a stale page can't drop them.
         """
-        plan = netplan.normalize({**plan, "keys": self.plan["keys"]})
+        plan = netplan.normalize({**plan, "keys": self.plan["keys"], **{k: self.plan[k] for k in netplan.EXTRAS}})
         for ref, value in secrets.items():
             if value:
                 try:
@@ -662,7 +663,7 @@ class PlanManager:
     def pending(self) -> bool:
         if self.applied is None:
             return bool(self.plan["networks"] or self.plan["wifi"])
-        strip = lambda p: {k: v for k, v in p.items() if k != "keys"}  # noqa: E731 - keys apply on their own
+        strip = lambda p: {k: v for k, v in p.items() if k != "keys" and k not in netplan.EXTRAS}  # noqa: E731 - applied on their own
         return strip(self.plan) != strip(self.applied)
 
     # ------------------------------------------------------------------ keys
@@ -863,6 +864,15 @@ class PlanManager:
     async def _async_tick(self, _now: Any = None) -> None:
         now = dt_util.utcnow()
         await self._async_rotation_tick(now)
+        ended = [b for b in self.plan["blocked"] if b not in router_extras.active_blocks(self.plan, now)]
+        if ended and not self._lock.locked():
+            plan = copy.deepcopy(self.plan)
+            plan["blocked"] = router_extras.active_blocks(plan, now)
+            try:
+                async with self._lock:
+                    await self._async_extras(plan, "pause_ended", ", ".join(b.get("name") or b["mac"] for b in ended), None)
+            except HomeAssistantError as err:
+                _LOGGER.warning("Ending a pause failed (retried in a minute): %s", err)
         expired = netplan.expired_keys(self.plan, now)
         for item in expired:
             try:
@@ -875,6 +885,97 @@ class PlanManager:
                 async with self._lock:
                     await self._async_push_keys(retry)
                     await self._async_save()
+
+    # ------------------------------------------------------------------ router extras
+
+    def _extras_router(self, plan: dict[str, Any]) -> AerohiveCoordinator:
+        router_id = plan["devices"].get("router")
+        for c in _coordinators(self.hass):
+            if c.config_entry.entry_id == router_id and (c.is_openwrt or c.is_opnsense):
+                if not (c.last_update_success and c.data is not None):
+                    raise HomeAssistantError(f"{c.config_entry.title} isn't reachable right now")
+                return c
+        raise HomeAssistantError("Choose your router first (Setup → Devices → Router)")
+
+    async def _async_extras(self, plan: dict[str, Any], action: str, detail: str, user: str | None) -> list[str]:
+        """Apply fixed IPs, blocks and port forwards to the router, then keep the plan (call with the lock held)."""
+        router = self._extras_router(plan)
+        now = dt_util.utcnow()
+        if router.is_opnsense:
+            try:
+                done = await router_extras.sync_opnsense(router.client, plan, now)
+            except router_extras.ExtrasError as err:
+                raise HomeAssistantError(f"{router.client.host}: {err}") from err
+            await router.async_request_refresh()
+        else:
+            staged = await router.async_run_router_lines([netplan.openwrt_staged(("dhcp", "firewall"))])
+            if staged.strip():
+                raise HomeAssistantError(
+                    f"{router.client.host} has DHCP or firewall changes that aren't saved yet (LuCI). Save & Apply or revert them first."
+                )
+            await router.async_run_router_lines(router_extras.openwrt_sync_lines(plan, now))
+            done = ["done"]
+        self.plan = plan
+        if self.applied is not None:
+            for key in netplan.EXTRAS:
+                self.applied[key] = copy.deepcopy(plan[key])
+        self._log(action, detail, user)
+        await self._async_save()
+        return done
+
+    async def async_set_reservation(self, mac: str, ip: str, name: str = "", user: str | None = None) -> list[str]:
+        async with self._lock:
+            plan = copy.deepcopy(self.plan)
+            try:
+                item = router_extras.check_reservation(plan, mac, ip, name)
+            except router_extras.ExtrasError as err:
+                raise HomeAssistantError(str(err)) from err
+            plan["reservations"] = [r for r in plan["reservations"] if r["mac"] != item["mac"]] + [item]
+            return await self._async_extras(plan, "fixed_ip", f"{item['name'] or item['mac']}: {item['ip']}", user)
+
+    async def async_remove_reservation(self, mac: str, user: str | None = None) -> list[str]:
+        async with self._lock:
+            plan = copy.deepcopy(self.plan)
+            mac = router_extras.normalize_mac(mac)
+            plan["reservations"] = [r for r in plan["reservations"] if r["mac"] != mac]
+            return await self._async_extras(plan, "fixed_ip_removed", mac, user)
+
+    async def async_block(self, mac: str, minutes: int | None = None, name: str = "", user: str | None = None) -> list[str]:
+        """Block a device (``minutes``: a pause that ends on its own)."""
+        try:
+            mac = router_extras.normalize_mac(mac)
+        except router_extras.ExtrasError as err:
+            raise HomeAssistantError(str(err)) from err
+        if minutes is not None and not 1 <= int(minutes) <= 60 * 24 * 30:
+            raise HomeAssistantError("A pause lasts from 1 minute to 30 days")
+        until = (dt_util.utcnow() + timedelta(minutes=int(minutes))).isoformat() if minutes else None
+        async with self._lock:
+            plan = copy.deepcopy(self.plan)
+            item = {"mac": mac, "name": str(name or "").strip()[:64], "until": until}
+            plan["blocked"] = [b for b in plan["blocked"] if b["mac"] != mac] + [item]
+            return await self._async_extras(plan, "paused" if until else "blocked", f"{item['name'] or mac}" + (f" until {until}" if until else ""), user)
+
+    async def async_unblock(self, mac: str, user: str | None = None) -> list[str]:
+        try:
+            mac = router_extras.normalize_mac(mac)
+        except router_extras.ExtrasError as err:
+            raise HomeAssistantError(str(err)) from err
+        async with self._lock:
+            plan = copy.deepcopy(self.plan)
+            plan["blocked"] = [b for b in plan["blocked"] if b["mac"] != mac]
+            return await self._async_extras(plan, "unblocked", mac, user)
+
+    async def async_save_forwards(self, forwards: list[dict[str, Any]], user: str | None = None) -> list[str]:
+        checked: list[dict[str, Any]] = []
+        try:
+            for item in forwards:
+                checked.append(router_extras.check_forward(item, checked))
+        except router_extras.ExtrasError as err:
+            raise HomeAssistantError(str(err)) from err
+        async with self._lock:
+            plan = copy.deepcopy(self.plan)
+            plan["forwards"] = checked
+            return await self._async_extras(plan, "port_forwards", f"{len(checked)} port forward(s)", user)
 
     # ------------------------------------------------------------------ for the panel
 

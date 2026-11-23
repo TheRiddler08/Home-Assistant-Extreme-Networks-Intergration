@@ -424,6 +424,30 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     )
     hass.services.async_register(DOMAIN, "decline_device", decline_device, vol.Schema({vol.Required("request_id"): cv.string}))
 
+    async def block_client(call: ServiceCall) -> None:
+        await require_admin(call)
+        await plan_mod.get_plan(hass).async_block(
+            call.data["mac"], call.data.get("minutes"), call.data.get("name", ""), user=call.context.user_id and "action" or "automation"
+        )
+
+    async def unblock_client(call: ServiceCall) -> None:
+        await require_admin(call)
+        await plan_mod.get_plan(hass).async_unblock(call.data["mac"], user=call.context.user_id and "action" or "automation")
+
+    hass.services.async_register(
+        DOMAIN,
+        "block_client",
+        block_client,
+        vol.Schema(
+            {
+                vol.Required("mac"): cv.string,
+                vol.Optional("minutes"): vol.All(vol.Coerce(int), vol.Range(min=1, max=30 * 24 * 60)),
+                vol.Optional("name", default=""): cv.string,
+            }
+        ),
+    )
+    hass.services.async_register(DOMAIN, "unblock_client", unblock_client, vol.Schema({vol.Required("mac"): cv.string}))
+
     websocket_api.async_register(hass)
     await wifi.async_setup_timers(hass)
     await plan_mod.async_setup_plan(hass)

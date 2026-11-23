@@ -65,6 +65,7 @@ portal (served by OpenWrt), dual-stack (IPv6) addresses.
 
 ## Done
 
+- 0.21.0: fixed IPs with DNS names, block/pause devices, port forwards (OpenWrt and OPNsense).
 - 0.20.0: OPNsense as the Setup tab's router (VLANs, interfaces, Kea/Dnsmasq DHCP, firewall
   rules from the access grid), with undo on failure.
 - 0.19.0: OPNsense routers read through the REST API.

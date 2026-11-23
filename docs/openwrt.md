@@ -24,6 +24,7 @@ every OpenWrt image has.
 | **Wi-Fi control** | everything in the [Wi-Fi manager](wifi.md) and the Network panel's Wi-Fi tab: networks on/off (also for a while), bands, hidden name, password, max clients, add and delete; disconnect a client |
 | **Unsaved changes** | turns on when UCI has staged changes that weren't applied, e.g. LuCI changes without **Save & Apply** |
 | **Backups** | the configuration (`uci export`) is backed up like on every other device, with change-after-reboot alerts |
+| **Router extras** | as the Setup tab's router: [fixed IPs with DNS names, block/pause devices, port forwards](network-setup.md#fixed-ips-blocked-devices-and-port-forwards) |
 | **Reboot, Refresh now** | |
 
 In the [Network panel](dashboard.md) an OpenWrt router shows as a router: WAN, then the LAN

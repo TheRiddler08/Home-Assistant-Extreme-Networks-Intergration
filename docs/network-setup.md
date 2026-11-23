@@ -165,6 +165,33 @@ them. Until then, use a WPA2 password for networks your Aerohive access points m
 New devices on the onboarding Wi-Fi ask for access on a page served by the router, and you
 approve them here. See [Onboarding portal](onboarding.md).
 
+## Fixed IPs, blocked devices and port forwards
+
+These work on the router chosen under **Devices** (OpenWrt or OPNsense) and are saved on it
+**straight away**: no Review & apply needed.
+
+- **Fixed IP** (a device's dialog in the Clients tab): the router always gives the device the
+  same address, and its name (nickname or detected name, e.g. `driveway-camera`) resolves on
+  your local DNS. It takes effect when the device next renews its address.
+- **Block / Pause** (a device's dialog, or the `aerohive_local.block_client` action): the
+  router drops everything the device sends, internet and other networks. A pause (1 hour,
+  8 hours, or any number of minutes through the action) ends on its own, also after a
+  restart. The Clients tab marks blocked and paused devices.
+- **Port forwards** (Setup tab, *Port forwards* card): open a port (or range) on your internet
+  address to a device at home, TCP, UDP or both, optionally to another port. Give that device
+  a fixed IP first.
+
+| | OpenWrt | OPNsense (API) |
+| --- | --- | --- |
+| Fixed IP + DNS name | `dhcp` host `hn_res_<mac>` with `dns=1` | Kea reservation (in the Kea subnet that covers the address) or Dnsmasq host; plus an Unbound host override when Unbound is the resolver |
+| Block / pause | firewall rules `hn_blk_<mac>fwd` / `…in` (REJECT by source MAC) | MAC alias `HA_blocked` and one block rule (first in order) on every inside interface |
+| Port forward | firewall redirect `hn_fwd_<id>` from `wan` to the device's zone | Destination NAT rule on WAN with its own pass rule |
+
+Only what Home Assistant made is changed (names `hn_…`, descriptions starting `[HA:fixed]`,
+`[HA:block]`, `[HA:forward]`). On OpenWrt nothing is done while DHCP or firewall changes made in
+LuCI aren't saved yet. If the router refuses a change, nothing in Home Assistant changes
+either and the error says why.
+
 ## Not part of this (yet)
 
 See the [roadmap](roadmap.md): Dual WAN is on hold; per-device keys, WPA3 and isolation on

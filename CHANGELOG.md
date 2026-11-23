@@ -3,6 +3,25 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.21.0] - 2026-11-23
+
+### Added
+- **Fixed IPs with a local DNS name**, from a device's dialog in the Clients tab: the router
+  always gives the device the same address and its name resolves locally. OpenWrt (`dhcp`
+  host) and OPNsense (Kea reservation or Dnsmasq host, plus Unbound host override).
+- **Block or pause a device** (1 hour, 8 hours, or any time through the new
+  `aerohive_local.block_client` / `unblock_client` actions); pauses end on their own. The
+  Clients tab marks blocked and paused devices. OpenWrt (firewall rules by MAC) and OPNsense
+  (MAC alias + block rule).
+- **Port forwards** card in the Setup tab: TCP/UDP/both, single ports or ranges, to another
+  port, on/off. OpenWrt (firewall redirect) and OPNsense (destination NAT).
+- These are saved on the router straight away and only touch what Home Assistant made.
+  [Details](docs/network-setup.md#fixed-ips-blocked-devices-and-port-forwards)
+
+### Changed
+- OPNsense network setup: DHCP subnets are updated in place instead of recreated, so fixed
+  IPs on them stay valid.
+
 ## [0.20.0] - 2026-11-23
 
 ### Added

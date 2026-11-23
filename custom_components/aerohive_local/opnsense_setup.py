@@ -449,30 +449,33 @@ async def async_apply(
                     "No DHCP server is enabled on the router (Kea or Dnsmasq): devices won't get addresses"
                 )
         elif server == "kea":
-            for row in _rows(await call("kea/dhcpv4/search_subnet", SEARCH)):
-                if str(row.get("description", "")).startswith(MARK):
-                    await call(f"kea/dhcpv4/del_subnet/{row['uuid']}")
+            # Updated in place, so fixed IPs (reservations) on them stay valid.
+            ours = {
+                str(row.get("subnet", "")).split(" ")[0]: row
+                for row in _rows(await call("kea/dhcpv4/search_subnet", SEARCH))
+                if str(row.get("description", "")).startswith(MARK)
+            }
             for net in nets:
-                if net.pool:
-                    subnet = {
-                        "subnet4": {
-                            "subnet": net.subnet,
-                            "interface": interfaces[net.id],
-                            "pools": f"{net.pool[0]}-{net.pool[1]}",
-                            "option_data_autocollect": "1",
-                            "valid_lifetime": str(net.lease),
-                            "description": f"{MARK} {net.name}",
-                        }
+                if not net.pool:
+                    continue
+                subnet = {
+                    "subnet4": {
+                        "subnet": net.subnet,
+                        "interface": interfaces[net.id],
+                        "pools": f"{net.pool[0]}-{net.pool[1]}",
+                        "option_data_autocollect": "1",
+                        "valid_lifetime": str(net.lease),
+                        "description": f"{MARK} {net.name}",
                     }
-                    created.append(
-                        (
-                            "kea/dhcpv4/del_subnet",
-                            _check(
-                                await call("kea/dhcpv4/add_subnet", subnet),
-                                f"DHCP for {net.name}",
-                            ),
-                        )
-                    )
+                }
+                row = ours.pop(net.subnet, None)
+                if row is not None:
+                    _check(await call(f"kea/dhcpv4/set_subnet/{row['uuid']}", subnet), f"DHCP for {net.name}")
+                else:
+                    uuid = _check(await call("kea/dhcpv4/add_subnet", subnet), f"DHCP for {net.name}")
+                    created.append(("kea/dhcpv4/del_subnet", uuid))
+            for row in ours.values():
+                await call(f"kea/dhcpv4/del_subnet/{row['uuid']}")
             general = (
                 ((await client.get("kea/dhcpv4/get")) or {}).get("dhcpv4") or {}
             ).get("general") or {}

@@ -33,6 +33,7 @@ await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
 const base = `http://127.0.0.1:${server.address().port}/tests/frontend/harness.html`;
 
 const failures = [];
+process.on("exit", () => failures.length && console.error("collected:", failures.slice(0, 5)));
 const check = (cond, message) => {
   if (!cond) failures.push(message);
 };
@@ -307,6 +308,33 @@ await page.waitForTimeout(700);
 const review = (await panel().locator(".dialog").last().textContent()) || "";
 check(review.includes("vlan0.") && review.includes("no undo through its API"), "OPNsense review shows the API changes");
 await page.screenshot({ path: process.env.SHOT_DIR ? `${process.env.SHOT_DIR}/opnsense-review.png` : "/dev/null" }).catch(() => {});
+await panel().locator('.dialog [data-action="close"]').last().click();
+
+// Router extras: a port forward in Setup, then a fixed IP and a pause from a client's dialog.
+await panel().locator('[data-action="plan-fwd-add"]').click();
+await panel().locator("#fwd-name").fill("Web server");
+await panel().locator("#fwd-port").fill("443");
+await panel().locator("#fwd-ip").fill("192.168.9.41");
+await panel().locator('[data-action="plan-fwd-save"]').click();
+await page.waitForTimeout(700);
+check(((await panel().locator(".content").textContent()) || "").includes("192.168.9.41:443"), "the port forward is listed");
+await panel().locator('[data-action="tab"][data-tab="clients"]').click();
+await page.waitForTimeout(200);
+await panel().locator('#client-results tr[data-client-mac="02:00:00:04:00:3c"]').click();
+await page.waitForTimeout(200);
+await panel().locator("#client-fixed").fill("192.168.9.41");
+await panel().locator('[data-action="client-fix"]').click();
+await page.waitForTimeout(800);
+await panel().locator('[data-action="client-block"][data-minutes="60"]').click();
+await page.waitForTimeout(800);
+const extrasText = (await panel().locator(".dialog").textContent()) || "";
+check(extrasText.includes("Fixed IP") && extrasText.includes("Paused until") && extrasText.includes("End the pause"), "the client dialog shows the fixed IP and the pause");
+await page.screenshot({ path: process.env.SHOT_DIR ? `${process.env.SHOT_DIR}/client-extras.png` : "/dev/null" }).catch(() => {});
+await panel().locator('.dialog [data-action="close"]').last().click();
+check(((await panel().locator('#client-results tr[data-client-mac="02:00:00:04:00:3c"]').textContent()) || "").includes("Paused until"), "the client list shows the pause");
+const extraCalls = await page.evaluate(() => window.serviceCalls.filter((c) => ["plan/fixed_ip", "plan/block", "plan/forwards"].includes(c.service)).map((c) => c.data));
+const byType = (t) => extraCalls.find((c) => c.type === `aerohive_local/${t}`) || {};
+check(extraCalls.length === 3 && byType("plan/block").minutes === 60 && byType("plan/fixed_ip").ip === "192.168.9.41" && byType("plan/forwards").forwards[0].port === "443", `extras calls: ${JSON.stringify(extraCalls)}`);
 await page.close();
 page = await open("?view=panel&path=setup&admin=0");
 check(((await panel().locator(".content").textContent()) || "").includes("Only administrators"), "non-admins can't see the setup");
