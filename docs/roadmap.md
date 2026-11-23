@@ -48,8 +48,8 @@ every AP (`clear auth roaming-cache mac <mac> hive-neighbors`).
 
 Built from OPNsense's source and tested against a simulated router. To confirm on a real one:
 apply one test network and send the review's result, plus a screenshot of Interfaces →
-Assignments and Firewall → Rules for the new interface. Not on OPNsense yet: the onboarding
-portal (served by OpenWrt), dual-stack (IPv6) addresses.
+Assignments and Firewall → Rules for the new interface. Everything else on OPNsense
+(ports, backups, portal, IPv6, fixed IPs, blocking, forwards) needs the same real-router check.
 
 ## Open: smaller items
 
@@ -65,6 +65,8 @@ portal (served by OpenWrt), dual-stack (IPv6) addresses.
 
 ## Done
 
+- 0.22.0: OPNsense port control, backups (secrets removed), onboarding portal served by Home
+  Assistant; IPv6 per network (OpenWrt and OPNsense).
 - 0.21.0: fixed IPs with DNS names, block/pause devices, port forwards (OpenWrt and OPNsense).
 - 0.20.0: OPNsense as the Setup tab's router (VLANs, interfaces, Kea/Dnsmasq DHCP, firewall
   rules from the access grid), with undo on failure.

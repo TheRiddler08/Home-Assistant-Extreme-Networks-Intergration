@@ -78,24 +78,51 @@ class FakeRouter:
         self.requests: list[tuple[str, str]] = []
         self.missing: set[str] = set()
         self.refuse = False
+        self.sets: list[tuple[str, Any]] = []
 
     async def request(self, client: opn.OPNsenseClient, method: str, path: str, payload: Any = None, **kwargs: Any) -> Any:
         self.requests.append((method, path))
         if self.refuse:
             raise opn.OPNsenseAuthError("refused")
+        if path.startswith("interfaces/assignment/get_item/"):
+            return {"interface": {"media": {"": {"value": "Default", "selected": int(path.endswith("lan"))},
+                                            "1000baseT\tfull-duplex": {"value": "1000baseT full-duplex", "selected": int(path.endswith("wan"))},
+                                            "100baseTX\thalf-duplex": {"value": "100baseTX half-duplex", "selected": 0},
+                                            "2500Base-T": {"value": "2500Base-T", "selected": 0}, "autoselect": {"value": "autoselect", "selected": 0}}}}  # fmt: skip
+        if path.startswith("interfaces/assignment/set_item/"):
+            self.sets.append((path, payload))
+            return {"result": "saved"}
+        if path == "interfaces/assignment/reconfigure":
+            return {"status": "ok"}
         if path in self.missing or path not in RESPONSES and path != opn.REBOOT:
             raise opn.OPNsenseError(f"HTTP 404 for {path}")
         return {"status": "ok"} if path == opn.REBOOT else fx(RESPONSES[path])
 
 
+CONFIG_XML = """<?xml version="1.0"?>
+<opnsense>
+  <system><hostname>opnsense</hostname><domain>home.example</domain>
+    <user><name>root</name><password>$2y$10$abcdefghijklmnopqrstuv</password><apikeys><item><key>k3y</key><secret>$6$s3cr3t</secret></item></apikeys></user>
+  </system>
+  <cert><descr>Web GUI</descr><crt>LS0tLS1CRUdJTi</crt><prv>LS0tLS1QUklWQVRF</prv></cert>
+  <wireguard><server><privkey>wg-private</privkey><pubkey>wg-public</pubkey></server></wireguard>
+  <revision><time>1700000000</time></revision>
+</opnsense>
+"""
+
+
 @pytest.fixture
 def router():
     fake = FakeRouter()
+    fake.config = CONFIG_XML
 
     async def request(self, method, path, payload=None, **kwargs):
         return await fake.request(self, method, path, payload, **kwargs)
 
-    with patch.object(opn.OPNsenseClient, "request", request):
+    async def config_text(self):
+        return opn.redact_config(fake.config)
+
+    with patch.object(opn.OPNsenseClient, "request", request), patch.object(opn.OPNsenseClient, "config_text", config_text):
         yield fake
 
 
@@ -118,7 +145,7 @@ async def test_opnsense_router_is_read(hass: HomeAssistant, router, opn_entry: M
     assert data.ports() == ["igc0", "igc1", "igc2", "igc3"] and data.interfaces["igc0"].extra["role"] == "WAN"
     snap = network_snapshot(hass)
     device = next(d for d in snap["devices"] if d["entry_id"] == opn_entry.entry_id)
-    assert device["kind"] == "router" and device["features"]["save"] is False and device["features"]["port_control"] is False
+    assert device["kind"] == "router" and device["features"]["save"] is False and device["features"]["port_control"] is True
     assert [g["name"] for g in device["gateways"]] == ["WAN_DHCP", "STARLINK_DHCP"]
     assert {"kind": "gateway", "text": "Gateway STARLINK_DHCP is down"} in device["problems"]
     assert any(n["vlan"] == 30 for n in device["networks"])
@@ -171,7 +198,7 @@ async def test_opnsense_as_setup_router(hass: HomeAssistant, router, opn_entry: 
 
     seen = {}
 
-    async def fake_apply(client, plan, trunks):
+    async def fake_apply(client, plan, trunks, **kwargs):
         seen.update(client=client, trunks=trunks, vlans=[n["vlan"] for n in plan["networks"]])
         return opnsense_setup.Result(done=["VLAN vlan0.30"], warnings=["No DHCP server"])
 
@@ -180,17 +207,70 @@ async def test_opnsense_as_setup_router(hass: HomeAssistant, router, opn_entry: 
     assert results[0]["ok"] and results[0]["done"] == ["VLAN vlan0.30", "note: No DHCP server"]
     assert seen["trunks"] == ["igc2"] and seen["vlans"] == [30] and isinstance(seen["client"], opn.OPNsenseClient)
 
-    async def failing(client, plan, trunks):
+    async def failing(client, plan, trunks, **kwargs):
         raise opnsense_setup.SetupError("VLAN 30: the router refused it")
 
     with patch.object(opnsense_setup, "async_apply", failing):
         results = await manager.async_apply()
     assert not results[0]["ok"] and "refused it. What this apply added was removed again" in results[0]["error"]
 
-    # The onboarding portal needs OpenWrt.
-    plan["onboarding"] = {"enabled": True}
+
+
+@needs_ha
+async def test_opnsense_onboarding_portal_served_by_ha(hass: HomeAssistant, router, opn_entry: MockConfigEntry, socket_enabled) -> None:
+    import aiohttp
+
+    from custom_components.aerohive_local import opnsense_setup, portal
+    from custom_components.aerohive_local.plan import get_plan
+
+    manager = get_plan(hass)
+    plan = {
+        "networks": [{"id": "ob", "name": "Onboarding", "vlan": 80, "subnet": "10.80.0.1/24"}, {"id": "home", "name": "Home", "vlan": 50, "subnet": "10.50.0.1/24"}],
+        "wifi": [{"id": "homeob", "ssid": "homeOB", "network": "ob", "security": "wpa2"}, {"id": "home", "ssid": "home", "network": "home", "security": "ppsk"}],
+        "onboarding": {"enabled": True, "wifi": "homeob", "offer": ["home"]},
+        "devices": {"router": opn_entry.entry_id},
+    }
+    assert await manager.async_save_plan(plan, {"wifi:homeob": "onboard-me-1"}) == []
+    preview = manager.preview()["devices"][0]
+    assert preview["errors"] == [] and any("http://10.80.0.1:8099/" in c for c in preview["commands"])
+    seen = {}
+
+    async def fake_apply(client, plan, trunks, portal_target=None):
+        seen["target"] = portal_target
+        return opnsense_setup.Result(done=["ok"])
+
+    with (
+        patch.object(opnsense_setup, "async_apply", fake_apply),
+        patch.object(type(manager), "portal_target_ip", return_value="192.168.1.20"),
+        patch.object(portal, "PORT", 18099),
+    ):
+        results = await manager.async_apply()
+    assert results[0]["ok"], results
+    assert seen["target"] == ("ob", "192.168.1.20") and manager.portal_hosted()
+
+    opn_entry.runtime_data.data.neighbors["02:11:22:33:44:99"] = {"ip": "127.0.0.1", "hostname": None}
+    async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True)) as session:  # cookies from an IP address, like a browser
+        async with session.get("http://127.0.0.1:18099/") as response:
+            assert response.status == 200 and "Name for this device" in await response.text()
+        async with session.post("http://127.0.0.1:18099/cgi-bin/portal", data={"name": "TV <b>", "kind": "nope", "wants": "home"}) as response:
+            assert response.status == 200 and "updates by itself" in await response.text()
+        item = manager.requests["021122334499"]
+        assert (item["name"], item["kind"], item["wants"], item["status"]) == ("TV b", "something_else", "home", "pending")
+        await manager.async_approve("021122334499", wifi="home")
+        async with session.get("http://127.0.0.1:18099/") as response:
+            text = await response.text()
+        key = manager.secret(f"key:{item['key_id']}")
+        assert key and key in text and "homeOB" not in text
+    async with aiohttp.ClientSession() as other:  # another browser on the same device: no key
+        async with other.get("http://127.0.0.1:18099/") as response:
+            assert key not in await response.text()
+
+    # Portal turned off: the server stops.
+    plan["onboarding"]["enabled"] = False
     await manager.async_save_plan(plan, {})
-    assert any("OpenWrt router" in e for e in manager.preview()["devices"][0]["errors"])
+    with patch.object(opnsense_setup, "async_apply", fake_apply):
+        await manager.async_apply()
+    assert seen["target"] is None and manager._portal_server is None
 
 
 @needs_ha
@@ -216,6 +296,71 @@ async def test_opnsense_router_extras(hass: HomeAssistant, router, opn_entry: Mo
     with patch.object(router_extras, "sync_opnsense", refusing), pytest.raises(HomeAssistantError, match="refused it"):
         await manager.async_unblock("aa:bb:cc:dd:ee:02")
     assert manager.plan["blocked"][0]["mac"] == "aa:bb:cc:dd:ee:02"  # unchanged when the router refused
+
+
+def test_media_options() -> None:
+    payload = {"interface": {"media": {"": {"selected": 0}, "1000baseT\tfull-duplex": {"selected": 1}, "10Gbase-SR": {"selected": 0},
+                                       "100baseTX\thalf-duplex": {"selected": 0}, "autoselect": {"selected": 0}}}}  # fmt: skip
+    current, choices = opn.parse_media_options(payload)
+    assert current == "1000baseT\tfull-duplex"
+    assert choices == {("1000", "full"): "1000baseT\tfull-duplex", ("10000", "full"): "10Gbase-SR", ("100", "half"): "100baseTX\thalf-duplex"}
+    assert opn.media_setting(current, choices) == ("1000", "full") and opn.media_setting("", choices) == ("auto", "auto")
+    assert opn.parse_media_options(None) == ("", {})
+
+
+@needs_ha
+async def test_opnsense_port_control(hass: HomeAssistant, router, opn_entry: MockConfigEntry) -> None:
+    coordinator = opn_entry.runtime_data
+    assert coordinator.port_speed_options("igc0") == ["auto", "100", "1000", "2500"]
+    assert coordinator.port_speed_setting("igc0") == ("1000", "full") and coordinator.port_speed_setting("igc1") == ("auto", "auto")
+    assert coordinator.port_speed_options("igc2") == []  # not assigned
+    device = next(d for d in network_snapshot(hass)["devices"] if d["entry_id"] == opn_entry.entry_id)
+    assert device["features"]["port_control"] and device["features"]["port_speed"]
+
+    # The port Home Assistant uses can't be turned off; WAN needs force; an unassigned port can't.
+    coordinator._opn_ports["igc1"].ipv4 = "192.168.1.1/24"
+    with pytest.raises(HomeAssistantError, match="would cut it off"):
+        await coordinator.async_set_port_enabled("igc1", False, force=True)
+    with pytest.raises(HomeAssistantError, match="WAN"):
+        await coordinator.async_set_port_enabled("igc0", False)
+    with pytest.raises(HomeAssistantError, match="isn't assigned"):
+        await coordinator.async_set_port_enabled("igc2", False)
+    await coordinator.async_set_port_enabled("igc0", False, force=True)
+    assert router.sets[-1] == ("interfaces/assignment/set_item/wan", {"interface": {"enable": "0"}})
+
+    await coordinator.async_set_port_speed("igc1", "100", "half")
+    assert router.sets[-1] == ("interfaces/assignment/set_item/lan", {"interface": {"media": "100baseTX\thalf-duplex"}})
+    await coordinator.async_set_port_speed("igc1", "auto")
+    assert router.sets[-1][1] == {"interface": {"media": ""}}
+    with pytest.raises(HomeAssistantError):
+        await coordinator.async_set_port_speed("igc1", "10")
+
+
+def test_redact_config() -> None:
+    text = opn.redact_config(CONFIG_XML)
+    for secret in ("$2y$10$", "k3y", "s3cr3t", "LS0tLS1QUklWQVRF", "wg-private"):
+        assert secret not in text
+    assert "<password>***</password>" in text and "<pubkey>wg-public</pubkey>" in text and "<crt>LS0tLS1CRUdJTi</crt>" in text
+    assert "<hostname>opnsense</hostname>" in text
+
+
+@needs_ha
+async def test_opnsense_backups(hass: HomeAssistant, router, opn_entry: MockConfigEntry) -> None:
+    from custom_components.aerohive_local import backup as backup_mod
+
+    coordinator = opn_entry.runtime_data
+    files = await hass.async_add_executor_job(backup_mod.list_backups, coordinator.backup_folder)
+    assert len(files) == 1
+    saved = await hass.async_add_executor_job(backup_mod.read_backup, files[0].path)
+    assert "<hostname>opnsense</hostname>" in saved and "$2y$10$" not in saved and "wg-private" not in saved
+    device = next(d for d in network_snapshot(hass)["devices"] if d["entry_id"] == opn_entry.entry_id)
+    assert device["features"]["backup"] and not device["features"]["restore"]
+    # A change made on the router (no reboot) is backed up on the next read.
+    router.config = CONFIG_XML.replace("<hostname>opnsense</hostname>", "<hostname>gw</hostname>")
+    result = await coordinator.async_backup_config()
+    assert result["file"].endswith(".cfg")
+    files = await hass.async_add_executor_job(backup_mod.list_backups, coordinator.backup_folder)
+    assert len(files) == 2
 
 
 @needs_ha

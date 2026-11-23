@@ -96,6 +96,7 @@ def normalize(plan: dict[str, Any] | None) -> dict[str, Any]:
         net.setdefault("lease", "12h")
         net.setdefault("internet", True)
         net.setdefault("router_access", False)
+        net.setdefault("ipv6", False)  # addresses from the internet provider's prefix (prefix ID = VLAN)
         net.setdefault("reach", [])
         net.setdefault("switch_ports", {})
     for wifi in result["wifi"]:
@@ -172,6 +173,8 @@ def validate(plan: dict[str, Any], secret: Callable[[str], str | None] | None = 
                 hosts = iface.network.num_addresses - 2
                 if not (isinstance(start, int) and isinstance(limit, int) and start >= 1 and limit >= 1 and start + limit - 1 <= hosts):
                     errors.append(f"{name}: the DHCP range doesn't fit in {iface.network}")
+        if net.get("ipv6") and not 1 <= int(net.get("vlan") or 0) <= 255:
+            errors.append(f"{name}: IPv6 needs a VLAN from 1 to 255 (it's used as the IPv6 prefix ID)")
         if not _LEASE_RE.match(str(net.get("lease") or "")):
             errors.append(f"{name}: lease time must look like 12h, 30m or 1d")
         for port_list in (net.get("switch_ports") or {}).values():
@@ -262,7 +265,7 @@ def validate(plan: dict[str, Any], secret: Callable[[str], str | None] | None = 
     if onboarding.get("enabled"):
         wifi = next((w for w in plan["wifi"] if w.get("id") == onboarding.get("wifi")), None)
         if not plan["devices"].get("router"):
-            errors.append("Onboarding portal: it runs on the OpenWrt router; choose the router under Devices")
+            errors.append("Onboarding portal: it needs the router; choose it under Devices")
         if wifi is None:
             errors.append("Onboarding portal: choose the onboarding Wi-Fi network")
         elif wifi.get("security") == "ppsk":
@@ -498,6 +501,9 @@ def openwrt_lines(
             cmds.append(_uci("network", iface, "proto", "static"))
             cmds.append(_uci("network", iface, "ipaddr", str(addr.ip)))
             cmds.append(_uci("network", iface, "netmask", str(addr.netmask)))
+            if net.get("ipv6"):
+                cmds.append(_uci("network", iface, "ip6assign", "64"))
+                cmds.append(_uci("network", iface, "ip6hint", f"{vid:x}"))
             dhcp = f"{PREFIX}dhcp{vid}"
             cmds.append(_uci("dhcp", dhcp, value="dhcp"))
             cmds.append(_uci("dhcp", dhcp, "interface", iface))
@@ -507,6 +513,9 @@ def openwrt_lines(
                 cmds.append(_uci("dhcp", dhcp, "leasetime", net["lease"]))
             else:
                 cmds.append(_uci("dhcp", dhcp, "ignore", "1"))
+            if net.get("ipv6"):
+                cmds.append(_uci("dhcp", dhcp, "ra", "server"))
+                cmds.append(_uci("dhcp", dhcp, "dhcpv6", "server"))
             zone, zname = f"{PREFIX}zone{vid}", f"hn{vid}"
             cmds.append(_uci("firewall", zone, value="zone"))
             cmds.append(_uci("firewall", zone, "name", zname))
@@ -514,8 +523,18 @@ def openwrt_lines(
             cmds.append(_uci("firewall", zone, "input", "ACCEPT" if net.get("router_access") else "REJECT"))
             cmds.append(_uci("firewall", zone, "output", "ACCEPT"))
             cmds.append(_uci("firewall", zone, "forward", "REJECT"))
+            if not net.get("router_access") and net.get("ipv6"):
+                rule = f"{PREFIX}rule{vid}_icmp6"
+                cmds.append(_uci("firewall", rule, value="rule"))
+                cmds.append(_uci("firewall", rule, "name", f"hn{vid} ICMPv6"))
+                cmds.append(_uci("firewall", rule, "src", zname))
+                cmds.append(_uci("firewall", rule, "family", "ipv6"))
+                cmds.append(_uci("firewall", rule, "proto", "icmp"))
+                for icmp in ("echo-request", "router-solicitation", "neighbour-solicitation", "neighbour-advertisement"):
+                    cmds.append(_uci_list("firewall", rule, "icmp_type", icmp))
+                cmds.append(_uci("firewall", rule, "target", "ACCEPT"))
             if not net.get("router_access"):
-                for proto, port, label in (("udp", "67-68", "dhcp"), ("tcp udp", "53", "dns")):
+                for proto, port, label in (("udp", "67-68", "dhcp"), ("tcp udp", "53", "dns"), *((("udp", "547", "dhcp6"),) if net.get("ipv6") else ())):
                     rule = f"{PREFIX}rule{vid}_{label}"
                     cmds.append(_uci("firewall", rule, value="rule"))
                     cmds.append(_uci("firewall", rule, "name", f"hn{vid} {label.upper()}"))

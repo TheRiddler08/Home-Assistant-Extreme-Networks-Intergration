@@ -1,5 +1,8 @@
 # OPNsense routers (preview)
 
+Monitoring, ports, backups, the network setup (VLANs, interfaces, DHCP, firewall, IPv6), fixed
+IPs, blocking, port forwards and the onboarding portal all work with OPNsense.
+
 OPNsense is read through its **REST API** with an API key, not over SSH. Nothing is installed
 on the router. (Screenshot uses demo data.)
 
@@ -92,13 +95,45 @@ Blocking by MAC works for devices in the same network as one of the router's int
 (the router learns the address from ARP). The API key needs *Firewall: Aliases* and
 *Firewall: NAT: Destination NAT* (or full access) too, and *Services: Unbound DNS* for DNS names.
 
+## Ports
+
+Ports assigned to an interface (WAN, LAN, OPT…) can be turned **on and off** and set to a
+**fixed speed** (port dialog, `set_port` and `set_port_speed`), through the interface's
+*enable* and *media* settings (`interfaces/assignment`, then *reconfigure*). The speeds offered
+are the media types the router reports for the interface. Not possible: turning off the port
+Home Assistant reaches the router through; turning off WAN needs `force`. Unassigned ports stay
+read-only. The API key needs *Interfaces: Assignments*.
+
+## Configuration backups
+
+`config.xml` is read through `core/backup/download/this` (every 15 minutes and after changes
+from Home Assistant) and backed up like every other device's configuration, with
+change-after-reboot alerts ([backups](backups.md)). **Passwords, password hashes, private keys,
+pre-shared keys, API keys and other secrets are replaced by `***` before anything is saved**,
+so a changed secret still shows as a change but never lands in Home Assistant. These backups
+are for comparing and keeping track; to go back to an older configuration use OPNsense's own
+history (System → Configuration → History), which has the secrets. The API key needs
+the privilege for the configuration backups page (*System: Configuration: Backups*, or full
+access); without it, no backups are taken.
+
+## Onboarding portal
+
+Served by Home Assistant and forwarded by the router: see
+[Onboarding portal on OPNsense](onboarding.md#on-an-opnsense-router).
+
+## IPv6
+
+A network with **IPv6** turned on (network dialog in the Setup tab) gets addresses from your
+internet provider's delegated prefix: the interface tracks WAN (`type6 track6`) with the VLAN
+as prefix ID (so VLAN 1–255). The firewall rules then cover IPv6 too: DHCPv6, DNS, the router,
+the networks it may reach, other networks' prefixes and local (ULA) addresses blocked,
+internet if allowed. On OpenWrt the same option sets `ip6assign 64` with the VLAN as hint, and
+router advertisements and DHCPv6 on that network.
+
 ## Not (yet) on OPNsense
 
-- **Port on/off, speed, PoE:** ports are read-only.
-- **Configuration backups and change-after-reboot alerts:** OPNsense's configuration
-  (`config.xml`) holds certificates, keys and password hashes, so it isn't copied into Home
-  Assistant. OPNsense keeps its own configuration history (System → Configuration → History).
-- **Onboarding portal**: it's served by an OpenWrt router; not on OPNsense yet.
+- **PoE** (OPNsense boxes have none) and **restoring** a backup from Home Assistant (use
+  OPNsense's own history).
 - `run_show_command` and other SSH-only actions.
 
 Built from the API controllers in OPNsense's source (opnsense/core, November 2026) and tested

@@ -127,6 +127,7 @@ BACKUP_ROOT = "aerohive_local_backups"
 SAVE_DELAY_SECONDS = 2.0
 # Network setup on OpenWrt: undo unless confirmed within this time.
 ROLLBACK_SECONDS = 90
+OPN_MEDIA_REFRESH = 3600  # seconds between reads of an OPNsense router's port speed settings
 CONFIRM_DELAY_SECONDS = 8.0
 CONFIRM_RETRY_SECONDS = 5.0
 BACKUP_DOCS_URL = "https://github.com/TheRiddler08/Home-Assistant-Extreme-Networks-Intergration/blob/main/docs/backups.md"
@@ -515,6 +516,9 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._opn_leases: dict[str, tuple[str | None, str | None]] = {}  # OPNsense DHCP: MAC -> (IP, hostname)
         self._port_speed_cfg: dict[str, tuple[str, str]] = {}  # ExtremeXOS: from show ports configuration
         self._speed_overrides: dict[str, tuple[str, str]] = {}  # set from HA, until the device is read again
+        self._opn_ports: dict[str, Any] = {}  # OPNsense: physical ports by device (igc0 -> opn.Port)
+        self._opn_media: dict[str, tuple[str, dict[tuple[str, str], str]]] = {}  # device -> (selected, choices)
+        self._opn_media_at: float | None = None
         self._port_media: dict[str, tuple[str, str | None]] = {}
         self._mgmt_link: bool | None = None
         self._usb: list[dict[str, Any]] | None = None
@@ -900,6 +904,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
     def _config_command(self) -> str:
         if self.client.dialect == ow.DIALECT_OPENWRT:
             return ow.CONFIG_EXPORT
+        if self.client.dialect == opn.DIALECT_OPNSENSE:
+            return opn.CONFIG_COMMAND
         return commands.SHOW_CONFIG_COMMANDS.get(self.client.dialect, "show running-config")
 
     @property
@@ -932,6 +938,17 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         ports = opn.parse_interfaces(overview)
         data.networks = opn.assigned_networks(overview)
         now = time.monotonic()
+        self._opn_ports = ports
+        if self._opn_media_at is None or now - self._opn_media_at > OPN_MEDIA_REFRESH or set(self._opn_media) - set(ports):
+            self._opn_media_at = now
+            media = {}
+            for name, port in ports.items():
+                if port.identifier:
+                    payload = await self._opn_optional(f"interfaces/assignment/get_item/{port.identifier}")
+                    if payload:
+                        media[name] = opn.parse_media_options(payload)
+            self._opn_media = media
+            self._speed_overrides.clear()
         wan_devices: set[str] = set()
         for name, port in ports.items():
             extra: dict[str, str] = {"port": "yes"}
@@ -983,6 +1000,21 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 entry["hostname"] = entry.get("hostname") or hostname
         data.environment = self._environment
         self._update_boot_time(data)
+        # The configuration (secrets removed) for backups and change-after-reboot alerts.
+        if self._slow_at is None or now - self._slow_at > SLOW_REFRESH_SECONDS:
+            self._slow_at = now
+            self._config_dirty = True
+        if self._config_dirty:
+            self._config_dirty = False
+            try:
+                self._config_text, self._config_text_new = await client.config_text(), True
+            except opn.OPNsenseAuthError:
+                _LOGGER.debug("%s: the API key may not read the configuration; no backups", client.host)
+            except opn.OPNsenseError as err:
+                _LOGGER.debug("%s: configuration not read: %s", client.host, err)
+                self._config_dirty = True
+        self._update_boot_time(data)
+        await self._process_backup(data)
         return data
 
     async def _opn_optional(self, path: str) -> Any:
@@ -1313,7 +1345,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         _LOGGER.info("%s: network setup applied and confirmed", host)
         await self.async_request_refresh()
 
-    async def async_apply_opnsense_plan(self, plan: dict[str, Any]) -> list[str]:
+    async def async_apply_opnsense_plan(self, plan: dict[str, Any], *, portal_target: tuple[str, str] | None = None) -> list[str]:
         """Apply the network setup to an OPNsense router; returns what was done.
 
         The API has no rollback, so opnsense_setup only touches objects it made
@@ -1326,7 +1358,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         host = client.host
         _LOGGER.info("%s: applying network setup through the API", host)
         try:
-            result = await opnsense_setup.async_apply(client, plan, plan["devices"].get("router_trunks"))
+            result = await opnsense_setup.async_apply(client, plan, plan["devices"].get("router_trunks"), portal_target=portal_target)
         except opnsense_setup.SetupError as err:
             raise HomeAssistantError(f"{host}: {err}. What this apply added was removed again.") from err
         try:
@@ -2098,8 +2130,38 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             raise
         await self.async_request_refresh()  # the network disappears without waiting for the save
 
+    def _opn_port(self, port: str) -> Any:
+        info = self._opn_ports.get(port)
+        if info is None:
+            raise HomeAssistantError(f"{self.client.host} has no port {port}")
+        if not info.identifier:
+            raise HomeAssistantError(f"Port {port} isn't assigned to an interface on {self.client.host}; assign it in OPNsense first")
+        return info
+
+    async def _opn_set_interface(self, identifier: str, fields: dict[str, str], what: str) -> None:
+        client: opn.OPNsenseClient = self.client  # type: ignore[assignment]
+        try:
+            answer = await client.post(opn.assignment_path(identifier), {"interface": fields})
+            if not (isinstance(answer, dict) and answer.get("result") == "saved"):
+                detail = "; ".join(f"{v}" for v in ((answer or {}).get("validations") or {}).values()) if isinstance(answer, dict) else ""
+                raise HomeAssistantError(f"{client.host} refused {what}{f': {detail}' if detail else ''}")
+            await client.request("POST", "interfaces/assignment/reconfigure", {}, timeout=120)
+        except AerohiveError as err:
+            raise HomeAssistantError(f"{client.host}: {what} failed: {err}") from err
+
     async def async_set_port_enabled(self, port: str, enable: bool, force: bool = False) -> None:
-        if self.is_openwrt or self.is_opnsense:
+        if self.is_opnsense:
+            info = self._opn_port(port)
+            if not enable and info.ipv4 and info.ipv4.split("/")[0] == self.client.host:
+                raise HomeAssistantError(f"Home Assistant reaches {self.client.host} through port {port}; turning it off would cut it off")
+            if not enable and not force and port in self.data.uplink_ports():
+                raise HomeAssistantError(f"{port} is the internet (WAN) port. Use the set_port action with force: true if you really mean it.")
+            await self._opn_set_interface(info.identifier, {"enable": "1" if enable else "0"}, f"turning {port} {'on' if enable else 'off'}")
+            self._overrides[("port", port)] = (enable, time.monotonic())
+            self.async_update_listeners()
+            await self.async_request_refresh()
+            return
+        if self.is_openwrt:
             raise self._not_on_openwrt("Turning ports on and off")
         if not enable and not force and port in self.data.uplink_ports():
             raise HomeAssistantError(
@@ -2121,6 +2183,9 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         """The configured (speed, duplex) of a port, e.g. ('auto', 'auto'); None when unknown."""
         if port in self._speed_overrides:
             return self._speed_overrides[port]
+        if self.is_opnsense:
+            entry = self._opn_media.get(port)
+            return opn.media_setting(*entry) if entry else None
         if self.is_exos:
             return self._port_speed_cfg.get(port)
         if self._config is not None:
@@ -2129,7 +2194,12 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
 
     def port_speed_options(self, port: str) -> list[str]:
         """Speeds a port can be set to (Mbit/s, plus 'auto'); empty when it can't be set from here."""
-        if self.is_openwrt or self.is_opnsense or self.data is None:
+        if self.is_opnsense:
+            entry = self._opn_media.get(port)
+            if not entry or not entry[1]:
+                return []
+            return ["auto", *sorted({s for s, _ in entry[1]}, key=int)]
+        if self.is_openwrt or self.data is None:
             return []
         iface = self.data.interfaces.get(port)
         media = iface.extra.get("media") if iface else None
@@ -2143,7 +2213,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return ["auto", "10", "100", "1000"]
 
     async def async_set_port_speed(self, port: str, speed: str, duplex: str | None = None, force: bool = False) -> None:
-        if self.is_openwrt or self.is_opnsense:
+        if self.is_openwrt:
             raise self._not_on_openwrt("Setting port speeds")
         speed, duplex = self._validated(commands.validate_speed, speed, duplex)
         options = self.port_speed_options(port)
@@ -2157,7 +2227,14 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 "disconnect Home Assistant from the device. Use force: true if you really mean it."
             )
         _LOGGER.info("%s: setting port %s to %s/%s", self.client.host, port, speed, duplex)
-        if self.is_exos:
+        if self.is_opnsense:
+            info = self._opn_port(port)
+            key = "" if speed == "auto" else self._opn_media[port][1].get((speed, duplex))
+            if key is None:
+                raise HomeAssistantError(f"Port {port} can't be set to {speed} Mbit/s {duplex} duplex")
+            await self._opn_set_interface(info.identifier, {"media": key}, f"setting {port}'s speed")
+            self._opn_media[port] = (key, self._opn_media[port][1])
+        elif self.is_exos:
             await self._apply([self._validated(commands.exos_port_speed, port, speed, duplex)])
         elif self.is_switch_cli:
             await self._apply(self._validated(commands.switch_port_speed, port, speed, duplex), sequence=True)

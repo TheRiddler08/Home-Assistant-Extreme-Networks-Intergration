@@ -73,6 +73,7 @@ class FakeOPNsense:
         self.kea = {"enabled": "1" if dhcp == "kea" else "0", "interfaces": ["lan"]}
         self.ranges: dict[str, dict] = {}
         self.dnsmasq = {"enable": "1" if dhcp == "dnsmasq" else "0", "interface": []}
+        self.nat: dict[str, dict] = {}
         self.fail_on: str | None = None
         self.dead = False
 
@@ -159,6 +160,15 @@ class FakeOPNsense:
             return {"result": "saved", "uuid": uuid}
         if base == "dnsmasq/settings/del_range":
             self.ranges.pop(item)
+            return {"result": "deleted"}
+        if path == "firewall/d_nat/search_rule":
+            return {"rows": [{"uuid": k, **v} for k, v in self.nat.items()]}
+        if path == "firewall/d_nat/add_rule":
+            uuid = self._uuid()
+            self.nat[uuid] = dict(payload["rule"])
+            return {"result": "saved", "uuid": uuid}
+        if base == "firewall/d_nat/del_rule":
+            self.nat.pop(item)
             return {"result": "deleted"}
         if path == "firewall/filter/search_rule":
             return {"rows": [{"uuid": k, **v} for k, v in self.rules.items()]}
@@ -384,3 +394,39 @@ def test_auth_error_explains_rights() -> None:
 
     with pytest.raises(s.SetupError, match="API key may not change this"):
         run(s.async_apply(AuthRouter(), _plan(), None))
+
+
+def test_onboarding_portal_forward() -> None:
+    router = FakeOPNsense()
+    run(s.async_apply(router, _plan(), None, portal_target=("guest", "192.168.1.20")))
+    nat = list(router.nat.values())
+    assert nat == [{"interface": "opt3", "ipprotocol": "inet", "protocol": "TCP", "destination": {"network": "opt3ip", "port": "8099"},
+                    "target": "192.168.1.20", "local-port": "8099", "pass": "pass", "descr": "[HA:portal] onboarding portal"}]  # fmt: skip
+    run(s.async_apply(router, _plan(), None, portal_target=("guest", "192.168.1.21")))
+    assert [n["target"] for n in router.nat.values()] == ["192.168.1.21"]
+    run(s.async_apply(router, _plan(), None))
+    assert router.nat == {}
+
+
+def test_ipv6() -> None:
+    plan = _plan(
+        [
+            {"id": "home", "name": "Home", "vlan": 50, "subnet": "10.40.33.1/24", "reach": ["lan"], "ipv6": True},
+            {"id": "iot", "name": "IoT", "vlan": 30, "subnet": "10.15.19.1/24"},
+        ]
+    )
+    rules = s.firewall_rules(s.networks(plan), {"home": "opt1", "iot": "opt2", "lan": "lan"})
+    home = [(r["ipprotocol"], r["action"], r["destination_net"], r["destination_port"]) for r in rules if r["interface"] == "opt1"]
+    assert ("inet", "pass", "any", "67") in home and ("inet6", "pass", "any", "547") in home
+    assert ("inet46", "pass", "(self)", "53") in home and ("inet46", "pass", "lan", "") in home
+    assert ("inet6", "block", "opt2", "") in home and ("inet6", "block", "fc00::/7", "") in home
+    assert ("inet6", "block", "lan", "") not in home  # it may reach the LAN
+    assert home[-1] == ("inet46", "pass", "any", "")
+    assert all(r["ipprotocol"] == "inet" for r in rules if r["interface"] == "opt2")  # IPv4 only
+
+    router = FakeOPNsense()
+    run(s.async_apply(router, plan, None))
+    home_if = next(v for v in router.assignments.values() if v.get("descr") == "hn_home")
+    assert (home_if["type6"], home_if["track6-interface"], home_if["track6-prefix-id"]) == ("track6", "wan", "32")
+    assert next(v for v in router.assignments.values() if v.get("descr") == "hn_iot")["type6"] == ""
+    assert any("IPv6 from the WAN prefix (ID 32)" in line for line in s.describe(plan))

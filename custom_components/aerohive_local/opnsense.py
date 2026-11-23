@@ -316,6 +316,57 @@ def parse_leases(payload: Any) -> dict[str, tuple[str | None, str | None]]:
 # --------------------------------------------------------------------------
 
 
+_MEDIA_RE = re.compile(r"^(\d+(?:\.\d+)?)(G)?base", re.IGNORECASE)
+
+
+def parse_media_options(payload: Any) -> tuple[str, dict[tuple[str, str], str]]:
+    """An interface's media choices from ``interfaces/assignment/get_item/<if>``.
+
+    Returns (selected key or "" for automatic, {(speed Mbit/s, duplex): key}).
+    Keys look like "1000baseT\tfull-duplex" or "2500Base-T".
+    """
+    media = ((payload or {}).get("interface") or {}).get("media") if isinstance(payload, dict) else None
+    if not isinstance(media, dict):
+        return "", {}
+    current, choices = "", {}
+    for key, value in media.items():
+        if isinstance(value, dict) and str(value.get("selected")) in ("1", "True", "true"):
+            current = key
+        match = _MEDIA_RE.match(key or "")
+        if not match:
+            continue
+        speed = float(match.group(1)) * (1000 if match.group(2) else 1)
+        duplex = "half" if "half-duplex" in key else "full"
+        choices.setdefault((str(int(speed)), duplex), key)
+    return current, choices
+
+
+def media_setting(current: str, choices: dict[tuple[str, str], str]) -> tuple[str, str]:
+    for setting, key in choices.items():
+        if key == current:
+            return setting
+    return ("auto", "auto")
+
+
+def assignment_path(identifier: str) -> str:
+    return f"interfaces/assignment/set_item/{identifier}"
+
+
+CONFIG_DOWNLOAD = "core/backup/download/this"
+CONFIG_COMMAND = "opnsense:config.xml"  # what the backup code "runs" to read the configuration
+_SECRET_TAGS = (
+    "password", "passwd", "bcrypt-hash", "sha512-hash", "md5-hash", "nt-hash", "prv", "privkey", "privatekey",
+    "private_key", "secret", "psk", "pre-shared-key", "presharedkey", "shared_key", "sharedkey", "otp_seed",
+    "authorizedkeys", "ldap_bindpw", "key", "apikey", "api_key", "token", "community", "radius_secret", "tls",
+)  # fmt: skip
+_SECRET_RE = re.compile(rf"<({'|'.join(re.escape(t) for t in _SECRET_TAGS)})(\s[^>]*)?>([^<]+)</\1>", re.IGNORECASE)
+
+
+def redact_config(text: str) -> str:
+    """config.xml without its secrets: each one becomes *** (so changes to them still show)."""
+    return _SECRET_RE.sub(lambda m: f"<{m.group(1)}{m.group(2) or ''}>***</{m.group(1)}>", text)
+
+
 class OPNsenseError(AerohiveConnectionError):
     """The router couldn't be reached, or refused the request."""
 
@@ -389,7 +440,29 @@ class OPNsenseClient:
     async def connect(self) -> None:
         self.connected = True
 
+    async def config_text(self) -> str:
+        """The current configuration (config.xml) with passwords, keys and secrets removed."""
+        import aiohttp  # noqa: PLC0415
+
+        url = f"{self._base}/{CONFIG_DOWNLOAD}"
+        try:
+            async with self._session.request(
+                "GET", url, auth=self._auth, ssl=self._ssl, timeout=aiohttp.ClientTimeout(total=60)
+            ) as response:
+                if response.status in (401, 403):
+                    raise OPNsenseAuthError(f"{self.host} refused the API key for the configuration (HTTP {response.status})")
+                if response.status >= 400:
+                    raise OPNsenseError(f"{self.host}: HTTP {response.status} for {CONFIG_DOWNLOAD}")
+                text = await response.text(errors="replace")
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise OPNsenseError(f"Cannot reach {self.host}: {err}") from err
+        if "<opnsense" not in text:
+            raise OPNsenseError(f"{self.host} didn't return its configuration")
+        return redact_config(text)
+
     async def run(self, command: str, **kwargs: Any) -> str:
+        if command == CONFIG_COMMAND:
+            return await self.config_text()
         raise OPNsenseError("OPNsense is managed through its API; CLI commands aren't available")
 
     async def run_sequence(self, commands: Any, **kwargs: Any) -> list[str]:

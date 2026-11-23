@@ -37,6 +37,8 @@ from typing import Any
 _LOGGER = logging.getLogger(__name__)
 
 MARK = "[HA]"
+PORTAL_MARK = "[HA:portal]"
+PORTAL_PORT = 8099  # portal.PORT
 PRIVATE_NETS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 _LEASE_RE = re.compile(r"^(\d+)([mhd]?)$")
 
@@ -71,6 +73,7 @@ class Network:
     internet: bool
     router_access: bool
     reach: list[str]
+    ipv6: bool = False
 
 
 def networks(plan: dict[str, Any]) -> list[Network]:
@@ -95,6 +98,7 @@ def networks(plan: dict[str, Any]) -> list[Network]:
                 internet=bool(net.get("internet", True)),
                 router_access=bool(net.get("router_access", False)),
                 reach=list(net.get("reach") or []),
+                ipv6=bool(net.get("ipv6")),
             )
         )
     return result
@@ -114,6 +118,7 @@ def firewall_rules(
         *,
         protocol: str = "any",
         port: str = "",
+        family: str | None = None,
     ) -> None:
         rules.append(
             {
@@ -122,7 +127,7 @@ def firewall_rules(
                 "quick": "1",
                 "interface": interfaces[net.id],
                 "direction": "in",
-                "ipprotocol": "inet",
+                "ipprotocol": family or ("inet46" if net.ipv6 else "inet"),
                 "protocol": protocol,
                 "source_net": interfaces[net.id],
                 "destination_net": destination,
@@ -134,7 +139,11 @@ def firewall_rules(
     for net in nets:
         if net.id not in interfaces:
             continue
-        rule(net, "DHCP", "pass", "any", protocol="UDP", port="67")
+        rule(net, "DHCP", "pass", "any", protocol="UDP", port="67", family="inet")
+        if net.ipv6:
+            rule(
+                net, "DHCPv6", "pass", "any", protocol="UDP", port="547", family="inet6"
+            )
         rule(net, "DNS", "pass", "(self)", protocol="TCP/UDP", port="53")
         if net.router_access:
             rule(net, "router", "pass", "(self)")
@@ -146,7 +155,21 @@ def firewall_rules(
                 other = next((n.name for n in nets if n.id == target), "main LAN")
                 rule(net, f"to {other}", "pass", destination)
         for private in PRIVATE_NETS:
-            rule(net, "no other networks", "block", private)
+            rule(net, "no other networks", "block", private, family="inet")
+        if net.ipv6:  # the other networks' IPv6 prefixes, and local (ULA) addresses
+            for other in [n for n in nets if n.id != net.id and n.id in interfaces] + [
+                None
+            ]:
+                target = other.id if other else "lan"
+                if target not in net.reach:
+                    rule(
+                        net,
+                        "no other networks",
+                        "block",
+                        interfaces[other.id] if other else "lan",
+                        family="inet6",
+                    )
+            rule(net, "no other networks", "block", "fc00::/7", family="inet6")
         if net.internet:
             rule(net, "internet", "pass", "any")
     return rules
@@ -165,6 +188,7 @@ def describe(plan: dict[str, Any], trunks: list[str] | None = None) -> list[str]
         lines.append(f"VLAN {vlan_device(net.vid)} on {trunk} (tag {net.vid})")
         lines.append(
             f"interface {assignment_name(net.id)} on {vlan_device(net.vid)}: static {net.address}"
+            + (f", IPv6 from the WAN prefix (ID {net.vid:x})" if net.ipv6 else "")
         )
         if net.pool:
             lines.append(
@@ -281,7 +305,11 @@ async def _dhcp_server(client: Any) -> str | None:
 
 
 async def async_apply(
-    client: Any, plan: dict[str, Any], configured_trunks: list[str] | None = None
+    client: Any,
+    plan: dict[str, Any],
+    configured_trunks: list[str] | None = None,
+    *,
+    portal_target: tuple[str, str] | None = None,
 ) -> Result:
     """Make the router match the setup. Raises SetupError (after undoing what it created)."""
     result = Result()
@@ -323,6 +351,7 @@ async def async_apply(
         }
         for kind, path in (
             ("firewall/filter", "firewall/filter/apply"),
+            ("firewall/d_nat", "firewall/d_nat/apply"),
             ("kea/dhcpv4", "kea/service/reconfigure"),
             ("dnsmasq/settings", "dnsmasq/service/reconfigure"),
             ("interfaces/assignment", "interfaces/assignment/reconfigure"),
@@ -397,6 +426,16 @@ async def async_apply(
                     "lock": "0",
                     "type4": "staticv4",
                     "ipaddr": net.address,
+                    # IPv6 from the internet provider's delegated prefix (track WAN), prefix ID = VLAN.
+                    **(
+                        {
+                            "type6": "track6",
+                            "track6-interface": "wan",
+                            "track6-prefix-id": f"{net.vid:x}",
+                        }
+                        if net.ipv6
+                        else {"type6": ""}
+                    ),
                 }
             }
             row = by_device.get(device)
@@ -419,6 +458,10 @@ async def async_apply(
                     str(row.get("ipaddr") or "") != net.address
                     or not _enabled(row.get("enable", "1"))
                     or descr != name
+                    or (
+                        str(row.get("type6") or "").split(" ")[0] in ("track6", "Track")
+                    )
+                    != net.ipv6
                 ):
                     _check(
                         await call(f"interfaces/assignment/set_item/{key}", item),
@@ -470,9 +513,15 @@ async def async_apply(
                 }
                 row = ours.pop(net.subnet, None)
                 if row is not None:
-                    _check(await call(f"kea/dhcpv4/set_subnet/{row['uuid']}", subnet), f"DHCP for {net.name}")
+                    _check(
+                        await call(f"kea/dhcpv4/set_subnet/{row['uuid']}", subnet),
+                        f"DHCP for {net.name}",
+                    )
                 else:
-                    uuid = _check(await call("kea/dhcpv4/add_subnet", subnet), f"DHCP for {net.name}")
+                    uuid = _check(
+                        await call("kea/dhcpv4/add_subnet", subnet),
+                        f"DHCP for {net.name}",
+                    )
                     created.append(("kea/dhcpv4/del_subnet", uuid))
             for row in ours.values():
                 await call(f"kea/dhcpv4/del_subnet/{row['uuid']}")
@@ -569,6 +618,38 @@ async def async_apply(
             await call(f"firewall/filter/del_rule/{row['uuid']}")
         await reload("firewall/filter/apply")
         result.done.append(f"{len(rules)} firewall rules")
+
+        # 4b. The onboarding portal: http://<router>:8099 on its network goes to Home Assistant.
+        old_nat = [
+            r
+            for r in _rows(await call("firewall/d_nat/search_rule", SEARCH))
+            if str(r.get("descr", "")).startswith(PORTAL_MARK)
+        ]
+        if portal_target is not None and portal_target[0] in interfaces:
+            iface, target = interfaces[portal_target[0]], portal_target[1]
+            nat = {
+                "interface": iface, "ipprotocol": "inet", "protocol": "TCP",
+                "destination": {"network": f"{iface}ip", "port": str(PORTAL_PORT)},
+                "target": target, "local-port": str(PORTAL_PORT), "pass": "pass",
+                "descr": f"{PORTAL_MARK} onboarding portal",
+            }  # fmt: skip
+            created.append(
+                (
+                    "firewall/d_nat/del_rule",
+                    _check(
+                        await call("firewall/d_nat/add_rule", {"rule": nat}),
+                        "onboarding portal forward",
+                    ),
+                )
+            )
+        for row in old_nat:
+            await call(f"firewall/d_nat/del_rule/{row['uuid']}")
+        if old_nat or portal_target is not None:
+            await reload("firewall/d_nat/apply")
+            if portal_target is not None:
+                result.done.append(
+                    f"onboarding portal → {portal_target[1]}:{PORTAL_PORT}"
+                )
 
         # 5. Networks that left the setup: their interface, then their VLAN device.
         for r in stale:

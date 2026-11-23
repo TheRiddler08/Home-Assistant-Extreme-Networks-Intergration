@@ -3202,6 +3202,7 @@ const SetupMixin = {
       </div>` : ""}
       ${this._toggleRow("internet", "Internet access", v("internet", true))}
       ${this._toggleRow("router_access", "May open the router's web page and SSH", v("router_access", false))}
+      ${this._toggleRow("ipv6", "IPv6 (from your internet provider's prefix)", v("ipv6", false))}
       ${switches.map((sw) => this._textRow(`net-ports-${sw.entry_id}`, `${sw.name}: ports for devices in this network (untagged)`, `ports:${sw.entry_id}`, f[`ports:${sw.entry_id}`] ?? ((net && net.switch_ports) || {})[sw.entry_id] ?? "", { placeholder: "e.g. 5-8,12" })).join("")}
       <div class="dlg-actions">
         ${net ? `<button class="btn danger" data-action="plan-net-delete" style="margin-right:auto">${icon("trash")}Delete</button>` : ""}
@@ -3367,6 +3368,7 @@ const SetupMixin = {
           lease: String(get("lease", "12h")).trim() || "12h",
           internet: Boolean(get("internet", true)),
           router_access: Boolean(get("router_access", false)),
+          ipv6: Boolean(get("ipv6", false)),
           switch_ports: ports,
         };
         if (old) plan.networks[d.index] = net;

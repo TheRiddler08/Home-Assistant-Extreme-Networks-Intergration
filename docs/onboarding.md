@@ -40,10 +40,26 @@ password and a QR code. (Screenshots use demo data.)
 - The approved page holds the key: it's written to the router's memory (`/tmp`), never to
   Home Assistant's logs.
 
+## On an OPNsense router
+
+OPNsense can't serve the portal page itself, so **Home Assistant serves it**, on port 8099 of
+its own address, and the router forwards `http://<onboarding network's router address>:8099/`
+there (a destination NAT rule `[HA:portal]` on the onboarding interface, made by the apply).
+The pages, questions, rules, limits and approval are the same. The differences:
+
+- Onboarding devices reach Home Assistant's port 8099, which answers only the portal page
+  (nothing else of Home Assistant is behind that port). Everything else from that network is
+  still blocked by the access grid.
+- A device is recognised by its MAC address from the router's ARP table (refreshed every
+  poll) and its cookie; a device that isn't in the table yet is asked to reconnect and try again.
+- Approved pages are kept in Home Assistant's memory only, for an hour.
+- Port 8099 must be free on the Home Assistant host; if it isn't, the Setup tab says so.
+
 ## Setting it up
 
-You need the OpenWrt router chosen under **Devices** in the Setup tab (see
-[Network setup](network-setup.md)) with its web server (`uhttpd`, installed with LuCI).
+You need the router chosen under **Devices** in the Setup tab (see
+[Network setup](network-setup.md)): an OpenWrt router with its web server (`uhttpd`,
+installed with LuCI), or an OPNsense router (see above).
 
 1. In the Setup tab, make sure you have:
    - an **onboarding Wi-Fi** with a shared password (e.g. homeOB). Turn on **Isolate clients**

@@ -38,6 +38,7 @@ from . import netplan
 from . import opnsense_setup
 from . import router_extras
 from . import portal
+from . import portal_server
 from . import qr
 from .const import DOMAIN
 from .parsers import radio_band
@@ -110,6 +111,8 @@ class PlanManager:
         self._unsub_portal = None
         self.requests: dict[str, dict[str, Any]] = {}  # onboarding requests seen on the router
         self.portal_error: str | None = None
+        self.portal_pages: dict[str, str] = {}  # request id -> approved page (HA-served portal; memory only)
+        self._portal_server: portal_server.PortalServer | None = None
 
     # ------------------------------------------------------------------ storage
 
@@ -147,6 +150,9 @@ class PlanManager:
         if self._unsub_portal:
             self._unsub_portal()
             self._unsub_portal = None
+        if self._portal_server is not None:
+            self.hass.async_create_task(self._portal_server.async_stop())
+            self._portal_server = None
 
     async def _async_save(self) -> None:
         await self._store.async_save(
@@ -334,8 +340,12 @@ class PlanManager:
         )
         if plan["wifi"]:
             out.warnings.append("Wi-Fi networks go to the access points; OPNsense only routes their VLANs")
-        if plan["onboarding"].get("enabled"):
-            out.errors.append("The onboarding portal needs an OpenWrt router; it can't run on OPNsense yet. Turn it off to apply")
+        if netplan.onboarding_network(plan) is not None:
+            net = netplan.onboarding_network(plan)
+            out.commands.append(
+                f"onboarding portal: forward http://{netplan.portal_address(plan)}:{portal.PORT}/ on hn_{net['id']} to Home Assistant "
+                f"(port {portal.PORT}), which serves the page"
+            )
         return out
 
     @staticmethod
@@ -414,7 +424,11 @@ class PlanManager:
             return result
         if coordinator.is_opnsense:
             try:
-                result["done"] = await coordinator.async_apply_opnsense_plan(plan)
+                target = None
+                if netplan.onboarding_network(plan) is not None:
+                    target = (netplan.onboarding_network(plan)["id"], await self.portal_target_ip(coordinator))
+                result["done"] = await coordinator.async_apply_opnsense_plan(plan, portal_target=target)
+                await self._async_portal_server(target is not None)
             except HomeAssistantError as err:
                 result["error"] = str(err)
                 return result
@@ -446,9 +460,57 @@ class PlanManager:
         plan = plan or self.applied or self.plan
         router_id = plan["devices"].get("router") if plan else None
         for c in _coordinators(self.hass):
-            if c.config_entry.entry_id == router_id and c.is_openwrt and c.data is not None and c.last_update_success:
+            if c.config_entry.entry_id == router_id and (c.is_openwrt or c.is_opnsense) and c.data is not None and c.last_update_success:
                 return c
         return None
+
+    # The portal served by Home Assistant (OPNsense can't serve it itself).
+
+    def portal_hosted(self) -> bool:
+        router = self._router()
+        return bool(self._portal_on() and router is not None and router.is_opnsense)
+
+    def portal_offer(self) -> list[tuple[str, str]]:
+        return self._portal_offer(self.applied or self.plan)
+
+    def portal_mac(self, ip: str) -> str | None:
+        """The MAC address of the device with this IP, from the router's ARP table and leases."""
+        router = self._router()
+        if router is None or not ip:
+            return None
+        for mac, info in (router.data.neighbors or {}).items():
+            if info.get("ip") == ip:
+                return mac
+        return None
+
+    async def _async_portal_server(self, run: bool) -> None:
+        if run and self._portal_server is None:
+            server = portal_server.PortalServer(self)
+            try:
+                await server.async_start()
+            except OSError as err:
+                self.portal_error = f"The onboarding portal couldn't start: {err}"
+                raise HomeAssistantError(self.portal_error) from err
+            self._portal_server = server
+        elif not run and self._portal_server is not None:
+            await self._portal_server.async_stop()
+            self._portal_server = None
+
+    async def portal_target_ip(self, router: AerohiveCoordinator) -> str:
+        """Home Assistant's own address as the router sees it (where the portal is forwarded to)."""
+        from homeassistant.components.network import async_get_source_ip  # noqa: PLC0415
+
+        return await async_get_source_ip(self.hass, target_ip=router.client.host)
+
+    async def async_portal_request(self, item: dict[str, Any]) -> None:
+        """A device asked on the HA-served portal."""
+        now = dt_util.utcnow()
+        item = {**item, "status": "pending", "seen": now.isoformat()}
+        if rule := self._rule_for(item["kind"]):
+            item["suggested"] = {"wifi": rule.get("wifi"), "network": rule.get("network"), "minutes": rule.get("minutes"), "auto": bool(rule.get("auto"))}
+        self.requests[item["id"]] = item
+        await self._async_save()
+        await self._async_new_requests([item["id"]])
 
     def _portal_offer(self, plan: dict[str, Any]) -> list[tuple[str, str]]:
         offer = plan["onboarding"].get("offer") or []
@@ -472,7 +534,17 @@ class PlanManager:
     async def _async_portal_tick(self, _now: Any = None) -> None:
         """Read new requests from the router; tidy up old ones."""
         router = self._router()
+        hosted = self.portal_hosted()
+        # Not stopped just because the router can't be reached for a moment.
+        if (self._portal_server is not None) != hosted and (hosted or router is not None or not self._portal_on()):
+            try:
+                await self._async_portal_server(hosted)
+            except HomeAssistantError:
+                return
         if not self._portal_on() or router is None:
+            return
+        if router.is_opnsense:
+            await self._async_hosted_tidy()
             return
         try:
             out = await router.async_run_router_lines([portal.LIST_REQUESTS])
@@ -513,6 +585,22 @@ class PlanManager:
                 self._log("onboarding_expired", item.get("name") or rid)
         if changed:
             await self._async_save()
+        await self._async_new_requests(new)
+
+    async def _async_hosted_tidy(self) -> None:
+        """HA-served portal: forget requests (and approved pages) after REQUEST_TTL."""
+        now = dt_util.utcnow()
+        stale = [rid for rid, item in self.requests.items() if now - dt_util.parse_datetime(item.get("decided") or item["seen"]) > REQUEST_TTL]
+        for rid in stale:
+            item = self.requests.pop(rid)
+            self.portal_pages.pop(rid, None)
+            persistent_notification.async_dismiss(self.hass, f"{DOMAIN}_onboard_{rid}")
+            if item["status"] == "pending":
+                self._log("onboarding_expired", item.get("name") or rid)
+        if stale:
+            await self._async_save()
+
+    async def _async_new_requests(self, new: list[str]) -> None:
         for rid in new:
             item = self.requests[rid]
             suggested = item.get("suggested") or {}
@@ -613,10 +701,13 @@ class PlanManager:
             qr_svg=svg,
             expires_text=f"This password works for {minutes} minutes." if minutes else None,
         )
-        try:
-            await router.async_run_router_lines(portal.approve_lines(request_id, item["token"], page), [value])
-        except HomeAssistantError as err:
-            raise HomeAssistantError(f"The key was created, but the portal couldn't show it: {err}") from err
+        if router.is_opnsense:
+            self.portal_pages[request_id] = page  # served by Home Assistant to that device only
+        else:
+            try:
+                await router.async_run_router_lines(portal.approve_lines(request_id, item["token"], page), [value])
+            except HomeAssistantError as err:
+                raise HomeAssistantError(f"The key was created, but the portal couldn't show it: {err}") from err
         item.update(status="approved", decided=dt_util.utcnow().isoformat(), key_id=key_id)
         persistent_notification.async_dismiss(self.hass, f"{DOMAIN}_onboard_{request_id}")
         self._log("onboarding_approved", f"{item['name']} → {target['ssid']}", user)
@@ -628,7 +719,8 @@ class PlanManager:
         router = self._router()
         if router is None:
             raise HomeAssistantError("The router isn't reachable")
-        await router.async_run_router_lines(portal.decline_lines(request_id))
+        if not router.is_opnsense:
+            await router.async_run_router_lines(portal.decline_lines(request_id))
         item.update(status="declined", decided=dt_util.utcnow().isoformat())
         persistent_notification.async_dismiss(self.hass, f"{DOMAIN}_onboard_{request_id}")
         self._log("onboarding_declined", item["name"], user)

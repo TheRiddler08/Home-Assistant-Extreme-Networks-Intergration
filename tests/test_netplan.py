@@ -156,3 +156,19 @@ def test_key_expiry_helpers_and_chunks() -> None:
     assert [k["id"] for k in n.active_keys(plan, NOW)] == ["tv", "cam"]
     chunks = n.chunks(["a" * 700, "b" * 700, "c" * 700, "d"])
     assert chunks == ["a" * 700 + " && " + "b" * 700, "c" * 700 + " && d"]
+
+
+def test_ipv6_on_openwrt() -> None:
+    plan = n.normalize({
+        "networks": [{"id": "home", "name": "Home", "vlan": 50, "subnet": "10.40.33.1/24", "ipv6": True}, {"id": "iot", "name": "IoT", "vlan": 300, "subnet": "10.15.19.1/24"}],
+        "devices": {"router": "r"},
+    })  # fmt: skip
+    out = n.openwrt_lines(plan, _secret, is_router=True, radios={}, now=NOW)
+    for line in ("uci set network.hn_if50.ip6assign=64", "uci set network.hn_if50.ip6hint=32", "uci set dhcp.hn_dhcp50.ra=server",
+                 "uci set dhcp.hn_dhcp50.dhcpv6=server", "uci set firewall.hn_rule50_dhcp6.dest_port=547",
+                 "uci add_list firewall.hn_rule50_icmp6.icmp_type=router-solicitation"):  # fmt: skip
+        assert line in out.commands, line
+    assert not any("hn_if300.ip6" in c for c in out.commands)
+    assert n.validate(plan) == []
+    plan["networks"][1]["ipv6"] = True
+    assert any("IPv6 needs a VLAN from 1 to 255" in e for e in n.validate(plan))

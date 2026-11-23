@@ -3,6 +3,19 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.22.0] - 2026-11-23
+
+### Added
+- **OPNsense ports:** turn assigned ports on and off and set fixed speeds (port dialog,
+  `set_port`, `set_port_speed`), refusing the port Home Assistant uses; WAN needs `force`.
+- **OPNsense configuration backups** with change-after-reboot alerts. Passwords, hashes, keys
+  and other secrets are replaced by `***` before saving.
+- **Onboarding portal on OPNsense:** served by Home Assistant on port 8099; the apply adds the
+  router's forward from the onboarding network. Same pages, rules and approval.
+- **IPv6 per network** (Setup → network dialog): addresses from the internet provider's
+  delegated prefix, firewall rules for IPv6 included. OpenWrt (`ip6assign`, RA, DHCPv6) and
+  OPNsense (track WAN).
+
 ## [0.21.0] - 2026-11-23
 
 ### Added

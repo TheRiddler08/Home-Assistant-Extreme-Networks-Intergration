@@ -268,12 +268,12 @@ def device_snapshot(hass: HomeAssistant, coordinator: AerohiveCoordinator) -> di
         "problems": _problems(coordinator, data),
         "features": {
             "port_names": data.cli == commands.DIALECT_EXOS,
-            "port_control": data.cli not in ("openwrt", "opnsense"),
-            "port_speed": data.cli not in ("openwrt", "opnsense"),
+            "port_control": data.cli != "openwrt",
+            "port_speed": data.cli != "openwrt",
             "restore": data.cli not in ("openwrt", "opnsense"),
             "poe": bool(data.poe_ports),
             "save": data.cli != "opnsense",  # OPNsense saves every change itself
-            "backup": data.cli != "opnsense",
+            "backup": True,
             "reboot_save_prompt": data.cli == commands.DIALECT_EXOS,
         },
     }

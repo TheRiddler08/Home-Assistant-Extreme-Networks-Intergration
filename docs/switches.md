@@ -95,6 +95,7 @@ only when the device on the other end needs one, and set both ends the same: a m
 | --- | --- | --- |
 | ExtremeXOS (X450e) | Auto, 10, 100, 1000 (copper); Auto, 1000, 10000 (SFP) | `configure ports <p> auto on`; `configure ports <p> auto off speed <10\|100> duplex <full\|half>`; 1 Gbit/s copper keeps auto-negotiation and only offers 1000 full: `configure ports <p> auto on speed 1000 duplex full` |
 | SR switches 🧪 | Auto, 10, 100 (1 Gbit/s comes from Auto) | interface mode: `auto-negotiate`; `speed <10\|100> <full\|half>-duplex` (**assumed**, FASTPATH) |
+| OPNsense ports 🧪 | Auto and the media types the router reports (e.g. 100, 1000, 2500) | interface *media* setting through the API ([details](opnsense.md#ports)) |
 | HiveOS Ethernet ports 🧪 | Auto, 10, 100, 1000 | `interface ethN speed <auto\|10\|100\|1000>`, `interface ethN duplex <auto\|full\|half>` (**assumed**) |
 | OpenWrt | – | ports are read-only |
 

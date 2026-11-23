@@ -85,7 +85,7 @@ Networks (Local SSH)**, and choose **Scan my network** or **Enter IP address man
 | [Roadmap](docs/roadmap.md) | What's planned, on hold, and what open items need |
 | [Wi-Fi manager](docs/wifi.md) | Managing SSIDs and passwords |
 | [Network overview](docs/overview.md) | The combined *Aerohive Network* device |
-| [OPNsense](docs/opnsense.md) | OPNsense routers through the REST API: ports, gateways, clients, reboot |
+| [OPNsense](docs/opnsense.md) | OPNsense routers through the REST API: monitoring, ports, backups, network setup, fixed IPs, blocking, port forwards, onboarding portal |
 | [OpenWrt](docs/openwrt.md) | OpenWrt routers and access points: what's read, Wi-Fi control, limits |
 | [Switches](docs/switches.md) | SR-series and ExtremeXOS switches: ports, PoE, LLDP |
 | [Power-loss protection and backups](docs/backups.md) | Backups, change-after-reboot alerts, restore |

@@ -44,6 +44,7 @@ Each network is a VLAN with its own addresses:
 | Hand out addresses (DHCP) | First address (e.g. 50 → `.50`), how many, lease time (`12h`, `30m`, `1d`). |
 | Internet access | Devices in it may reach the internet. |
 | May open the router's web page and SSH | Without it, only DHCP and DNS reach the router. |
+| IPv6 | Addresses from your internet provider's prefix too (VLAN 1–255, used as the prefix ID). OpenWrt and OPNsense. |
 | Ports on each ExtremeXOS switch | Ports for devices in this network (untagged), e.g. `5-8,12`. |
 
 ## Who can reach what
