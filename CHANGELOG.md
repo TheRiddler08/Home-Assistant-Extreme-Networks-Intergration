@@ -3,6 +3,16 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.22.3] - 2026-11-24
+
+### Fixed
+- **OpenWrt: applies and the onboarding portal timed out with "Timed out waiting for prompt …
+  (last output: '>')".** BusyBox's interactive shell (what an SSH session gets on OpenWrt) cuts
+  every typed line off at 1024 characters; Home Assistant sent lines of up to 1500, so a long
+  one lost its closing quote and the shell waited for more. Lines now stay under 900
+  characters (network setup, portal files, fixed IPs/blocks/forwards, Wi-Fi tab changes), and
+  a test replays every command in a real interactive BusyBox shell.
+
 ## [0.22.2] - 2026-11-24
 
 ### Changed

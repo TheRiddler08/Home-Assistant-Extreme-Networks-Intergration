@@ -153,8 +153,9 @@ def test_key_expiry_helpers_and_chunks() -> None:
     plan = _plan()
     assert [k["id"] for k in n.expired_keys(plan, NOW)] == ["old"]
     assert [k["id"] for k in n.active_keys(plan, NOW)] == ["tv", "cam"]
-    chunks = n.chunks(["a" * 700, "b" * 700, "c" * 700, "d"])
-    assert chunks == ["a" * 700 + " && " + "b" * 700, "c" * 700 + " && d"]
+    chunks = n.chunks(["a" * 400, "b" * 400, "c" * 400, "d"])
+    assert chunks == ["a" * 400 + " && " + "b" * 400, "c" * 400 + " && d"]
+    assert all(len(c) <= n.SHELL_LINE_MAX for c in chunks)
 
 
 def test_ipv6_on_openwrt() -> None:

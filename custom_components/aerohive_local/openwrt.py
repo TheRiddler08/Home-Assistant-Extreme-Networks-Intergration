@@ -541,9 +541,30 @@ def delete_iface(section: str) -> str:
     return f"uci delete wireless.{_section(section)}"
 
 
+LINE_MAX = 900  # BusyBox's interactive shell cuts typed lines off at 1024 characters
+
+
 def apply_line(commands: list[str]) -> str:
     """One shell line: all changes, commit, reload Wi-Fi; prints an error marker if anything failed."""
     return " && ".join([*commands, WIFI_APPLY]) + f" || echo '{FAILED_MARK}'"
+
+
+def apply_lines(commands: list[str]) -> list[str]:
+    """Like apply_line, split into several lines when it would be too long for the router's shell.
+
+    Each line prints the error marker if it fails; the commit and Wi-Fi reload are in the last.
+    """
+    single = apply_line(commands)
+    if len(single) <= LINE_MAX:
+        return [single]
+    lines, current = [], []
+    for command in [*commands, WIFI_APPLY]:
+        if current and len(" && ".join([*current, command])) + 60 > LINE_MAX:
+            lines.append(" && ".join(current) + f" || echo '{FAILED_MARK}'")
+            current = []
+        current.append(command)
+    lines.append(" && ".join(current) + f" || echo '{FAILED_MARK}'")
+    return lines
 
 
 def disconnect_client(ifname: str, mac: str) -> str:

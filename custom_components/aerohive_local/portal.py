@@ -364,7 +364,15 @@ def cgi_script(look: Look, offer: list[tuple[str, str]]) -> str:
 # --------------------------------------------------------------------------
 
 
-def _write_file(path: str, content: str, *, mode: str | None = None, piece: int = 900) -> list[str]:
+def _pieces(text: str, limit: int) -> list[str]:
+    """Split ``text`` so each piece, shell-quoted, is at most ``limit`` characters."""
+    if len(shlex.quote(text)) <= limit:
+        return [text]
+    middle = len(text) // 2
+    return _pieces(text[:middle], limit) + _pieces(text[middle:], limit)
+
+
+def _write_file(path: str, content: str, *, mode: str | None = None, piece: int = 600) -> list[str]:
     """Write a file with printf, then move it into place.
 
     Every command is a single line (an interactive SSH shell takes one line at a
@@ -378,7 +386,7 @@ def _write_file(path: str, content: str, *, mode: str | None = None, piece: int 
         last = index == len(lines) - 1
         if last and not line:
             break  # the content ended with a newline
-        pieces = [line[i:i + piece] for i in range(0, len(line), piece)] or [""]
+        pieces = _pieces(line, piece) if line else [""]
         for number, part in enumerate(pieces):
             newline = number == len(pieces) - 1 and not last
             cmds.append(f"printf '{'%s\\n' if newline else '%s'}' {shlex.quote(part)} >> {tmp}")

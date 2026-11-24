@@ -13,6 +13,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install -r requirements_test.txt
+      - run: sudo apt-get install -y busybox  # replays OpenWrt commands in an interactive BusyBox shell
       - run: pytest -q
 
   frontend:

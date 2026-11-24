@@ -1255,7 +1255,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         if not cmds:
             return False
         _LOGGER.info("%s: updating Wi-Fi network %s (%d change(s))", self.client.host, ssid, len(cmds))
-        await self._apply([ow.apply_line(cmds)], secret=password or None, overrides=state)
+        await self._apply(ow.apply_lines(cmds), secret=password or None, overrides=state)
         return True
 
     async def _ow_create_ssid(self, ssid: str, password: str | None, radios: list[str] | None, hidden: bool) -> None:
@@ -1267,7 +1267,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         network = next((w.network for w in self._ow_wifi if w.mode == "ap" and w.network), None) or "lan"
         cmds = [self._validated(ow.new_iface, radio, ssid, password, hidden, network.split()[0]) for radio in targets]
         _LOGGER.info("%s: creating Wi-Fi network %s on %s", self.client.host, ssid, ", ".join(targets))
-        await self._apply([ow.apply_line(cmds)], secret=password or None)
+        await self._apply(ow.apply_lines(cmds), secret=password or None)
         await self.async_request_refresh()
 
     async def _ow_delete_ssid(self, ssid: str) -> None:
@@ -1277,7 +1277,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         _LOGGER.info("%s: deleting Wi-Fi network %s", self.client.host, ssid)
         self.expect_removal = True
         try:
-            await self._apply([ow.apply_line([self._validated(ow.delete_iface, w.section) for w in sections])])
+            await self._apply(ow.apply_lines([self._validated(ow.delete_iface, w.section) for w in sections]))
         except HomeAssistantError:
             self.expect_removal = False
             raise

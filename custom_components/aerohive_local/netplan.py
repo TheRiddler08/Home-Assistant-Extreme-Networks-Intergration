@@ -448,8 +448,18 @@ def openwrt_commit(configs: tuple[str, ...] = OPENWRT_CONFIGS) -> str:
     )
 
 
-def chunks(lines: list[str], limit: int = 1500) -> list[str]:
-    """Join shell commands with && into lines of at most ``limit`` characters (fewer round trips)."""
+# BusyBox's interactive shell (OpenWrt over SSH) cuts a typed line off at 1024 characters, which
+# leaves a quote open and the shell waiting at "> ". Lines stay well below that, with room for
+# the " || echo '<marker>'" added when they're sent.
+SHELL_LINE_MAX = 900
+
+
+def chunks(lines: list[str], limit: int = SHELL_LINE_MAX) -> list[str]:
+    """Join shell commands with && into lines of at most ``limit`` characters (fewer round trips).
+
+    A single command longer than ``limit`` is sent on its own line; generators keep every
+    command shorter (see portal._write_file).
+    """
     result: list[str] = []
     current = ""
     for line in lines:
