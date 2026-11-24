@@ -3,6 +3,12 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.22.2] - 2026-11-24
+
+### Changed
+- "Timed out waiting for prompt" errors now include the last line the device printed (keys
+  hidden), to see where a command got stuck.
+
 ## [0.22.1] - 2026-11-24
 
 ### Fixed

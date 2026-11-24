@@ -323,6 +323,12 @@ class AerohiveClient:
             return False
         return self.hostname is None or prompt_host(match) == self.hostname
 
+    def _timeout_message(self, buf: str) -> str:
+        """What the device last printed, so a stuck command or an unexpected prompt can be seen."""
+        lines = [line for line in clean_output(buf).split("\n") if line.strip()]
+        last = redact(lines[-1].strip())[-120:] if lines else ""
+        return f"Timed out waiting for prompt from {self._host}" + (f" (last output: {last!r})" if last else " (no output)")
+
     async def _read_until_prompt(
         self, timeout: float, *, confirm: bool = False, password: str | None = None, save: bool = False
     ) -> str:
@@ -336,13 +342,11 @@ class AerohiveClient:
         while True:
             remaining = deadline - loop.time()
             if remaining <= 0:
-                raise AerohiveConnectionError(f"Timed out waiting for prompt from {self._host}")
+                raise AerohiveConnectionError(self._timeout_message(buf))
             try:
                 chunk = await asyncio.wait_for(self._proc.stdout.read(READ_CHUNK), remaining)
             except TimeoutError as err:
-                raise AerohiveConnectionError(
-                    f"Timed out waiting for prompt from {self._host}"
-                ) from err
+                raise AerohiveConnectionError(self._timeout_message(buf)) from err
             except (OSError, asyncssh.Error) as err:
                 raise AerohiveConnectionError(f"Connection to {self._host} lost: {err}") from err
             if not chunk:
