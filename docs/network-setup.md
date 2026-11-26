@@ -119,6 +119,14 @@ Setup tab says so.
 - **Trunk ports** on each ExtremeXOS or SR switch: the ports to the router and access points;
   every VLAN is tagged on them. Port numbers like `47-48` (SR switches also take `1/0/9`).
 - **Access points** that broadcast the Wi-Fi (all by default).
+- **Access point only** (OpenWrt devices that aren't the router, e.g. your old router once a
+  new one takes over): turns off its own router functions. Its LAN DHCP server (and IPv6
+  router advertisements) and its internet (WAN) port are turned off, it uses the **main router's
+  address** you enter as gateway and DNS, and it keeps its own address so Home Assistant still
+  reaches it. Once the change is confirmed, its firewall and DHCPv6 services are stopped and
+  disabled. Plug it into the main router or the switch with a **LAN** port. It then carries the
+  VLANs and Wi-Fi like any other access point. Turning the option off again doesn't turn the
+  router functions back on: do that in LuCI (or reset the device).
 
 ## What each device does
 

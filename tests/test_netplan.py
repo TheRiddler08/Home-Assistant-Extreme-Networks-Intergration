@@ -172,3 +172,23 @@ def test_ipv6_on_openwrt() -> None:
     assert n.validate(plan) == []
     plan["networks"][1]["ipv6"] = True
     assert any("IPv6 needs a VLAN from 1 to 255" in e for e in n.validate(plan))
+
+
+def test_access_point_only_mode() -> None:
+    plan = n.normalize({
+        "networks": [{"id": "home", "name": "Home", "vlan": 50, "subnet": "10.40.33.1/24"}],
+        "wifi": [{"id": "home", "ssid": "home", "network": "home", "security": "wpa2", "bands": ["2.4 GHz"]}],
+        "devices": {"router": "opn", "ap_mode": {"netgear": {"gateway": "10.77.0.254"}}},
+    })  # fmt: skip
+    assert n.validate(plan, _secret) == []
+    out = n.openwrt_lines(plan, _secret, is_router=False, radios={"radio0": "2.4 GHz"}, now=NOW, ap_mode=plan["devices"]["ap_mode"]["netgear"])
+    for line in ("uci set network.lan.gateway=10.77.0.254", "uci add_list network.lan.dns=10.77.0.254", "uci set dhcp.lan.ignore=1",
+                 "{ uci -q get network.wan >/dev/null && uci set network.wan.auto=0 || true; }"):  # fmt: skip
+        assert line in out.commands, line
+    assert "firewall odhcpd" in out.after[0] and any("access point only" in w for w in out.warnings)
+    plain = n.openwrt_lines(plan, _secret, is_router=False, radios={"radio0": "2.4 GHz"}, now=NOW)
+    assert not any("network.lan.gateway" in c for c in plain.commands) and plain.after == []
+    plan["devices"]["ap_mode"]["netgear"]["gateway"] = "nope"
+    plan["devices"]["ap_mode"]["opn"] = {"gateway": "10.77.0.254"}
+    errors = n.validate(plan, _secret)
+    assert any("main router's address" in e for e in errors) and any("router can't also" in e for e in errors)

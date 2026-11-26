@@ -3091,6 +3091,12 @@ const SetupMixin = {
         <div class="hint">Port numbers like <span class="mono">47-48</span>${d.kind === "switch" ? " (or <span class=\"mono\">1/0/9</span>)" : ""}.</div></div>`).join("")}
       ${aps.length ? `<div class="form-row"><span class="section-title">Access points that broadcast the Wi-Fi</span><div class="checks">
         ${aps.map((d) => `<label><input type="checkbox" data-plan="ap" data-entry="${esc(d.entry_id)}" ${apOn(d.entry_id) ? "checked" : ""}>${esc(d.name)}</label>`).join("")}</div></div>` : ""}
+      ${aps.filter((d) => d.kind === "openwrt" && apOn(d.entry_id)).map((d) => {
+        const mode = (plan.devices.ap_mode || {})[d.entry_id];
+        return `<div class="form-row"><label class="toggle"><input type="checkbox" data-plan="ap_mode" data-entry="${esc(d.entry_id)}" ${mode ? "checked" : ""}><span class="track"></span><span>${esc(d.name)}: access point only (turn off its own router functions)</span></label>
+          ${mode ? `<div class="field" style="margin-top:6px"><input type="text" class="mono" data-plan="ap_gateway" data-entry="${esc(d.entry_id)}" value="${esc(mode.gateway || "")}" placeholder="Main router's address, e.g. 10.77.0.254" spellcheck="false" aria-label="${esc(d.name)}: main router's address"></div>
+          <div class="hint">For an OpenWrt router (e.g. your old one) used only for Wi-Fi: its DHCP server, firewall and internet port are turned off; it keeps ${esc(d.host)} and uses the main router as gateway. Connect it with a LAN port.</div>` : ""}</div>`;
+      }).join("")}
       ${devices.filter((d) => d.note).map((d) => `<div class="hint">${esc(d.name)}: ${esc(d.note)}</div>`).join("")}
     </div>`;
   },
@@ -3139,6 +3145,13 @@ const SetupMixin = {
         else offer.delete(target.dataset.wifi);
         ob.offer = [...offer];
       }
+    } else if (kind === "ap_mode") {
+      const modes = { ...(plan.devices.ap_mode || {}) };
+      if (target.checked) modes[target.dataset.entry] = modes[target.dataset.entry] || { gateway: "" };
+      else delete modes[target.dataset.entry];
+      plan.devices.ap_mode = modes;
+    } else if (kind === "ap_gateway") {
+      plan.devices.ap_mode = { ...(plan.devices.ap_mode || {}), [target.dataset.entry]: { gateway: target.value.trim() } };
     } else if (kind === "ap") {
       const all = s.state.devices.filter((d) => d.wireless).map((d) => d.entry_id);
       const on = new Set(plan.devices.aps == null ? all : plan.devices.aps);

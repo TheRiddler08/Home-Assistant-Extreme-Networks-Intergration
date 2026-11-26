@@ -49,6 +49,7 @@ def _groups() -> dict[str, list[str]]:
         "portal_big": portal.install_lines(address="10.8.10.1", look=big, offer=[("home", "home")]),
         "approve": portal.approve_lines("021122334455", "abcdefghijklmnop", page),
         "extras": router_extras.openwrt_sync_lines(plan, NOW),
+        "ap_only": n.openwrt_lines(plan, secret, is_router=False, radios=radios, now=NOW, ap_mode={"gateway": "10.77.0.254"}).commands + n.ACCESS_POINT_SERVICES,
     }
 
 

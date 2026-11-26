@@ -3,6 +3,15 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.23.0] - 2026-11-26
+
+### Added
+- **Access point only** for OpenWrt devices (Setup → Devices): use an OpenWrt router, such as
+  the current one once a new router takes over, just for Wi-Fi. Its DHCP server, internet port,
+  firewall and DHCPv6 are turned off, it uses the main router as gateway and DNS and keeps its
+  address. Applied with the usual automatic rollback; the services are stopped only after the
+  change is confirmed.
+
 ## [0.22.3] - 2026-11-24
 
 ### Fixed

@@ -1288,7 +1288,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return HomeAssistantError(f"{what} isn't supported on {kind} devices")
 
     async def async_apply_openwrt_plan(
-        self, lines: list[str], secrets: list[str], configs: tuple[str, ...] = netplan_mod.OPENWRT_CONFIGS
+        self, lines: list[str], secrets: list[str], configs: tuple[str, ...] = netplan_mod.OPENWRT_CONFIGS, *, after: list[str] | None = None
     ) -> None:
         """Apply network-plan UCI commands with an automatic rollback.
 
@@ -1354,6 +1354,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 )
             await asyncio.sleep(CONFIRM_RETRY_SECONDS)
         _LOGGER.info("%s: network setup applied and confirmed", host)
+        for line in after or []:
+            await run(line, timeout=60)
         await self.async_request_refresh()
 
     async def async_apply_opnsense_plan(self, plan: dict[str, Any], *, portal_target: tuple[str, str] | None = None) -> list[str]:

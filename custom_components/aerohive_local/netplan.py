@@ -52,7 +52,7 @@ def empty_plan() -> dict[str, Any]:
         "networks": [],
         "wifi": [],
         "keys": [],
-        "devices": {"router": None, "router_trunks": ["br-lan"], "switch_trunks": {}, "aps": None},
+        "devices": {"router": None, "router_trunks": ["br-lan"], "switch_trunks": {}, "aps": None, "ap_mode": {}},
         "onboarding": copy.deepcopy(ONBOARDING_DEFAULTS),
         "reservations": [],  # fixed IPs: {"mac", "ip", "name"} (router_extras)
         "blocked": [],  # {"mac", "name", "until"}
@@ -304,6 +304,13 @@ def validate(plan: dict[str, Any], secret: Callable[[str], str | None] | None = 
     for port_list in (devices.get("switch_trunks") or {}).values():
         if port_list and not _PORTS_RE.match(str(port_list).replace(" ", "")):
             errors.append(f"Invalid switch trunk ports {port_list!r} (e.g. 49-50)")
+    for entry_id, settings in (devices.get("ap_mode") or {}).items():
+        if entry_id == devices.get("router"):
+            errors.append("The router can't also be set to access point only")
+        try:
+            ipaddress.IPv4Address(str((settings or {}).get("gateway") or ""))
+        except ValueError:
+            errors.append("Access point only: enter the main router's address (its gateway), e.g. 10.77.0.254")
     return errors
 
 
@@ -363,6 +370,7 @@ class DevicePlan:
     secrets: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    after: list[str] = field(default_factory=list)  # run once the change is confirmed (no rollback for these)
     managed: dict[str, list[str]] = field(default_factory=dict)
     # Independent parts (label, commands), applied one after another: one rejected part doesn't
     # stop the others. When set, ``commands`` is all of them together (for the review).
@@ -381,6 +389,30 @@ def _uci(config: str, section: str, option: str | None = None, value: Any = None
 
 def _uci_list(config: str, section: str, option: str, value: Any) -> str:
     return f"uci add_list {config}.{section}.{option}={_q(value)}"
+
+
+# An OpenWrt router used as a plain access point ("dumb AP"): keep its LAN address (Home
+# Assistant reaches it there), use the main router as gateway and DNS, hand out no addresses,
+# don't use the internet port. The services are stopped after the change is confirmed, since the
+# configuration rollback doesn't cover them.
+ACCESS_POINT_SERVICES = [
+    "for s in firewall odhcpd; do [ -x /etc/init.d/$s ] && { /etc/init.d/$s disable; /etc/init.d/$s stop; }; done; true",
+]
+
+
+def access_point_lines(gateway: str) -> list[str]:
+    gw = str(ipaddress.IPv4Address(gateway))
+    return [
+        "{ uci -q delete network.lan.gateway || true; }",
+        "{ uci -q delete network.lan.dns || true; }",
+        f"uci set network.lan.gateway={gw}",
+        f"uci add_list network.lan.dns={gw}",
+        "uci set dhcp.lan.ignore=1",
+        "uci set dhcp.lan.dhcpv6=disabled",
+        "uci set dhcp.lan.ra=disabled",
+        "{ uci -q get network.wan >/dev/null && uci set network.wan.auto=0 || true; }",
+        "{ uci -q get network.wan6 >/dev/null && uci set network.wan6.auto=0 || true; }",
+    ]
 
 
 def openwrt_cleanup(configs: tuple[str, ...] = OPENWRT_CONFIGS) -> list[str]:
@@ -484,6 +516,7 @@ def openwrt_lines(
     radios: dict[str, str | None],
     now: datetime,
     wireless_only: bool = False,
+    ap_mode: dict[str, Any] | None = None,
 ) -> DevicePlan:
     """UCI commands for an OpenWrt router (networks, DHCP, firewall, Wi-Fi) or AP (bridges, Wi-Fi).
 
@@ -573,6 +606,14 @@ def openwrt_lines(
 
     if is_router and not wireless_only:
         cmds += router_extras.openwrt_lines(plan, now)
+    if ap_mode and not is_router and not wireless_only:
+        cmds += access_point_lines(str(ap_mode.get("gateway")))
+        out.after += ACCESS_POINT_SERVICES
+        out.warnings.append(
+            f"Becomes an access point only: its DHCP server, firewall and internet (WAN) port are turned off; it keeps "
+            f"its address and uses {ap_mode.get('gateway')} as gateway and DNS. Connect it to the main router or the "
+            "switch with a LAN port"
+        )
 
     keys = active_keys(plan, now)
     for wifi in plan["wifi"]:
@@ -960,6 +1001,6 @@ def template() -> dict[str, Any]:
             wifi("google", "Google-Auth-Home", "google", "ppsk", ["2.4 GHz"], hidden=True),
         ],
         "keys": [],
-        "devices": {"router": None, "router_trunks": ["br-lan"], "switch_trunks": {}, "aps": None},
+        "devices": {"router": None, "router_trunks": ["br-lan"], "switch_trunks": {}, "aps": None, "ap_mode": {}},
         "onboarding": {**copy.deepcopy(ONBOARDING_DEFAULTS), "enabled": False, "wifi": "homeob", "offer": ["home", "home5", "homeiso", "google"]},
     }

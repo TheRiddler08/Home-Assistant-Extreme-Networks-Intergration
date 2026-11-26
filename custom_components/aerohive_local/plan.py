@@ -340,6 +340,7 @@ class PlanManager:
                     radios=radio_bands(coordinator),
                     now=dt_util.utcnow(),
                     wireless_only=wireless_only,
+                    ap_mode=(plan["devices"].get("ap_mode") or {}).get(entry_id) if role == ROLE_AP else None,
                 )
             if role == ROLE_SWITCH and data.cli == commands.DIALECT_SWITCH:
                 existing = {v.name: v.vid for v in data.vlans.values()}
@@ -398,7 +399,8 @@ class PlanManager:
                     "name": (c.data.hostname if c.data else None) or c.config_entry.title,
                     "role": role,
                     "online": bool(c.last_update_success and c.data is not None),
-                    "commands": [self._scrub(cmd, built.secrets) for cmd in built.commands],
+                    "commands": [self._scrub(cmd, built.secrets) for cmd in built.commands]
+                    + [f"(once confirmed) {cmd}" for cmd in built.after],
                     "warnings": built.warnings,
                     "errors": built.errors,
                 }
@@ -466,7 +468,7 @@ class PlanManager:
         try:
             if coordinator.is_openwrt:
                 configs = ("wireless",) if wireless_only else netplan.OPENWRT_CONFIGS
-                await coordinator.async_apply_openwrt_plan(built.commands, built.secrets, configs)
+                await coordinator.async_apply_openwrt_plan(built.commands, built.secrets, configs, after=built.after)
             else:
                 await coordinator.async_apply_cli_plan(built.commands, built.secrets)
         except HomeAssistantError as err:
