@@ -7,7 +7,8 @@
         "menu_options": {
           "scan": "Scan my network",
           "manual": "Enter IP address manually",
-          "opnsense": "OPNsense router (API key)"
+          "opnsense": "OPNsense router (API key)",
+          "unifi": "UniFi access points and switches (UniFi controller)"
         }
       },
       "manual": {
@@ -83,6 +84,31 @@
           "host": "The router's address, e.g. 192.168.1.1.",
           "verify_ssl": "Leave off for OPNsense's own self-signed certificate. Turn on if the router has a trusted certificate."
         }
+      },
+      "unifi": {
+        "title": "UniFi Network controller",
+        "description": "Home Assistant talks to the controller that manages your UniFi devices (a UniFi OS console such as a Cloud Key, UDM, UDR or UCG, or the self-hosted Network application). Use a local account on the controller (not a Ubiquiti cloud account with two-factor sign-in); a read-only account is enough to only watch the devices.",
+        "data": {
+          "host": "Controller address",
+          "port": "HTTPS port",
+          "username": "Username (local account)",
+          "password": "Password",
+          "site": "Site",
+          "verify_ssl": "Check the HTTPS certificate",
+          "scan_interval": "Update interval (seconds)"
+        },
+        "data_description": {
+          "host": "e.g. 192.168.1.1 for a UniFi console, or the server running the Network application",
+          "port": "443 for UniFi OS consoles; usually 8443 for the self-hosted application",
+          "site": "'default' unless you made more sites in the controller"
+        }
+      },
+      "unifi_devices": {
+        "title": "Choose UniFi devices",
+        "description": "Each access point and switch is added as its own device.",
+        "data": {
+          "devices": "Devices"
+        }
       }
     },
     "error": {
@@ -91,13 +117,15 @@
       "invalid_key": "The SSH key file could not be read.",
       "password_or_key": "Enter a password or an SSH key path.",
       "unknown": "Unexpected error, see the log.",
-      "no_devices_found": "No devices found by the network scan. Enter the IP address manually."
+      "no_devices_found": "No devices found by the network scan. Enter the IP address manually.",
+      "no_device_chosen": "Choose at least one device"
     },
     "abort": {
       "already_configured": "This device is already configured.",
       "reauth_successful": "Re-authentication was successful.",
       "already_in_progress": "Setup for this device is already in progress.",
-      "not_aerohive_device": "This device isn't an Aerohive / Extreme Networks access point or switch."
+      "not_aerohive_device": "This device isn't an Aerohive / Extreme Networks access point or switch.",
+      "no_unifi_devices": "The controller has no access points or switches that aren't added yet"
     },
     "flow_title": "{name} ({host})",
     "progress": {

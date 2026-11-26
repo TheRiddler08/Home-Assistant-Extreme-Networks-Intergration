@@ -1,0 +1,4 @@
+{"meta": {"rc": "ok"}, "data": [
+  {"_id": "w1", "name": "home", "enabled": true, "security": "wpapsk", "hide_ssid": false, "wlan_band": "both", "x_passphrase": "secret-pass-1"},
+  {"_id": "w2", "name": "Guest", "enabled": true, "security": "open", "hide_ssid": true, "wlan_bands": ["5g"]}
+]}

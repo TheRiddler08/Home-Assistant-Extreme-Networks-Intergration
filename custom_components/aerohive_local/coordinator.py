@@ -48,6 +48,7 @@ from . import netplan as netplan_mod
 from . import openwrt as ow
 from . import opnsense as opn
 from . import opnsense_setup
+from . import unifi as uf
 from .parsers import (
     combo_port_count,
     media_kind,
@@ -253,6 +254,8 @@ class AerohiveData:
         """SR-series or ExtremeXOS switches (or anything with eth1/1-style ports)."""
         if self.cli == commands.DIALECT_EXOS:
             return True
+        if self.cli == uf.DIALECT_UNIFI:
+            return self.version.raw.get("unifi_type") == "usw"
         platform = (self.version.platform or "").upper()
         return platform.startswith("SR") or any("/" in n for n in self.interfaces)
 
@@ -516,6 +519,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self._opn_leases: dict[str, tuple[str | None, str | None]] = {}  # OPNsense DHCP: MAC -> (IP, hostname)
         self._port_speed_cfg: dict[str, tuple[str, str]] = {}  # ExtremeXOS: from show ports configuration
         self._speed_overrides: dict[str, tuple[str, str]] = {}  # set from HA, until the device is read again
+        self._unifi_device: Any = None  # UniFi: the device as the controller last reported it
+        self._unifi_wlans: dict[str, Any] = {}
         self._opn_ports: dict[str, Any] = {}  # OPNsense: physical ports by device (igc0 -> opn.Port)
         self._opn_media: dict[str, tuple[str, dict[tuple[str, str], str]]] = {}  # device -> (selected, choices)
         self._opn_media_at: float | None = None
@@ -650,6 +655,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             return await self._fetch_openwrt(data)
         if self.client.dialect == opn.DIALECT_OPNSENSE:
             return await self._fetch_opnsense(data)
+        if self.client.dialect == uf.DIALECT_UNIFI:
+            return await self._fetch_unifi(data)
         version_out = await self.client.run("show version")
         detected = dialect_from_version(version_out)
         if detected and detected != self.client.dialect:
@@ -916,6 +923,120 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
     @property
     def is_opnsense(self) -> bool:
         return self.client.dialect == opn.DIALECT_OPNSENSE
+
+    @property
+    def is_unifi(self) -> bool:
+        return self.client.dialect == uf.DIALECT_UNIFI
+
+    async def _fetch_unifi(self, data: AerohiveData) -> AerohiveData:
+        """A UniFi access point or switch, as its UniFi Network controller reports it."""
+        client: uf.UniFiClient = self.client  # type: ignore[assignment]
+        controller = client.controller
+        data.cli = uf.DIALECT_UNIFI
+        device = (await controller.devices()).get(client.mac)
+        if device is None:
+            raise AerohiveConnectionError(f"The UniFi controller doesn't list {client.mac} any more")
+        if not device.connected:
+            raise AerohiveConnectionError(f"{device.name} is offline in the UniFi controller")
+        self._unifi_device = device
+        client.hostname, client.host = device.name, device.ip or client.host
+        data.hostname = device.name
+        data.version = VersionInfo(
+            version=f"UniFi {device.version}" if device.version else None, firmware=device.version, os_name="UniFi",
+            platform=device.model, uptime_seconds=device.uptime, mac=device.mac, raw={"unifi_type": device.type},
+        )  # fmt: skip
+        if device.cpu is not None:
+            data.cpu = SystemStats(cpu_total=device.cpu)
+        if device.memory is not None:  # the controller reports a percentage
+            data.memory = SystemStats(memory_total_kb=100_000, memory_free_kb=int((100 - device.memory) * 1000))
+        if device.temperature is not None:
+            data.environment = EnvironmentInfo(temperature_c=device.temperature)
+        if device.ip:
+            data.details["mgt0"] = InterfaceDetail(name="mgt0", ip_address=device.ip)
+        now = time.monotonic()
+        for port in device.ports:
+            name = str(port.index)
+            extra = {"port": "yes"}
+            if port.name and port.name != f"Port {port.index}":
+                extra["display_string"] = port.name
+            if port.uplink:
+                extra["uplink"] = "yes"
+            if port.media and "SFP" in port.media.upper():
+                extra["media"] = "sfp"
+            duplex = ("full" if port.full_duplex else "half") if port.up and port.full_duplex is not None else None
+            data.interfaces[name] = Interface(
+                name=name, state="Up" if port.up else "Down", speed=str(port.speed) if port.speed else None, duplex=duplex,
+                admin_state="Enable" if port.enabled else "Disable", extra=extra,
+            )  # fmt: skip
+            detail = InterfaceDetail(
+                name=name, rx_bytes=port.rx_bytes, tx_bytes=port.tx_bytes, rx_errors=port.rx_errors, tx_errors=port.tx_errors,
+                speed=str(port.speed) if port.speed else None, duplex=duplex,
+            )  # fmt: skip
+            data.details[name] = detail
+            if (rate := self._rate(name, detail, now)) is not None:
+                data.throughput[name] = rate
+            if port.poe_capable:
+                delivering = (port.poe_power or 0) > 0
+                data.poe_ports[name] = PoePort(
+                    port=name, power_w=port.poe_power, poe_class=port.poe_class,
+                    status="delivering" if delivering else ("searching" if port.poe_on else "disabled"),
+                    admin="enable" if port.poe_on else "disable",
+                )  # fmt: skip
+        if device.poe_budget:
+            used = sum(p.poe_power or 0 for p in device.ports if p.poe_capable)
+            data.poe = PoeSummary(budget_w=device.poe_budget, used_w=round(used, 1), remaining_w=round(device.poe_budget - used, 1))
+        band_radio: dict[str, str] = {}
+        for radio in device.radios:
+            data.interfaces[radio.name] = Interface(
+                name=radio.name, mode="access", state="Up", channel=radio.channel,
+                channel_raw=str(radio.channel) if radio.channel else None,
+                channel_width=str(radio.width) if radio.width else None,
+                radio_profile={"2.4 GHz": "ng", "5 GHz": "na", "6 GHz": "ax6"}.get(radio.band or ""),
+            )  # fmt: skip
+            data.details[radio.name] = InterfaceDetail(
+                name=radio.name, channel=radio.channel, tx_power=radio.tx_power, channel_width=str(radio.width) if radio.width else None
+            )
+            if radio.band:
+                band_radio[radio.band] = radio.name
+        config = RunningConfigSummary()
+        if device.radios:
+            try:
+                wlans = await controller.wlans()
+            except uf.UniFiAuthError:
+                wlans = {}  # a read-only account may not see them; the broadcast names still show
+            self._unifi_wlans = wlans
+            for wlan in wlans.values():
+                data.ssids[wlan.name] = Ssid(name=wlan.name)
+                config.ssids.add(wlan.name)
+                config.ssid_security_objects[wlan.name] = wlan.name
+                config.security_suites[wlan.name] = wlan.security
+                if wlan.hidden:
+                    config.hidden_ssids.add(wlan.name)
+            subs: dict[tuple[str, str], str] = {}
+            for vap in device.vaps:
+                data.ssids.setdefault(vap.essid, Ssid(name=vap.essid))
+                config.ssid_bindings.setdefault(vap.radio, set()).add(vap.essid)
+                sub = f"{vap.radio}.{len([k for k in subs if k[0] == vap.radio]) + 1}"
+                subs[(vap.radio, vap.essid)] = sub
+                data.interfaces[sub] = Interface(name=sub, ssid=vap.essid, state="Up" if vap.up else "Down", mode="access")
+        data.config = config
+        for c in await controller.clients():
+            mine = (not c.wired and c.ap_mac == device.mac) or (c.wired and c.sw_mac == device.mac)
+            if not mine:
+                continue
+            data.neighbors[c.mac] = {"ip": c.ip, "hostname": c.hostname or c.name}
+            if not c.wired:
+                radio = band_radio.get(uf.RADIO_BANDS.get(c.radio or "", ""), "")
+                data.stations[c.mac] = Station(
+                    mac=c.mac, ip=c.ip, hostname=c.hostname or c.name, ssid=c.essid, channel=c.channel, signal=c.signal,
+                    interface=subs.get((radio, c.essid or "")) if device.radios else None,
+                    tx_rate=uf.rate_text(c.tx_rate), rx_rate=uf.rate_text(c.rx_rate), vlan=str(c.vlan) if c.vlan else None,
+                    assoc_time=f"{c.uptime // 3600}:{c.uptime % 3600 // 60:02d}:{c.uptime % 60:02d}" if c.uptime else None,
+                )  # fmt: skip
+            elif c.sw_port:
+                data.fdb.append(FdbEntry(mac=c.mac, port=str(c.sw_port), vlan=c.vlan))
+        self._update_boot_time(data)
+        return data
 
     async def _fetch_opnsense(self, data: AerohiveData) -> AerohiveData:
         """Poll an OPNsense router through its REST API."""
@@ -1284,7 +1405,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         await self.async_request_refresh()
 
     def _not_on_openwrt(self, what: str) -> HomeAssistantError:
-        kind = "OPNsense" if self.is_opnsense else "OpenWrt"
+        kind = "OPNsense" if self.is_opnsense else "UniFi" if self.is_unifi else "OpenWrt"
         return HomeAssistantError(f"{what} isn't supported on {kind} devices")
 
     async def async_apply_openwrt_plan(
@@ -1975,7 +2096,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return self.client.dialect == commands.DIALECT_EXOS
 
     async def _save(self) -> None:
-        if self.is_openwrt:
+        if self.is_openwrt or self.is_unifi or self.is_opnsense:
             return  # every change is committed with 'uci commit' as part of the change
         if self.is_exos:
             output = await self.client.run(commands.EXOS_SAVE, timeout=120, retry=False, confirm=True)
@@ -1995,6 +2116,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             raise HomeAssistantError(str(err)) from err
 
     async def async_set_ssid_on_radio(self, radio: str, ssid: str, enable: bool) -> None:
+        if self.is_unifi:
+            raise HomeAssistantError("A UniFi Wi-Fi network is on or off on all access points at once; use the network's own switch")
         self._require_configurable(ssid)
         if self.is_openwrt:
             bound = {r for r in self.data.radio_names() if self.data.ssid_on_radio(ssid, r)}
@@ -2004,6 +2127,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         await self._apply([cmd], overrides={("ssid", ssid, radio): enable})
 
     async def async_set_max_client(self, ssid: str, value: int) -> None:
+        if self.is_unifi:
+            raise HomeAssistantError("Set the client limit of a UniFi Wi-Fi network in the UniFi controller")
         self._require_configurable(ssid)
         if self.is_openwrt:
             await self._ow_update_ssid(ssid, max_clients=int(value))
@@ -2026,6 +2151,9 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self, ssid: str, password: str, security_object: str | None = None
     ) -> None:
         self._validated(commands.validate_psk, password)
+        if self.is_unifi:
+            await self._unifi_wlan(ssid, {"x_passphrase": password}, f"changing the password of {ssid}")
+            return
         self._require_configurable(ssid)
         if self.is_openwrt:
             await self._ow_update_ssid(ssid, password=password)
@@ -2039,6 +2167,9 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return sorted(self.data.ssids) if self.data else []
 
     async def async_set_ssid_all_radios(self, ssid: str, enable: bool) -> None:
+        if self.is_unifi:
+            await self._unifi_wlan(ssid, {"enabled": enable}, f"turning {ssid} {'on' if enable else 'off'}")
+            return
         self._require_configurable(ssid)
         if self.is_openwrt:
             on = (self.wifi_home_radios(ssid) or self.data.radio_names()) if enable else []
@@ -2054,6 +2185,9 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             await self._apply(cmds)
 
     async def async_set_ssid_hidden(self, ssid: str, hidden: bool) -> None:
+        if self.is_unifi:
+            await self._unifi_wlan(ssid, {"hide_ssid": hidden}, f"{'hiding' if hidden else 'showing'} {ssid}")
+            return
         self._require_configurable(ssid)
         if self.is_openwrt:
             await self._ow_update_ssid(ssid, hidden=hidden)
@@ -2064,6 +2198,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         self, ssid: str, password: str | None, radios: list[str] | None, hidden: bool = False
     ) -> None:
         """Create an SSID. radios=None: all active radios; []: create without broadcasting."""
+        if self.is_unifi:
+            raise HomeAssistantError("Add UniFi Wi-Fi networks in the UniFi controller (or through the network setup)")
         if self.is_openwrt:
             await self._ow_create_ssid(ssid, password, radios, hidden)
             return
@@ -2093,6 +2229,21 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         max_clients: int | None = None,
     ) -> bool:
         """Apply several changes to one SSID with a single save. Returns False if nothing changed."""
+        if self.is_unifi:
+            changes: dict[str, Any] = {}
+            if password:
+                self._validated(commands.validate_psk, password)
+                changes["x_passphrase"] = password
+            if hidden is not None:
+                changes["hide_ssid"] = hidden
+            if radios is not None:  # a UniFi network is on everywhere or nowhere
+                changes["enabled"] = bool(radios)
+            if max_clients is not None:
+                raise HomeAssistantError("Set the client limit of a UniFi Wi-Fi network in the UniFi controller")
+            if not changes:
+                return False
+            await self._unifi_wlan(ssid, changes, f"changing {ssid}")
+            return True
         self._require_configurable(ssid)
         if self.is_openwrt:
             return await self._ow_update_ssid(
@@ -2125,6 +2276,8 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return True
 
     async def async_delete_ssid(self, ssid: str) -> None:
+        if self.is_unifi:
+            raise HomeAssistantError("Change or remove UniFi Wi-Fi networks in the UniFi controller (password, on/off and hidden work here)")
         self._require_configurable(ssid)
         if self.is_openwrt:
             await self._ow_delete_ssid(ssid)
@@ -2142,6 +2295,33 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             self.expect_removal = False
             raise
         await self.async_request_refresh()  # the network disappears without waiting for the save
+
+    async def _unifi_call(self, what: str, coro: Any) -> None:
+        try:
+            await coro
+        except AerohiveError as err:
+            raise HomeAssistantError(f"{self._device_name()}: {what} failed: {err}") from err
+        await self.async_request_refresh()
+
+    async def _unifi_port(self, port: str, changes: dict[str, Any], what: str, state: tuple[tuple[str, str], bool] | None = None) -> None:
+        device = self._unifi_device
+        if device is None or not any(str(p.index) == port for p in device.ports):
+            raise HomeAssistantError(f"{self._device_name()} has no port {port}")
+        overrides = uf.merged_overrides(device.port_overrides, int(port), changes)
+        if changes.get("forward") is None and "forward" in changes:  # back to the port's profile
+            overrides = [{k: v for k, v in o.items() if not (k == "forward" and int(o.get("port_idx", -1)) == int(port))} for o in overrides]
+        client: uf.UniFiClient = self.client  # type: ignore[assignment]
+        if state:
+            self._overrides[state[0]] = (state[1], time.monotonic())
+            self.async_update_listeners()
+        await self._unifi_call(what, client.controller.update(f"rest/device/{device.id}", {"port_overrides": overrides}))
+
+    async def _unifi_wlan(self, ssid: str, changes: dict[str, Any], what: str) -> None:
+        wlan = self._unifi_wlans.get(ssid)
+        if wlan is None:
+            raise HomeAssistantError(f"{ssid} isn't a Wi-Fi network of the UniFi controller (or the account may not change it)")
+        client: uf.UniFiClient = self.client  # type: ignore[assignment]
+        await self._unifi_call(what, client.controller.update(f"rest/wlanconf/{wlan.id}", changes))
 
     def _opn_port(self, port: str) -> Any:
         info = self._opn_ports.get(port)
@@ -2163,6 +2343,13 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
             raise HomeAssistantError(f"{client.host}: {what} failed: {err}") from err
 
     async def async_set_port_enabled(self, port: str, enable: bool, force: bool = False) -> None:
+        if self.is_unifi:
+            if not enable and not force and port in self.data.uplink_ports():
+                raise HomeAssistantError(f"{port} is the uplink of {self._device_name()}; use force: true if you really mean it")
+            # "forward: disabled" is the controller's "Disabled" port setting; turning it on again
+            # goes back to the port's profile.
+            await self._unifi_port(port, {"forward": None if enable else "disabled"}, f"turning port {port} {'on' if enable else 'off'}", (("port", port), enable))
+            return
         if self.is_opnsense:
             info = self._opn_port(port)
             if not enable and info.ipv4 and info.ipv4.split("/")[0] == self.client.host:
@@ -2226,7 +2413,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         return ["auto", "10", "100", "1000"]
 
     async def async_set_port_speed(self, port: str, speed: str, duplex: str | None = None, force: bool = False) -> None:
-        if self.is_openwrt:
+        if self.is_openwrt or self.is_unifi:
             raise self._not_on_openwrt("Setting port speeds")
         speed, duplex = self._validated(commands.validate_speed, speed, duplex)
         options = self.port_speed_options(port)
@@ -2258,6 +2445,9 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         await self.async_request_refresh()
 
     async def async_set_poe(self, port: str, enable: bool) -> None:
+        if self.is_unifi:
+            await self._unifi_port(port, {"poe_mode": "auto" if enable else "off"}, f"PoE on port {port}", (("poe", port), enable))
+            return
         if self.is_openwrt or self.is_opnsense:
             raise self._not_on_openwrt("PoE control")
         state = {("poe", port): enable}
@@ -2270,6 +2460,10 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
 
     async def async_power_cycle_poe(self, port: str, off_seconds: float = 5) -> None:
         """Turn PoE off and on again (runtime only, nothing is saved)."""
+        if self.is_unifi:
+            client: uf.UniFiClient = self.client  # type: ignore[assignment]
+            await self._unifi_call(f"power-cycling port {port}", client.controller.command("devmgr", {"cmd": "power-cycle", "mac": client.mac, "port_idx": int(port)}))
+            return
         if self.is_openwrt or self.is_opnsense:
             raise self._not_on_openwrt("PoE control")
         if self.is_exos:
@@ -2321,6 +2515,10 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         await self.async_request_refresh()
 
     async def async_disconnect_client(self, mac: str) -> None:
+        if self.is_unifi:
+            client: uf.UniFiClient = self.client  # type: ignore[assignment]
+            await self._unifi_call(f"disconnecting {mac}", client.controller.command("stamgr", {"cmd": "kick-sta", "mac": (mac or "").lower()}))
+            return
         if self.is_openwrt:
             station = self.data.stations.get((mac or "").lower())
             if station is None:
@@ -2362,7 +2560,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
                 "or use the Reboot action with save_changes set to true (save, then reboot) or false "
                 "(reboot and lose them)."
             )
-        if self.is_opnsense:
+        if self.is_opnsense or self.is_unifi:
             _LOGGER.info("%s: rebooting", self.client.host)
             try:
                 await self.client.reboot()
@@ -2395,7 +2593,7 @@ class AerohiveCoordinator(DataUpdateCoordinator[AerohiveData]):
         await self._apply([self._validated(commands.exos_port_display_string, port, description)])
 
     async def async_run_show(self, command: str, redact: bool = True) -> str:
-        if self.is_openwrt or self.is_opnsense:
+        if self.is_openwrt or self.is_opnsense or self.is_unifi:
             raise self._not_on_openwrt("run_show_command")
         command = self._validated(commands.validate_show_command, command)
         try:

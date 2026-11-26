@@ -3,6 +3,18 @@
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org/).
 GitHub releases start at 0.6.0. Earlier versions were installed from the branch.
 
+## [0.24.0] - 2026-11-26
+
+### Added
+- **Ubiquiti UniFi access points and switches (preview)**, through the UniFi Network
+  controller's local API. Add them with *UniFi access points and switches (UniFi controller)*:
+  controller address, a local account and the site, then choose the devices (one entry each,
+  sharing one controller session). Read: model, firmware, uptime, CPU, memory, temperature,
+  ports (link, speed, traffic, uplink, SFP), PoE per port and budget, radios, Wi-Fi networks per
+  radio, Wi-Fi and wired clients. Controls: port on/off, PoE on/off and power-cycle, Wi-Fi
+  network on/off, password and hidden name, disconnect a client, restart.
+  [Details](docs/unifi.md)
+
 ## [0.23.0] - 2026-11-26
 
 ### Added

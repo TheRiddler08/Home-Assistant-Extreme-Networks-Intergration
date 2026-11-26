@@ -1,0 +1,18 @@
+{"meta": {"rc": "ok"}, "data": [
+  {"_id": "64aa00000000000000000001", "mac": "f4:92:bf:00:00:01", "type": "uap", "model": "U6LR", "name": "Living room AP", "version": "6.6.77.15402", "ip": "192.168.1.31", "state": 1, "uptime": 86400,
+   "system-stats": {"cpu": "3.1", "mem": "41.5"}, "has_temperature": false,
+   "port_table": [{"port_idx": 1, "name": "Port 1", "up": true, "enable": true, "speed": 1000, "full_duplex": true, "is_uplink": true, "rx_bytes": 1000, "tx_bytes": 2000, "media": "GE"}],
+   "radio_table": [{"name": "wifi0", "radio": "ng", "channel": 6, "ht": "20"}, {"name": "wifi1", "radio": "na", "channel": "auto", "ht": "80"}],
+   "radio_table_stats": [{"name": "wifi0", "channel": 6, "tx_power": 20, "num_sta": 2}, {"name": "wifi1", "channel": 44, "tx_power": 23, "num_sta": 1}],
+   "vap_table": [{"essid": "home", "radio_name": "wifi0", "up": true, "num_sta": 2}, {"essid": "home", "radio_name": "wifi1", "up": true, "num_sta": 1}, {"essid": "Guest", "radio_name": "wifi1", "up": true, "num_sta": 0}]},
+  {"_id": "64aa00000000000000000002", "mac": "74:83:c2:00:00:02", "type": "usw", "model": "US8P60", "name": "Office switch", "version": "7.1.26.15869", "ip": "192.168.1.32", "state": 1, "uptime": 3600,
+   "system-stats": {"cpu": "9", "mem": "60"}, "has_temperature": true, "general_temperature": 41.5, "total_max_power": 60,
+   "port_overrides": [{"port_idx": 2, "name": "Camera", "poe_mode": "auto"}],
+   "port_table": [
+     {"port_idx": 1, "name": "Port 1", "up": true, "enable": true, "speed": 1000, "full_duplex": true, "is_uplink": true, "port_poe": false},
+     {"port_idx": 2, "name": "Camera", "up": true, "enable": true, "speed": 100, "full_duplex": true, "port_poe": true, "poe_mode": "auto", "poe_power": "4.20", "poe_class": "Class 2"},
+     {"port_idx": 3, "name": "Port 3", "up": false, "enable": true, "speed": 0, "port_poe": true, "poe_mode": "off", "poe_power": "0.00"},
+     {"port_idx": 9, "name": "SFP 1", "up": false, "enable": true, "media": "SFP", "port_poe": false}]},
+  {"_id": "64aa00000000000000000003", "mac": "70:a7:41:00:00:03", "type": "udm", "model": "UDMPRO", "name": "Gateway", "state": 1},
+  {"_id": "64aa00000000000000000004", "mac": "f4:92:bf:00:00:04", "type": "uap", "model": "U6Lite", "name": "Garage AP", "state": 0}
+]}

@@ -270,12 +270,14 @@ class PlanManager:
         result = []
         for c in _coordinators(self.hass):
             data = c.data
-            kind = "openwrt" if c.is_openwrt else "opnsense" if c.is_opnsense else (data.cli if data else None)
+            kind = "openwrt" if c.is_openwrt else "opnsense" if c.is_opnsense else "unifi" if c.is_unifi else (data.cli if data else None)
             note = None
             if data is not None and data.cli == commands.DIALECT_SWITCH:
                 note = "VLAN commands for SR switches are assumed until confirmed on a real SR2208P (shown in the review)"
             elif data is not None and data.cli == commands.DIALECT_HIVEOS and not data.is_wireless:
                 note = "No Wi-Fi radios"
+            elif c.is_unifi:
+                note = "UniFi: set up from its UniFi controller for now; the network setup can't change UniFi devices yet"
             result.append(
                 {
                     "entry_id": c.config_entry.entry_id,

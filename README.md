@@ -55,6 +55,7 @@ controller.
 | Extreme Networks Summit X450e-48p (ExtremeXOS) | 🧪 Preview, needs testing |
 | OpenWrt routers and access points (21.02 and later) | 🧪 Preview, needs testing ([details](docs/openwrt.md)) |
 | OPNsense routers (REST API, current releases) | 🧪 Preview, needs testing ([details](docs/opnsense.md)) |
+| Ubiquiti UniFi access points and switches (through the UniFi Network controller) | 🧪 Preview, needs testing ([details](docs/unifi.md)) |
 | Other HiveOS / IQ Engine APs, SR switches and ExtremeXOS switches | Expected to work, untested |
 
 Full details: [Supported devices](docs/supported-devices.md).
@@ -86,6 +87,7 @@ Networks (Local SSH)**, and choose **Scan my network** or **Enter IP address man
 | [Wi-Fi manager](docs/wifi.md) | Managing SSIDs and passwords |
 | [Network overview](docs/overview.md) | The combined *Aerohive Network* device |
 | [OPNsense](docs/opnsense.md) | OPNsense routers through the REST API: monitoring, ports, backups, network setup, fixed IPs, blocking, port forwards, onboarding portal |
+| [UniFi](docs/unifi.md) | Ubiquiti UniFi access points and switches through their controller |
 | [OpenWrt](docs/openwrt.md) | OpenWrt routers and access points: what's read, Wi-Fi control, limits |
 | [Switches](docs/switches.md) | SR-series and ExtremeXOS switches: ports, PoE, LLDP |
 | [Power-loss protection and backups](docs/backups.md) | Backups, change-after-reboot alerts, restore |

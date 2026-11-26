@@ -62,6 +62,12 @@ version, CPU, memory, temperature, ports, networks, internet gateways and the de
 the router; reboot. Ports are read-only, and configuration backups and the network setup's
 router role aren't offered yet. See [OPNsense](opnsense.md).
 
+## Ubiquiti UniFi
+
+🧪 Preview: UniFi access points and switches, read and controlled through the UniFi Network
+controller (UniFi OS consoles or the self-hosted application): ports, PoE with power-cycle,
+radios, Wi-Fi networks (on/off, password, hidden), clients, restart. See [UniFi](unifi.md).
+
 ## OpenWrt
 
 🧪 Preview: OpenWrt 21.02 and later (routers and access points), read with `ubus` and UCI over

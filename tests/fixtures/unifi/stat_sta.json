@@ -1,0 +1,6 @@
+{"meta": {"rc": "ok"}, "data": [
+  {"mac": "02:11:22:33:44:01", "ip": "192.168.1.60", "hostname": "pixel-8", "is_wired": false, "ap_mac": "f4:92:bf:00:00:01", "essid": "home", "radio": "na", "channel": 44, "signal": -52, "tx_rate": 866700, "rx_rate": 585000, "uptime": 3725},
+  {"mac": "02:11:22:33:44:02", "ip": "192.168.1.61", "name": "Kitchen tablet", "is_wired": false, "ap_mac": "f4:92:bf:00:00:01", "essid": "home", "radio": "ng", "channel": 6, "rssi": -67, "tx_rate": 72000, "rx_rate": 65000, "uptime": 60},
+  {"mac": "bc:ad:28:00:00:05", "ip": "192.168.9.41", "hostname": "camera", "is_wired": true, "sw_mac": "74:83:c2:00:00:02", "sw_port": 2, "vlan": 30},
+  {"mac": "02:11:22:33:44:09", "ip": "192.168.1.90", "is_wired": false, "ap_mac": "f4:92:bf:00:00:04", "essid": "home", "radio": "ng"}
+]}

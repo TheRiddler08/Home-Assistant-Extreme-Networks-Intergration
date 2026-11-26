@@ -53,6 +53,18 @@ apply one test network and send the review's result, plus a screenshot of Interf
 Assignments and Firewall → Rules for the new interface. Everything else on OPNsense
 (ports, backups, portal, IPv6, fixed IPs, blocking, forwards) needs the same real-router check.
 
+## Next: more brands
+
+- **UniFi in the network setup** (0.24.0 reads and controls UniFi devices): networks as
+  VLAN-only networks (`rest/networkconf`), Wi-Fi networks with per-device keys as private
+  pre-shared keys (`rest/wlanconf`), switch ports through port profiles / overrides. Applied once
+  per controller, since UniFi settings are site-wide. Needs a check against a real controller
+  first (what the controller answers for `stat/device`, and one port and Wi-Fi change).
+- **Netgear:** a Netgear router running OpenWrt is covered (including *Access point only*,
+  0.23.0). Netgear's own firmware (Nighthawk, Orbi) has no supported local API for this; Netgear
+  business switches (M4250/M4300) have a FASTPATH-style CLI close to the SR switches and could
+  be added. Needs: the model and firmware.
+
 ## Open: smaller items
 
 - **SR2208P VLANs: confirm the assumed commands.** Built in 0.16.0 with FASTPATH-style

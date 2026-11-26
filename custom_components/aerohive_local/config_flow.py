@@ -37,6 +37,9 @@ from .const import (
     CONF_DETAILED_STATS,
     CONF_DEVICE_TYPE,
     DEVICE_TYPE_OPNSENSE,
+    DEVICE_TYPE_UNIFI,
+    CONF_SITE,
+    CONF_DEVICE_MAC,
     CONF_ENABLE_ALL,
     CONF_ENTRY_TYPE,
     CONF_RAW_SENSORS,
@@ -234,6 +237,8 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
         self._found: list[ScanResult] = []
         self._discovered_host: str | None = None
         self._details: str | None = None
+        self._unifi: dict[str, Any] = {}
+        self._unifi_devices: dict[str, str] = {}
 
     def _defaults(self, extra: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Pre-fill the username (and port) from an existing entry."""
@@ -271,7 +276,7 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
     # ---------------------------------------------------------------- #
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return self.async_show_menu(step_id="user", menu_options=["scan", "manual", "opnsense"])
+        return self.async_show_menu(step_id="user", menu_options=["scan", "manual", "opnsense", "unifi"])
 
     async def async_step_opnsense(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """An OPNsense router, through its REST API (API key and secret)."""
@@ -308,6 +313,87 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
             ),
             errors=errors,
         )
+
+    async def async_step_unifi(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """UniFi access points and switches, through their UniFi Network controller."""
+        from . import unifi as uf  # noqa: PLC0415
+        from homeassistant.helpers.aiohttp_client import async_create_clientsession  # noqa: PLC0415
+
+        errors: dict[str, str] = {}
+        values = dict(user_input or {})
+        if user_input is not None:
+            data = {
+                CONF_DEVICE_TYPE: DEVICE_TYPE_UNIFI,
+                CONF_HOST: user_input[CONF_HOST].strip(),
+                CONF_PORT: int(user_input.get(CONF_PORT, uf.DEFAULT_PORT)),
+                CONF_USERNAME: user_input[CONF_USERNAME].strip(),
+                CONF_PASSWORD: user_input[CONF_PASSWORD],
+                CONF_SITE: (user_input.get(CONF_SITE) or uf.DEFAULT_SITE).strip(),
+                CONF_VERIFY_SSL: bool(user_input.get(CONF_VERIFY_SSL, False)),
+                CONF_SCAN_INTERVAL: int(user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),
+            }
+            controller = uf.UniFiController(
+                async_create_clientsession(self.hass, verify_ssl=data[CONF_VERIFY_SSL]), data[CONF_HOST], data[CONF_PORT],
+                data[CONF_USERNAME], data[CONF_PASSWORD], data[CONF_SITE], verify_ssl=data[CONF_VERIFY_SSL],
+            )  # fmt: skip
+            try:
+                devices = await controller.devices()
+            except uf.UniFiAuthError:
+                errors["base"] = "invalid_auth"
+            except uf.UniFiError as err:
+                _LOGGER.debug("UniFi controller test failed: %s", err)
+                errors["base"] = "cannot_connect"
+            else:
+                configured = {e.unique_id for e in self._async_current_entries(include_ignore=False)}
+                self._unifi = data
+                self._unifi_devices = {
+                    mac: f"{d.name} ({d.model or d.type}{', ' + d.ip if d.ip else ''})"
+                    for mac, d in sorted(devices.items(), key=lambda kv: kv[1].name.lower())
+                    if d.kind in ("ap", "switch") and mac not in configured
+                }
+                if not self._unifi_devices:
+                    return self.async_abort(reason="no_unifi_devices")
+                return await self.async_step_unifi_devices()
+        return self.async_show_form(
+            step_id="unifi",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST, default=values.get(CONF_HOST, "")): str,
+                    vol.Optional(CONF_PORT, default=values.get(CONF_PORT, 443)): vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
+                    vol.Required(CONF_USERNAME, default=values.get(CONF_USERNAME, "")): str,
+                    vol.Required(CONF_PASSWORD): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+                    vol.Optional(CONF_SITE, default=values.get(CONF_SITE, "default")): str,
+                    vol.Optional(CONF_VERIFY_SSL, default=values.get(CONF_VERIFY_SSL, False)): bool,
+                    vol.Optional(CONF_SCAN_INTERVAL, default=values.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): vol.All(
+                        vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL)
+                    ),
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_unifi_devices(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Which of the controller's access points and switches to add (one entry each)."""
+        if user_input is not None:
+            chosen = [mac for mac in user_input.get("devices") or [] if mac in self._unifi_devices]
+            if not chosen:
+                return self.async_show_form(step_id="unifi_devices", data_schema=self._unifi_schema(), errors={"base": "no_device_chosen"})
+            for mac in chosen[1:]:  # the others get their own entries
+                self.hass.async_create_task(
+                    self.hass.config_entries.flow.async_init(
+                        DOMAIN, context={"source": "import"}, data={**self._unifi, CONF_DEVICE_MAC: mac, "title": self._unifi_devices[mac]}
+                    )
+                )
+            first = chosen[0]
+            await self.async_set_unique_id(first, raise_on_progress=False)
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(title=self._unifi_devices[first].split(" (")[0], data={**self._unifi, CONF_DEVICE_MAC: first})
+        return self.async_show_form(step_id="unifi_devices", data_schema=self._unifi_schema())
+
+    def _unifi_schema(self) -> vol.Schema:
+        import homeassistant.helpers.config_validation as cv  # noqa: PLC0415
+
+        return vol.Schema({vol.Required("devices", default=list(self._unifi_devices)): cv.multi_select(self._unifi_devices)})
 
     async def async_step_manual(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
@@ -448,7 +534,14 @@ class AerohiveConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_import(self, import_data: dict[str, Any]) -> ConfigFlowResult:
-        """Create the network overview entry (started automatically)."""
+        """Create the network overview entry (started automatically), or another device of a UniFi
+        controller chosen in the same flow."""
+        if import_data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_UNIFI and import_data.get(CONF_DEVICE_MAC):
+            data = dict(import_data)
+            title = str(data.pop("title", "") or data[CONF_DEVICE_MAC])
+            await self.async_set_unique_id(data[CONF_DEVICE_MAC])
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(title=title.split(" (")[0], data=data)
         if import_data.get(CONF_ENTRY_TYPE) != ENTRY_TYPE_OVERVIEW:
             return self.async_abort(reason="not_supported")
         await self.async_set_unique_id("overview")

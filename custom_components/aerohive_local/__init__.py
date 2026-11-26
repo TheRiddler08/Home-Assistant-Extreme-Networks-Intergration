@@ -46,6 +46,9 @@ from .const import (
     CONF_API_SECRET,
     CONF_DEVICE_TYPE,
     DEVICE_TYPE_OPNSENSE,
+    DEVICE_TYPE_UNIFI,
+    CONF_SITE,
+    CONF_DEVICE_MAC,
     ATTR_COMMAND,
     ATTR_DEVICE_ID,
     ATTR_MAC,
@@ -188,6 +191,17 @@ def load_client_key(path: str | None) -> Any | None:
 
 
 async def async_create_client(hass: HomeAssistant, data: dict[str, Any]) -> AerohiveClient:
+    if data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_UNIFI:
+        from homeassistant.helpers.aiohttp_client import async_create_clientsession  # noqa: PLC0415
+
+        from . import unifi as uf  # noqa: PLC0415
+
+        controller = uf.shared_controller(
+            async_create_clientsession(hass, verify_ssl=data.get(CONF_VERIFY_SSL, False)), data[CONF_HOST],
+            data.get(CONF_PORT, uf.DEFAULT_PORT), data[CONF_USERNAME], data[CONF_PASSWORD], data.get(CONF_SITE, uf.DEFAULT_SITE),
+            verify_ssl=data.get(CONF_VERIFY_SSL, False),
+        )  # fmt: skip
+        return uf.UniFiClient(controller, data[CONF_DEVICE_MAC])  # type: ignore[return-value]
     if data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_OPNSENSE:
         from homeassistant.helpers.aiohttp_client import async_get_clientsession  # noqa: PLC0415
 

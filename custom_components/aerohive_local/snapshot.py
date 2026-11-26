@@ -43,6 +43,8 @@ def _speed_mbps(value: str | None) -> int | None:
 def device_kind(data: AerohiveData) -> str:
     if data.cli in ("openwrt", "opnsense"):
         return "router"
+    if data.cli == "unifi":
+        return {"usw": "switch", "uap": "ap"}.get(data.version.raw.get("unifi_type", ""), "router")
     if data.is_switch:
         return "switch"
     if (data.version.platform or "").upper().startswith("BR"):
@@ -269,11 +271,11 @@ def device_snapshot(hass: HomeAssistant, coordinator: AerohiveCoordinator) -> di
         "features": {
             "port_names": data.cli == commands.DIALECT_EXOS,
             "port_control": data.cli != "openwrt",
-            "port_speed": data.cli != "openwrt",
-            "restore": data.cli not in ("openwrt", "opnsense"),
+            "port_speed": data.cli not in ("openwrt", "unifi"),
+            "restore": data.cli not in ("openwrt", "opnsense", "unifi"),
             "poe": bool(data.poe_ports),
-            "save": data.cli != "opnsense",  # OPNsense saves every change itself
-            "backup": True,
+            "save": data.cli not in ("opnsense", "unifi"),  # they save every change themselves
+            "backup": data.cli != "unifi",  # the UniFi controller keeps the configuration (and its own backups)
             "reboot_save_prompt": data.cli == commands.DIALECT_EXOS,
         },
     }
